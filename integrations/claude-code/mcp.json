@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "backseat": {
+      "command": "node",
+      "args": ["D:/backseat/out/main/mcp-server.js"]
+    }
+  }
+}

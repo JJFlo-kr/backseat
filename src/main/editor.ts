@@ -9,10 +9,12 @@ import type {
   ExportPayload,
   SaveResult,
   SendOptions,
+  TranscribeRequest,
   VideoSave
 } from '../shared/types'
 import { buildBrief } from './brief'
 import { sendToTarget } from './send'
+import { transcribe } from './stt'
 import { baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
 let ipcInstalled = false
@@ -103,6 +105,11 @@ export function installEditorIpc(): void {
   )
   ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions) =>
     sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, targets.get(e.sender) ?? null, opts)
+  )
+  ipcMain.handle(IPC.editorTranscribe, (e, req: TranscribeRequest) =>
+    transcribe(req, (p) => {
+      if (!e.sender.isDestroyed()) e.sender.send(IPC.editorSttProgress, p)
+    })
   )
   ipcMain.handle(IPC.editorCopy, (_e, payload: ExportPayload) => copyToClipboard(payload))
   ipcMain.on(IPC.editorClose, (e) => BrowserWindow.fromWebContents(e.sender)?.close())

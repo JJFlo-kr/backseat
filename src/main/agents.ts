@@ -67,7 +67,10 @@ export function classifyTarget(win: WindowInfo | null): AgentTarget | null {
 }
 
 /** One-line instruction pasted into a terminal agent. Paths are absolute so any cwd works. */
-export function instructionLine(briefPath: string, pngPath: string, memo: string): string {
+export function instructionLine(briefPath: string, pngPath: string, memo: string, viaMcp = false): string {
   const head = memo ? `${memo} — ` : ''
+  if (viaMcp) {
+    return `${head}Backseat로 방금 캡처를 보냈어. backseat_latest 툴로 브리프와 이미지를 읽고, 주석과 메모가 가리키는 대로 수정해줘. (파일: ${briefPath})`
+  }
   return `${head}Backseat 브리프 ${briefPath} 와 이미지 ${pngPath} 를 읽고, 주석과 메모가 가리키는 대로 수정해줘.`
 }

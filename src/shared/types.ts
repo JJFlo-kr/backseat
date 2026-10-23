@@ -80,6 +80,17 @@ export interface AgentTarget {
    */
   method: 'paste-path' | 'paste-image' | 'clipboard'
   confidence: number
+  /** Set when the agent registered through backseat-mcp; it can fetch packages itself. */
+  mcp?: { id: string; name: string; cwd: string }
+}
+
+/** A question an agent posted through backseat_ask; answered by the next capture. */
+export interface AskRequest {
+  requestId: string
+  question: string
+  agent: string
+  cwd: string
+  createdAt: string
 }
 
 export interface CaptureMeta {
@@ -95,6 +106,8 @@ export interface CaptureMeta {
   window?: { title: string; process: string }
   /** Foreground window right before the capture started. */
   activeWindow?: { title: string; process: string }
+  /** When this capture answers a backseat_ask question. */
+  request?: { requestId: string; question: string; agent: string }
 }
 
 /** main -> editor renderer, once. */
@@ -106,6 +119,12 @@ export interface EditorInit {
   meta: CaptureMeta
   /** Detected delivery target, or null when nothing plausible was in front. */
   target: AgentTarget | null
+  /** Start recording as soon as the editor opens (user setting). */
+  autoRecord?: boolean
+  /** The agent's question this capture is answering, if any. */
+  request?: AskRequest
+  /** Self-test only: lets the harness inject a transcript via a DOM event. */
+  debug?: boolean
 }
 
 export interface Point {
@@ -180,7 +199,66 @@ export type Annotation =
       tEnd: number
     }
 
-/** editor renderer -> main for Save / Copy. */
+// ---------- speech ----------
+
+/** One recognised word. Times are ms on the editor clock (same as Annotation.tStart). */
+export interface Word {
+  start: number
+  end: number
+  text: string
+}
+
+/** One transcribed utterance (sentence-ish), editor-clock ms. */
+export interface Segment {
+  start: number
+  end: number
+  text: string
+  words?: Word[]
+}
+
+export interface Transcript {
+  text: string
+  segments: Segment[]
+  /** Editor-clock time when the recording started; segment times already include it. */
+  audioStartMs: number
+  durationMs: number
+  model: string
+  language: string
+}
+
+/** editor renderer -> main: run speech recognition on decoded audio. */
+export interface TranscribeRequest {
+  /** Mono PCM at 16 kHz, -1..1. */
+  pcm16k: Float32Array
+  audioStartMs: number
+  /** Optional language hint ('korean', 'english', ...). */
+  language?: string
+}
+
+export interface TranscribeResult {
+  ok: boolean
+  transcript?: Transcript
+  error?: string
+  elapsedMs?: number
+}
+
+/** main -> editor renderer while a transcription runs. */
+export interface SttProgress {
+  stage: 'loading' | 'downloading' | 'transcribing' | 'done' | 'error'
+  file?: string
+  /** 0..100 for downloads. */
+  progress?: number
+  message?: string
+}
+
+/** A manual speech-to-annotation link made by dragging in the timeline. */
+export interface ManualLink {
+  segmentIndex: number
+  /** null = forced global (not tied to any annotation). */
+  annotationIndex: number | null
+}
+
+/** editor renderer -> main for Save / Copy / Send. */
 export interface ExportPayload {
   /** Flattened image (base + annotations) as PNG data URL, device pixels. */
   pngDataUrl: string
@@ -188,6 +266,10 @@ export interface ExportPayload {
   memo: string
   annotations: Annotation[]
   meta: CaptureMeta
+  transcript?: Transcript
+  /** The recording itself, stored in the session package as audio.<ext>. */
+  audio?: { bytes: Uint8Array; mimeType: string }
+  links?: ManualLink[]
 }
 
 export interface SaveResult {
@@ -239,6 +321,9 @@ export interface BackseatApi {
     saveVideo(video: VideoSave): Promise<SaveResult>
     /** Write the session package and deliver it to the detected agent (see AgentTarget.method). */
     send(payload: ExportPayload, opts?: SendOptions): Promise<SendResult>
+    /** Speech recognition on decoded audio; progress arrives via onSttProgress. */
+    transcribe(req: TranscribeRequest): Promise<TranscribeResult>
+    onSttProgress(cb: (p: SttProgress) => void): void
     close(): void
   }
 }

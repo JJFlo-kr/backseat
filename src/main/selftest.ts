@@ -9,13 +9,15 @@ import { app, BrowserWindow, clipboard, screen } from 'electron'
 import { access, mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { IPC } from '../shared/ipc'
-import type { AgentTarget, EditorInit, ExportPayload } from '../shared/types'
+import type { AgentTarget, EditorInit, ExportPayload, Transcript } from '../shared/types'
 import { classifyTarget, instructionLine } from './agents'
 import { buildBrief } from './brief'
 import { captureAllDisplays, cropDip } from './capture'
 import { copyToClipboard, createEditorWindow } from './editor'
 import { getForegroundWindow, listTopLevelWindows, win32Available } from './native/win32'
 import { writeSessionPackage } from './sessions'
+import { stopStt, transcribe } from './stt'
+import { wavToFloat16k } from './stt/wav'
 import { createSelectorWindow, selectorInitFor } from './selector'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -97,6 +99,39 @@ export async function runSelfTest(): Promise<void> {
     const target: AgentTarget =
       detected ?? { kind: 'claude-code', label: 'Claude Code · 터미널 (테스트)', hwnd: 0, title: '', process: '', method: 'paste-path', confidence: 1 }
 
+    // Speech recognition: WAV -> PCM -> worker. Runs early so the editor test can show the speech lane.
+    const wav = argValue('selftest-wav')
+    let sttTranscript: Transcript | null = null
+    let wavBytes: Buffer | null = null
+    if (wav && !process.argv.includes('--selftest-no-stt')) {
+      step = 'stt'
+      wavBytes = await readFile(wav)
+      const pcm = wavToFloat16k(wavBytes)
+      const progress: string[] = []
+      const t0s = Date.now()
+      const r = await transcribe({ pcm16k: pcm, audioStartMs: 1000, language: 'korean' }, (p) => {
+        progress.push(`${p.stage}${p.file ? ' ' + p.file : ''}${p.progress !== undefined ? ' ' + Math.round(p.progress) + '%' : ''}`)
+      })
+      report.stt = {
+        ok: r.ok,
+        wallMs: Date.now() - t0s,
+        elapsedMs: r.elapsedMs,
+        text: r.transcript?.text,
+        segments: r.transcript?.segments.map((s) => [s.start, s.end, s.text]),
+        error: r.error,
+        progressTail: progress.slice(-3)
+      }
+      if (!r.ok || !r.transcript) {
+        errors.push(`stt failed: ${r.error ?? 'no transcript'}`)
+      } else {
+        sttTranscript = r.transcript
+        if (!/로그인/.test(r.transcript.text) || !/버튼/.test(r.transcript.text)) {
+          errors.push(`stt text unexpected: ${r.transcript.text}`)
+        }
+        if (r.transcript.segments.length < 2) errors.push('expected several speech segments')
+      }
+    }
+
     // Selector renderer smoke test (with the real window list so hover hit-testing has data).
     step = 'selector'
     const sel = createSelectorWindow(cap, errors)
@@ -136,13 +171,28 @@ export async function runSelfTest(): Promise<void> {
         rectDip,
         rectPx,
         mode: 'rect',
-        activeWindow: fg ? { title: fg.title, process: fg.process } : undefined
+        activeWindow: fg ? { title: fg.title, process: fg.process } : undefined,
+        request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest' }
       },
-      target
+      target,
+      request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest', cwd: '', createdAt: new Date().toISOString() },
+      debug: true
     }
     const ed = createEditorWindow(init, errors)
     await waitLoad(ed)
-    await sleep(900)
+    // Wait until the renderer has processed editor:init and drawn the image (debug hook).
+    const tReady = Date.now()
+    let ready = false
+    for (let i = 0; i < 80; i++) {
+      await sleep(125)
+      ready = (await ed.webContents.executeJavaScript(
+        `Boolean(window.__backseat && window.__backseat.state().init)`
+      )) as boolean
+      if (ready) break
+    }
+    report.editorReadyMs = Date.now() - tReady
+    if (!ready) errors.push('editor never became ready (init not processed)')
+    await sleep(200)
     if (shotsDir) {
       // Draw a stroke through the renderer's own pointer handling, then screenshot.
       const bounds = ed.getContentBounds()
@@ -209,6 +259,50 @@ export async function runSelfTest(): Promise<void> {
       )) as { afterUndo: boolean; redoLeft: boolean; undoNow: boolean }
       report.history = hist
       if (!hist.afterUndo || !hist.redoLeft || !hist.undoNow) errors.push(`history state wrong: ${JSON.stringify(hist)}`)
+
+      // Microphone path: start/stop a real recording (silence is fine) and let it run through STT.
+      step = 'mic'
+      const statusText = (): Promise<string> =>
+        ed.webContents.executeJavaScript(`document.getElementById('status').textContent`) as Promise<string>
+      report.audioInputs = await ed.webContents.executeJavaScript(
+        `navigator.mediaDevices.enumerateDevices().then(ds => ds.filter(d => d.kind === 'audioinput').length)`
+      )
+      report.stateBeforeMic = await ed.webContents.executeJavaScript(`JSON.stringify(window.__backseat.state())`)
+      report.gumProbe = await ed.webContents.executeJavaScript(
+        `Promise.race([
+           navigator.mediaDevices.getUserMedia({ audio: true }).then(s => { const n = s.getTracks().length; s.getTracks().forEach(t => t.stop()); return 'ok tracks=' + n }),
+           new Promise(r => setTimeout(() => r('timeout 4s'), 4000))
+         ]).catch(e => 'err ' + e.name + ': ' + e.message)`
+      )
+      await ed.webContents.executeJavaScript(`document.getElementById('mic').click(); true`)
+      await sleep(1500)
+      const recording = (await ed.webContents.executeJavaScript(
+        `document.getElementById('mic').classList.contains('recording')`
+      )) as boolean
+      await ed.webContents.executeJavaScript(`document.getElementById('mic').click(); true`)
+      let micStatus = ''
+      for (let i = 0; i < 160; i++) {
+        await sleep(250)
+        micStatus = await statusText()
+        if (!/녹음 중|해석 중|전사 중|내려받는 중|모델/.test(micStatus)) break
+      }
+      report.mic = { recording, status: micStatus }
+      if (!recording) warnings.push(`microphone did not start: ${micStatus}`)
+
+      // Inject the real transcript from the WAV so the speech lane and links render.
+      if (sttTranscript) {
+        step = 'speech-lane'
+        await ed.webContents.executeJavaScript(
+          `window.dispatchEvent(new CustomEvent('backseat:debug-transcript', { detail: ${JSON.stringify(sttTranscript)} })); true`
+        )
+        await sleep(300)
+        const lane = (await ed.webContents.executeJavaScript(
+          `document.getElementById('status').textContent + ' | ' + document.getElementById('tl-canvas').getBoundingClientRect().height`
+        )) as string
+        report.speechLane = lane
+        if (!lane.includes('디버그 전사 주입')) errors.push(`transcript injection failed: ${lane}`)
+        await shot(ed, join(shotsDir, 'editor-speech.png'), warnings)
+      }
     }
     ed.destroy()
 
@@ -268,6 +362,27 @@ export async function runSelfTest(): Promise<void> {
     if (metaBack.target?.label !== target.label) errors.push('meta.json target mismatch')
     report.sessionDir = pkg.dir
     report.instruction = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo)
+
+    // Voice package: transcript + audio + a manual link end up in brief.md / transcript.json.
+    if (sttTranscript && wavBytes) {
+      step = 'voice-package'
+      const voicePayload: ExportPayload = {
+        ...payload,
+        transcript: sttTranscript,
+        audio: { bytes: new Uint8Array(wavBytes), mimeType: 'audio/wav' },
+        links: [{ segmentIndex: 0, annotationIndex: 1 }]
+      }
+      const pkg2 = await writeSessionPackage(voicePayload, target, join(dirname(out), 'sessions'))
+      const brief2 = await readFile(pkg2.briefMd, 'utf8')
+      if (!brief2.includes('🗣')) errors.push('brief has no speech lines')
+      if (!brief2.includes('수동 연결')) errors.push('brief missing the manual link')
+      if (!brief2.includes('selftest의 질문')) errors.push('brief missing the agent question')
+      if (!pkg2.transcriptJson || !pkg2.audioFile) errors.push('package missing transcript/audio')
+      const meta2 = JSON.parse(await readFile(pkg2.metaJson, 'utf8')) as { requestId?: string }
+      if (meta2.requestId !== 'selftest-1') errors.push('meta.json missing requestId')
+      report.briefVoice = brief2.split('\n').filter((l) => l.includes('🗣')).slice(0, 5)
+    }
+    stopStt()
   } catch (err) {
     errors.push(`exception at ${step}: ${err instanceof Error ? err.stack ?? err.message : String(err)}`)
   }

@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Backseat</title>
     <link rel="stylesheet" href="./editor.css" />
@@ -32,6 +32,7 @@
         <button type="button" class="btn" id="redo" data-command="redo" aria-label="다시 실행">↷</button>
       </div>
       <button type="button" class="btn" id="timeline-toggle" data-command="timeline">타임라인</button>
+      <button type="button" class="btn" id="mic" data-command="mic">🎤 녹음</button>
       <div class="spacer"></div>
       <button type="button" class="btn" id="copy" data-command="copy">복사</button>
       <button type="button" class="btn" id="save" data-command="save">저장</button>
@@ -54,10 +55,12 @@
         <span class="tl-clock" data-tl="clock"></span>
         <span class="spacer"></span>
         <span class="tl-hint">드래그로 스크럽 · ←→ 0.2초 · Home 처음</span>
-        <button type="button" class="btn tl-btn" data-command="video">녹화 내보내기</button>
+        <button type="button" class="btn tl-btn" data-command="video">녹화</button>
       </div>
       <canvas id="tl-canvas"></canvas>
     </section>
+
+    <audio id="player" hidden preload="auto"></audio>
 
     <footer>
       <input id="memo" type="text" autocomplete="off" spellcheck="false" placeholder="이 이미지에 대한 한 줄 메모 (선택)" />

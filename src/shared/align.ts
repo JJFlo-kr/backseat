@@ -1,20 +1,8 @@
 // Pure timeline logic shared by main, renderer and tests. No DOM, no Electron.
 // All times are milliseconds since the editor session started (same clock as Annotation.tStart).
-import type { Annotation } from './types.ts'
+import type { Annotation, Segment, Word } from './types.ts'
+export type { Segment, Word }
 
-export interface Word {
-  start: number
-  end: number
-  text: string
-}
-
-/** One transcribed utterance. */
-export interface Segment {
-  start: number
-  end: number
-  text: string
-  words?: Word[]
-}
 
 export type AlignReason = 'overlap' | 'proximity' | 'deictic' | 'global' | 'manual'
 

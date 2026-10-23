@@ -1,4 +1,4 @@
-import type { EditorInit, ExportPayload, Annotation, AgentTarget, Point } from '../../shared/types'
+import type { EditorInit, ExportPayload, Annotation, AgentTarget, Point, Transcript } from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { Hotkeys } from './hotkeys'
@@ -17,6 +17,14 @@ const BADGE_SIZE = 22 // CSS px diameter
 const BLUR_BLOCK = 14 // CSS px per pixelation block
 const MIN_DRAG = 3 // image px
 const SEND_CLOSE_DELAY = 700 // ms the status stays visible before the editor closes
+const AUDIO_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+
+/** The whole undoable document: drawings plus manual speech-to-annotation links. */
+interface Doc {
+  annotations: readonly Annotation[]
+  /** segmentIndex -> annotationIndex (null = forced global). Absent = automatic alignment. */
+  links: ReadonlyMap<number, number | null>
+}
 
 function isTool(v: string | undefined): v is Tool {
   return v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur'
@@ -43,6 +51,8 @@ const targetBar = byId<HTMLElement>('targetbar')
 const undoBtn = byId<HTMLButtonElement>('undo')
 const redoBtn = byId<HTMLButtonElement>('redo')
 const timelineBtn = byId<HTMLButtonElement>('timeline-toggle')
+const micBtn = byId<HTMLButtonElement>('mic')
+const player = byId<HTMLAudioElement>('player')
 const baseCtx = ctxOf(base)
 const inkCtx = ctxOf(ink)
 const toolBtns = document.querySelectorAll<HTMLButtonElement>('[data-tool]')
@@ -56,14 +66,24 @@ let tool: Tool = 'pen'
 let color = '#E5484D'
 let widthCss = 3
 let view = 1 // displayed size / natural on-screen size
-let annotations: readonly Annotation[] = []
-const history = new History<readonly Annotation[]>(100)
+let doc: Doc = { annotations: [], links: new Map() }
+let annotations: readonly Annotation[] = doc.annotations
+let links: ReadonlyMap<number, number | null> = doc.links
+const history = new History<Doc>(100)
 let drawing: StrokeAnn | null = null
 /** In-progress drag of an arrow / rect / badge / blur. */
 let shape: { tool: DragTool; start: Point; cur: Point; tStart: number } | null = null
 let textBox: HTMLInputElement | null = null
 let busy = false
 let scrubT: number | null = null // non-null while the timeline is scrubbed/replaying
+
+// voice: the finished recording (replaces any previous one) and its transcript
+let transcript: Transcript | null = null
+let audioBytes: Uint8Array | null = null
+let audioMime = ''
+let audioUrl: string | null = null
+let audioStartMs = 0 // editor-clock time of the recording's first sample
+let audioDurationMs = 0
 
 const now = (): number => performance.now() - t0
 
@@ -300,8 +320,31 @@ const timeline = new Timeline(byId('timeline'), {
   onScrub(t) {
     scrubT = t
     render()
-  }
+  },
+  getTranscript: () => transcript,
+  getLinks: () => links,
+  onLink(segmentIndex, annotationIndex) {
+    if (links.has(segmentIndex) && links.get(segmentIndex) === annotationIndex) return
+    const next = new Map(links)
+    next.set(segmentIndex, annotationIndex)
+    commitLinks('발화 연결', next)
+  },
+  onUnlink(segmentIndex) {
+    if (!links.has(segmentIndex)) return
+    const next = new Map(links)
+    next.delete(segmentIndex)
+    commitLinks('발화 연결 해제', next)
+  },
+  getAudio: () => (audioUrl ? player : null),
+  getAudioStartMs: () => audioStartMs,
+  getAudioDurationMs: () => audioDurationMs
 })
+
+function setDoc(next: Doc): void {
+  doc = next
+  annotations = next.annotations
+  links = next.links
+}
 
 function afterChange(): void {
   render()
@@ -310,12 +353,20 @@ function afterChange(): void {
   redoBtn.disabled = !history.canRedo
   undoBtn.title = history.undoLabel ? `되돌리기: ${history.undoLabel} (Ctrl+Z)` : hotkeys.label('undo')
   redoBtn.title = history.redoLabel ? `다시 실행: ${history.redoLabel} (Ctrl+Shift+Z)` : hotkeys.label('redo')
-  timelineBtn.classList.toggle('has-items', annotations.length > 0)
+  timelineBtn.classList.toggle('has-items', annotations.length > 0 || transcript !== null)
 }
 
 function commit(label: string, next: readonly Annotation[]): void {
-  history.commit(label, annotations, next)
-  annotations = next
+  const after: Doc = { annotations: next, links }
+  history.commit(label, doc, after)
+  setDoc(after)
+  afterChange()
+}
+
+function commitLinks(label: string, nextLinks: ReadonlyMap<number, number | null>): void {
+  const after: Doc = { annotations, links: nextLinks }
+  history.commit(label, doc, after)
+  setDoc(after)
   afterChange()
 }
 
@@ -324,7 +375,7 @@ function undo(): void {
   commitPendingText()
   const prev = history.undo()
   if (prev === undefined) return
-  annotations = prev
+  setDoc(prev)
   afterChange()
 }
 
@@ -333,7 +384,7 @@ function redo(): void {
   commitPendingText()
   const next = history.redo()
   if (next === undefined) return
-  annotations = next
+  setDoc(next)
   afterChange()
 }
 
@@ -502,7 +553,16 @@ ink.addEventListener('pointercancel', () => {
 function buildPayload(): ExportPayload | null {
   if (!init) return null
   commitPendingText()
-  return { pngDataUrl: flatten(), memo: memoInput.value.trim(), annotations: [...annotations], meta: init.meta }
+  const payload: ExportPayload = {
+    pngDataUrl: flatten(),
+    memo: memoInput.value.trim(),
+    annotations: [...annotations],
+    meta: init.meta,
+    links: [...links].map(([segmentIndex, annotationIndex]) => ({ segmentIndex, annotationIndex }))
+  }
+  if (transcript) payload.transcript = transcript
+  if (audioBytes) payload.audio = { bytes: audioBytes, mimeType: audioMime }
+  return payload
 }
 
 function errText(err: unknown): string {
@@ -510,12 +570,14 @@ function errText(err: unknown): string {
 }
 
 async function save(): Promise<void> {
-  if (busy) return
-  const payload = buildPayload()
-  if (!payload) return
+  if (busy || !init) return
   busy = true
   setStatus('저장 중…')
   try {
+    await settleRecording()
+    const payload = buildPayload()
+    if (!payload) return
+    setStatus('저장 중…')
     const r = await window.backseat.editor.save(payload)
     if (r.ok) setStatus(`저장됨: ${r.path ?? ''}`)
     else if (r.canceled) setStatus('저장 취소')
@@ -528,13 +590,15 @@ async function save(): Promise<void> {
 }
 
 async function send(): Promise<void> {
-  if (busy) return
-  const payload = buildPayload()
-  if (!payload) return
+  if (busy || !init) return
   busy = true
   setStatus('전송 중…')
   let closing = false
   try {
+    await settleRecording()
+    const payload = buildPayload()
+    if (!payload) return
+    setStatus('전송 중…')
     const r = await window.backseat.editor.send(payload, { pressEnter: false })
     setStatus(r.message, !r.ok)
     if (r.ok) {
@@ -570,11 +634,12 @@ function showTarget(target: AgentTarget | null): void {
 }
 
 async function copy(): Promise<void> {
-  if (busy) return
-  const payload = buildPayload()
-  if (!payload) return
+  if (busy || !init) return
   busy = true
   try {
+    await settleRecording()
+    const payload = buildPayload()
+    if (!payload) return
     const r = await window.backseat.editor.copy(payload)
     if (r.ok) setStatus('클립보드에 복사됨')
     else setStatus(`복사 실패: ${r.error ?? '알 수 없는 오류'}`, true)
@@ -644,6 +709,202 @@ async function exportVideo(): Promise<void> {
   }
 }
 
+// ---------- voice: record, decode, transcribe ----------
+
+interface ActiveRecording {
+  rec: MediaRecorder
+  stream: MediaStream
+  chunks: Blob[]
+  mime: string
+  startedPerf: number
+  /** Editor-clock time of the recorder's 'start' event. */
+  startMs: number
+  gen: number
+  stopped: Promise<void>
+  ticker: number
+}
+
+let active: ActiveRecording | null = null
+let startingMic = false
+let recTask: Promise<void> | null = null // stop + decode + transcribe of the latest recording
+let recGen = 0 // bumped per recording; stale transcription results are dropped
+let transcribing = false
+
+const mmss = (ms: number): string => {
+  const s = Math.floor(Math.max(0, ms) / 1000)
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+function updateMicUi(): void {
+  micBtn.classList.toggle('recording', active !== null)
+  micBtn.textContent = active ? `■ 정지 ${mmss(performance.now() - active.startedPerf)}` : '🎤 녹음'
+}
+
+function releaseMic(a: ActiveRecording): void {
+  window.clearInterval(a.ticker)
+  a.stream.getTracks().forEach((t) => t.stop())
+}
+
+window.backseat.editor.onSttProgress?.((p) => {
+  if (!transcribing) return
+  switch (p.stage) {
+    case 'loading': setStatus(p.message ?? '음성 모델 불러오는 중…'); break
+    case 'downloading':
+      setStatus(`모델 내려받는 중 ${p.file ?? ''} ${Math.round(p.progress ?? 0)}%`.replace(/\s+/g, ' '))
+      break
+    case 'transcribing': setStatus('전사 중…'); break
+    case 'error': setStatus(p.message ?? '전사 오류', true); break
+    case 'done': break
+  }
+})
+
+async function startRecording(): Promise<void> {
+  if (active || startingMic || !init) return
+  startingMic = true
+  let stream: MediaStream
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  } catch (err) {
+    startingMic = false
+    setStatus(`마이크를 사용할 수 없습니다: ${errText(err)}`, true)
+    return
+  }
+  try {
+    const mimeType = AUDIO_MIMES.find((m) => MediaRecorder.isTypeSupported(m))
+    const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    const a: ActiveRecording = {
+      rec, stream, chunks: [], mime: rec.mimeType || mimeType || 'audio/webm',
+      startedPerf: performance.now(), startMs: now(), gen: ++recGen,
+      stopped: new Promise<void>((resolve) => rec.addEventListener('stop', () => resolve(), { once: true })),
+      ticker: window.setInterval(updateMicUi, 250)
+    }
+    rec.addEventListener('dataavailable', (e) => { if (e.data.size > 0) a.chunks.push(e.data) })
+    rec.addEventListener('start', () => { a.startMs = now() }, { once: true })
+    rec.addEventListener('error', () => setStatus('녹음 오류가 발생했습니다', true))
+    active = a
+    rec.start(250)
+    updateMicUi()
+    setStatus('녹음 중')
+  } catch (err) {
+    stream.getTracks().forEach((t) => t.stop())
+    active = null
+    updateMicUi()
+    setStatus(`녹음을 시작하지 못했습니다: ${errText(err)}`, true)
+  } finally {
+    startingMic = false
+  }
+}
+
+/** Stop the current recording (if any) and resolve once its transcript attempt has finished. */
+function stopRecording(): Promise<void> {
+  const a = active
+  if (a) {
+    active = null
+    updateMicUi()
+    const task = finishRecording(a)
+    recTask = task
+    void task.finally(() => { if (recTask === task) recTask = null })
+  }
+  return recTask ?? Promise.resolve()
+}
+
+/** Called before save / copy / send: end a running recording and wait for its transcript. */
+async function settleRecording(): Promise<void> {
+  await stopRecording()
+}
+
+async function toggleRecording(): Promise<void> {
+  if (active) await stopRecording()
+  else await startRecording()
+}
+
+/** Makes <audio> report a finite duration for MediaRecorder WebM (which lacks one). */
+function fixInfiniteDuration(el: HTMLAudioElement): void {
+  const onMeta = (): void => {
+    if (el.duration !== Infinity) return
+    const back = (): void => {
+      el.removeEventListener('timeupdate', back)
+      el.currentTime = 0
+    }
+    el.addEventListener('timeupdate', back)
+    el.currentTime = 1e101
+  }
+  el.addEventListener('loadedmetadata', onMeta, { once: true })
+}
+
+function replaceAudio(blob: Blob, bytes: Uint8Array, startMs: number, durationMs: number): void {
+  if (audioUrl) URL.revokeObjectURL(audioUrl)
+  audioBytes = bytes
+  audioMime = blob.type
+  audioStartMs = startMs
+  audioDurationMs = durationMs
+  audioUrl = URL.createObjectURL(blob)
+  fixInfiniteDuration(player)
+  player.src = audioUrl
+  player.load()
+}
+
+async function finishRecording(a: ActiveRecording): Promise<void> {
+  try {
+    if (a.rec.state !== 'inactive') a.rec.stop()
+    await a.stopped
+  } catch (err) {
+    setStatus(`녹음 종료 실패: ${errText(err)}`, true)
+  } finally {
+    releaseMic(a) // the microphone is free again, whatever happened
+  }
+  const wallMs = performance.now() - a.startedPerf
+  if (a.chunks.length === 0) { setStatus('녹음된 소리가 없습니다', true); return }
+  const blob = new Blob(a.chunks, { type: a.mime })
+  let buf: ArrayBuffer
+  try {
+    buf = await blob.arrayBuffer()
+  } catch (err) {
+    setStatus(`녹음 읽기 실패: ${errText(err)}`, true)
+    return
+  }
+  if (a.gen !== recGen) return // a newer recording already took over
+
+  // a new recording replaces the previous audio and transcript (and the links into it)
+  transcript = null
+  if (links.size > 0) setDoc({ annotations, links: new Map() })
+  replaceAudio(blob, new Uint8Array(buf), a.startMs, wallMs)
+  afterChange()
+
+  transcribing = true
+  try {
+    setStatus('음성 해석 중…')
+    let pcm16k: Float32Array
+    const ac = new AudioContext({ sampleRate: 16000 })
+    try {
+      const decoded = await ac.decodeAudioData(buf.slice(0))
+      pcm16k = decoded.getChannelData(0).slice() // already resampled to 16 kHz by the context
+      if (a.gen === recGen && decoded.duration > 0) audioDurationMs = decoded.duration * 1000
+    } finally {
+      void ac.close()
+    }
+    const r = await window.backseat.editor.transcribe({ pcm16k, audioStartMs: a.startMs, language: 'korean' })
+    if (a.gen !== recGen) return
+    if (r.ok && r.transcript) {
+      transcript = r.transcript
+      const words = r.transcript.segments.reduce(
+        (n, seg) => n + (seg.words ? seg.words.length : seg.text.split(/\s+/).filter(Boolean).length), 0
+      )
+      afterChange()
+      setStatus(`전사 완료: ${words} 단어`)
+    } else {
+      setStatus(`전사 실패: ${r.error ?? '알 수 없는 오류'}`, true)
+    }
+  } catch (err) {
+    if (a.gen === recGen) setStatus(`전사 실패: ${errText(err)}`, true)
+  } finally {
+    if (a.gen === recGen) transcribing = false
+  }
+}
+
+// closing the window mid-recording must not leave the microphone open
+window.addEventListener('pagehide', () => { if (active) releaseMic(active) })
+
 // ---------- toolbar & keyboard ----------
 
 function setTool(next: Tool): void {
@@ -696,12 +957,14 @@ const hotkeys = new Hotkeys([
   { id: 'step-fwd', label: '0.2초 앞으로', keys: ['ArrowRight'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(200) } },
   { id: 'home', label: '처음으로', keys: ['Home'], run: () => { if (!timeline.isOpen) return false; timeline.pause(); timeline.seek(0) } },
   { id: 'live', label: '라이브로', keys: ['End'], run: () => { if (!timeline.isOpen) return false; timeline.setLive() } },
+  { id: 'mic', label: '녹음', keys: ['KeyM'], run: () => void toggleRecording() },
   { id: 'video', label: '녹화 내보내기', keys: ['Ctrl+KeyE'], run: () => void exportVideo() },
   {
     id: 'close', label: '닫기', keys: ['Escape'], context: 'global',
     run: (e) => {
       if (e.target === memoInput) { memoInput.blur(); return }
       if (e.target instanceof HTMLInputElement) return false // the text box handles its own Escape
+      if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first
       if (scrubT !== null) { timeline.setLive(); return }
       window.backseat.editor.close()
     }
@@ -724,6 +987,34 @@ window.backseat.editor.onInit((data) => {
   document.title = 'Backseat'
   syncToolbar()
   showTarget(data.target)
+  if (data.request) {
+    const q = document.createElement('span')
+    q.className = 'ask'
+    q.textContent = ` · ❓ ${data.request.agent || '에이전트'}: ${data.request.question}`
+    q.title = data.request.question
+    targetBar.appendChild(q)
+  }
+  if (data.debug) {
+    // Harness hooks: inject a transcript without a microphone, inspect state (see src/main/selftest.ts).
+    window.addEventListener('backseat:debug-transcript', (e) => {
+      transcript = (e as CustomEvent<Transcript>).detail
+      afterChange()
+      setStatus(`디버그 전사 주입: ${transcript.segments.length} 세그먼트`)
+    })
+    const w = window as unknown as { __backseat?: unknown }
+    w.__backseat = {
+      state: () => ({
+        annotations: annotations.map((a) => ({ kind: a.kind, tStart: Math.round(a.tStart), tEnd: Math.round(a.tEnd) })),
+        links: [...links],
+        canUndo: history.canUndo,
+        canRedo: history.canRedo,
+        drawing: drawing !== null,
+        shape: shape !== null,
+        init: init !== null,
+        transcript: transcript ? transcript.segments.length : 0
+      })
+    }
+  }
   afterChange()
   const img = new Image()
   img.onload = () => {
@@ -733,6 +1024,7 @@ window.backseat.editor.onInit((data) => {
     init = data
     layout()
     render()
+    if (data.autoRecord) void startRecording()
   }
   img.onerror = () => setStatus('이미지를 불러오지 못했습니다', true)
   img.src = data.imageDataUrl
