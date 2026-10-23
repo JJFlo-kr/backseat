@@ -4,6 +4,7 @@ import { app } from 'electron'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { AgentTarget, ExportPayload } from '../shared/types'
+import { alignSegments } from '../shared/align'
 import { buildBrief } from './brief'
 
 export interface SessionPackage {
@@ -13,6 +14,19 @@ export interface SessionPackage {
   briefMd: string
   strokesJson: string
   metaJson: string
+  audioFile?: string
+  transcriptJson?: string
+}
+
+function audioExt(mime: string): string {
+  if (mime.includes('ogg')) return 'ogg'
+  if (mime.includes('mp4') || mime.includes('m4a')) return 'm4a'
+  if (mime.includes('wav')) return 'wav'
+  return 'webm'
+}
+
+export function manualLinks(payload: ExportPayload): Map<number, number | null> {
+  return new Map((payload.links ?? []).map((l) => [l.segmentIndex, l.annotationIndex]))
 }
 
 export function sessionsRoot(): string {
@@ -44,16 +58,42 @@ export async function writeSessionPackage(
     strokesJson: join(dir, 'strokes.json'),
     metaJson: join(dir, 'meta.json')
   }
-  await Promise.all([
+  const files = ['annotated.png', 'brief.md', 'strokes.json', 'meta.json']
+  const writes: Promise<void>[] = [
     writeFile(pkg.annotatedPng, pngBuffer(payload.pngDataUrl)),
     writeFile(pkg.briefMd, buildBrief(payload, 'annotated.png', target), 'utf8'),
-    writeFile(pkg.strokesJson, JSON.stringify({ annotations: payload.annotations }, null, 2), 'utf8'),
+    writeFile(pkg.strokesJson, JSON.stringify({ annotations: payload.annotations }, null, 2), 'utf8')
+  ]
+  if (payload.audio) {
+    const name = `audio.${audioExt(payload.audio.mimeType)}`
+    pkg.audioFile = join(dir, name)
+    files.push(name)
+    writes.push(writeFile(pkg.audioFile, Buffer.from(payload.audio.bytes)))
+  }
+  if (payload.transcript) {
+    pkg.transcriptJson = join(dir, 'transcript.json')
+    files.push('transcript.json')
+    const alignment = alignSegments(payload.annotations, payload.transcript.segments, { manual: manualLinks(payload) })
+    writes.push(
+      writeFile(
+        pkg.transcriptJson,
+        JSON.stringify({ ...payload.transcript, alignment, manualLinks: payload.links ?? [] }, null, 2),
+        'utf8'
+      )
+    )
+  }
+  writes.push(
     writeFile(
       pkg.metaJson,
-      JSON.stringify({ id, memo: payload.memo, meta: payload.meta, target, files: ['annotated.png', 'brief.md', 'strokes.json'] }, null, 2),
+      JSON.stringify(
+        { id, memo: payload.memo, requestId: payload.meta.request?.requestId, meta: payload.meta, target, files },
+        null,
+        2
+      ),
       'utf8'
     )
-  ])
+  )
+  await Promise.all(writes)
   // Pointer for tools (and the future MCP server) that just want "the latest".
   await writeFile(join(root, 'latest.txt'), dir, 'utf8')
   return pkg

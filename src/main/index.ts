@@ -1,19 +1,49 @@
-import { app, globalShortcut } from 'electron'
-import type { CaptureMode, EditorInit } from '../shared/types'
+import { app, globalShortcut, session } from 'electron'
+import type { AgentTarget, AskRequest, CaptureMode, EditorInit } from '../shared/types'
 import { classifyTarget } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
+import { ensureConfig, loadSettings } from './config'
 import { createEditorWindow, installEditorIpc } from './editor'
+import { pruneRegistry } from './mcp/registry'
 import { getForegroundWindow, listTopLevelWindows } from './native/win32'
+import { startRequestWatcher, takePendingRequest } from './requests'
 import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
+import { sessionsRoot } from './sessions'
 import { createTray } from './tray'
 
-const HOTKEY = 'CommandOrControl+Shift+A'
-const HOTKEY_WINDOW = 'CommandOrControl+Shift+W'
 let capturing = false
 
+/** Merge the window-based guess with agents registered through backseat-mcp. */
+async function pickTarget(active: ReturnType<typeof getForegroundWindow>): Promise<AgentTarget | null> {
+  const guess = classifyTarget(active)
+  let registered: Awaited<ReturnType<typeof pruneRegistry>> = []
+  try {
+    registered = await pruneRegistry(sessionsRoot())
+  } catch {
+    registered = []
+  }
+  if (registered.length === 0) return guess
+  const agent = registered[registered.length - 1]
+  const mcp = { id: agent.id, name: agent.name, cwd: agent.cwd }
+  if (guess && guess.method !== 'clipboard') {
+    // Terminal/editor in front AND an MCP agent listening: paste a short MCP instruction there.
+    return { ...guess, mcp, label: `${guess.label} · MCP ${agent.name}`, confidence: Math.max(guess.confidence, 0.9) }
+  }
+  return {
+    kind: 'claude-code',
+    label: `${agent.name} (MCP) · ${agent.cwd}`,
+    hwnd: 0,
+    title: '',
+    process: '',
+    method: 'clipboard',
+    confidence: 0.6,
+    mcp
+  }
+}
+
 /** Full flow: remember the active window -> freeze screens -> pick a region/window -> open the editor. */
-export async function startCapture(mode: CaptureMode = 'rect'): Promise<void> {
+export async function startCapture(mode: CaptureMode = 'rect', request?: AskRequest): Promise<void> {
   if (capturing) {
     // Hotkey pressed again while the selector is up: treat as cancel.
     if (selectorActive()) cancelSelector()
@@ -21,8 +51,10 @@ export async function startCapture(mode: CaptureMode = 'rect'): Promise<void> {
   }
   capturing = true
   try {
+    const settings = loadSettings()
     const active = getForegroundWindow() // before any of our windows show up
-    const target = classifyTarget(active)
+    const target = await pickTarget(active)
+    const ask = request ?? takePendingRequest() ?? undefined
     const caps = await captureAllDisplays()
     const windows = listTopLevelWindows()
     const sel = await runSelector(caps, windows, mode)
@@ -42,9 +74,12 @@ export async function startCapture(mode: CaptureMode = 'rect'): Promise<void> {
         rectPx,
         mode: sel.mode,
         window: sel.window ? { title: sel.window.title, process: sel.window.process } : undefined,
-        activeWindow: active ? { title: active.title, process: active.process } : undefined
+        activeWindow: active ? { title: active.title, process: active.process } : undefined,
+        request: ask ? { requestId: ask.requestId, question: ask.question, agent: ask.agent } : undefined
       },
-      target
+      target,
+      autoRecord: settings.autoRecord,
+      request: ask
     }
     createEditorWindow(init)
   } catch (err) {
@@ -56,7 +91,10 @@ export async function startCapture(mode: CaptureMode = 'rect'): Promise<void> {
 
 app.setAppUserModelId('com.backseat.app')
 
-if (!app.requestSingleInstanceLock()) {
+const isSelfTest = process.argv.includes('--selftest')
+
+// The self-test must run even while the tray app is up, so it skips the single-instance lock.
+if (!isSelfTest && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
@@ -64,18 +102,29 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
+    // Our own renderers only: allow microphone and clipboard without a prompt.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(['media', 'clipboard-read', 'clipboard-sanitized-write'].includes(permission))
+    })
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+      ['media', 'clipboard-read', 'clipboard-sanitized-write'].includes(permission)
+    )
     installEditorIpc()
     if (process.argv.includes('--selftest')) {
       await runSelfTest()
       return
     }
+    const settings = await ensureConfig()
     createTray(() => void startCapture())
-    if (!globalShortcut.register(HOTKEY, () => void startCapture('rect'))) {
-      console.error(`[backseat] could not register hotkey ${HOTKEY}`)
+    for (const [accel, mode] of [
+      [settings.hotkeyRect, 'rect'],
+      [settings.hotkeyWindow, 'window']
+    ] as const) {
+      if (!globalShortcut.register(accel, () => void startCapture(mode))) {
+        console.error(`[backseat] could not register hotkey ${accel}`)
+      }
     }
-    if (!globalShortcut.register(HOTKEY_WINDOW, () => void startCapture('window'))) {
-      console.error(`[backseat] could not register hotkey ${HOTKEY_WINDOW}`)
-    }
+    void startRequestWatcher(settings.sessionsRoot, (r) => void startCapture('rect', r))
     if (process.argv.includes('--capture')) void startCapture()
   })
 }

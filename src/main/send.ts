@@ -6,7 +6,8 @@ import { readFile } from 'fs/promises'
 import type { AgentTarget, ExportPayload, SendOptions, SendResult } from '../shared/types'
 import { instructionLine } from './agents'
 import { focusWindow, getForegroundWindow, sendCtrlV, sendEnter, win32Available } from './native/win32'
-import { writeSessionPackage } from './sessions'
+import { markAnswered } from './requests'
+import { sessionsRoot, writeSessionPackage } from './sessions'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -31,15 +32,17 @@ export async function sendToTarget(
   try {
     const pkg = await writeSessionPackage(payload, target)
     sessionDir = pkg.dir
-    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo)
+    if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
+    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, Boolean(target?.mcp))
 
-    if (!target || target.method === 'clipboard' || !win32Available()) {
+    if (!target || target.method === 'clipboard' || !target.hwnd || !win32Available()) {
       await clipboardImageAndText(pkg.annotatedPng, line)
+      const viaMcp = target?.mcp ? ' · 에이전트는 backseat_latest/backseat_wait로 받을 수 있음' : ''
       return {
         ok: true,
         delivered: 'clipboard',
         sessionDir,
-        message: target ? `${target.label}: 클립보드에 복사됨 (Ctrl+V)` : '대상 없음 · 클립보드에 복사됨 (Ctrl+V)'
+        message: target ? `${target.label}: 클립보드에 복사됨 (Ctrl+V)${viaMcp}` : '대상 없음 · 클립보드에 복사됨 (Ctrl+V)'
       }
     }
 

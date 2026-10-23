@@ -1,4 +1,5 @@
-import type { AgentTarget, Annotation, ExportPayload } from '../shared/types'
+import type { AgentTarget, Annotation, ExportPayload, Segment } from '../shared/types'
+import { alignSegments, groupByAnnotation, type Assignment } from '../shared/align'
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
 
@@ -49,6 +50,11 @@ export function buildBrief(payload: ExportPayload, imageFileName: string, target
   )
   if (meta.activeWindow) lines.push(`작업 중이던 창: "${meta.activeWindow.title}" (${meta.activeWindow.process})`)
   if (target) lines.push(`전송 대상: ${target.label}`)
+  if (meta.request) {
+    lines.push('')
+    lines.push(`## ${meta.request.agent || '에이전트'}의 질문에 대한 답`)
+    lines.push(`> ${meta.request.question}`)
+  }
   lines.push('')
   lines.push(`![capture](${imageFileName})`)
   lines.push('')
@@ -57,14 +63,46 @@ export function buildBrief(payload: ExportPayload, imageFileName: string, target
     lines.push(memo)
     lines.push('')
   }
+  const transcript = payload.transcript
+  const segments: Segment[] = transcript?.segments ?? []
+  const assignments: Assignment[] =
+    segments.length > 0
+      ? alignSegments(annotations, segments, { manual: new Map((payload.links ?? []).map((l) => [l.segmentIndex, l.annotationIndex])) })
+      : []
+  const grouped = groupByAnnotation(assignments)
+  const speechLine = (segIdx: number): string => {
+    const s = segments[segIdx]
+    const a = assignments[segIdx]
+    const how = a.source === 'manual' ? '수동 연결' : `자동, 신뢰도 ${a.confidence.toFixed(2)}`
+    return `   🗣 "${s.text}" [${fmtTime(s.start)}–${fmtTime(s.end)}] (${how})`
+  }
+
   if (annotations.length > 0) {
-    lines.push('## 주석 (그린 순서, 시간은 편집기 열린 시점 기준)')
-    annotations.forEach((a, i) => lines.push(`${i + 1}. ${describe(a, i)}`))
+    lines.push(segments.length > 0 ? '## 주석 ↔ 발화 (그린 순서, 시간은 편집기 열린 시점 기준)' : '## 주석 (그린 순서, 시간은 편집기 열린 시점 기준)')
+    annotations.forEach((a, i) => {
+      lines.push(`${i + 1}. ${describe(a, i)}`)
+      for (const segIdx of grouped.get(i) ?? []) lines.push(speechLine(segIdx))
+    })
+    lines.push('')
+  }
+  const globals = grouped.get(null) ?? []
+  if (globals.length > 0) {
+    lines.push('## 전역 지시 (특정 주석과 무관한 발화)')
+    for (const segIdx of globals) lines.push(`-${speechLine(segIdx).slice(2)}`)
+    lines.push('')
+  }
+  if (transcript && transcript.text) {
+    lines.push('## 전체 전사')
+    lines.push(`"${transcript.text}" (${transcript.model}, ${(transcript.durationMs / 1000).toFixed(1)}초)`)
     lines.push('')
   }
   lines.push('## 해석 가이드')
   lines.push('- 좌표는 이미지 픽셀 기준. 캡처된 화면의 UI 요소와 대응시켜 수정할 것.')
   lines.push('- 번호는 그린 순서. 텍스트/번호 주석은 그 위치의 요소에 대한 지시. 화살표는 "이것을 → 저기로" 또는 "여기를 봐".')
+  if (segments.length > 0) {
+    lines.push('- 🗣 줄은 그 주석을 그리는 동안(또는 직전·직후) 말한 내용. 신뢰도가 낮으면 전역 지시일 수도 있음. "이거/여기"는 해당 주석 위치를 가리킴.')
+    lines.push('- 전사는 자동 인식이라 숫자·고유명사가 틀릴 수 있음 (예: "1.5배"가 "1.5팩"으로).')
+  }
   lines.push('- 블러 영역은 민감정보를 가린 것이니 무시할 것.')
   return lines.join('\n') + '\n'
 }

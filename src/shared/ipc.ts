@@ -13,6 +13,9 @@ export const IPC = {
   editorCopy: 'editor:copy',
   editorSaveVideo: 'editor:save-video',
   editorSend: 'editor:send',
+  // editor window -> main (invoke) / main -> editor (send)
+  editorTranscribe: 'editor:transcribe',
+  editorSttProgress: 'editor:stt-progress',
   // editor window -> main (send)
   editorClose: 'editor:close'
 } as const

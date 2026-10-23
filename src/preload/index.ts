@@ -10,6 +10,9 @@ import type {
   SelectorInit,
   SendOptions,
   SendResult,
+  SttProgress,
+  TranscribeRequest,
+  TranscribeResult,
   VideoSave
 } from '../shared/types'
 
@@ -40,6 +43,12 @@ const api: BackseatApi = {
     },
     send(payload: ExportPayload, opts?: SendOptions): Promise<SendResult> {
       return ipcRenderer.invoke(IPC.editorSend, payload, opts ?? {})
+    },
+    transcribe(req: TranscribeRequest): Promise<TranscribeResult> {
+      return ipcRenderer.invoke(IPC.editorTranscribe, req)
+    },
+    onSttProgress(cb) {
+      ipcRenderer.on(IPC.editorSttProgress, (_e, p: SttProgress) => cb(p))
     },
     close() {
       ipcRenderer.send(IPC.editorClose)
