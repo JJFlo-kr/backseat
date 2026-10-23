@@ -5,16 +5,33 @@ import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
+import '@fontsource/noto-sans-kr/500.css'
+import '@fontsource/noto-sans-kr/700.css'
+import '@fontsource/nanum-gothic/700.css'
+import '@fontsource/nanum-pen-script/400.css'
+import '@fontsource/jua/400.css'
+import '@fontsource/do-hyeon/400.css'
+import '@fontsource/black-han-sans/400.css'
 
-type Tool = 'pen' | 'text' | 'arrow' | 'rect' | 'badge' | 'blur' | 'crop'
+type Tool = 'pen' | 'text' | 'arrow' | 'rect' | 'badge' | 'blur' | 'crop' | 'eraser'
+type TextStyle = 'outline' | 'plate' | 'plain'
 type DragTool = 'arrow' | 'rect' | 'badge' | 'blur'
 type StrokeAnn = Extract<Annotation, { kind: 'stroke' }>
 type ArrowAnn = Extract<Annotation, { kind: 'arrow' }>
 type RectAnn = Extract<Annotation, { kind: 'rect' }>
 type BadgeAnn = Extract<Annotation, { kind: 'badge' }>
 type BlurAnn = Extract<Annotation, { kind: 'blur' }>
+type TextAnn = Extract<Annotation, { kind: 'text' }>
 
-const TEXT_SIZE = 18 // CSS px; scaled by meta.scaleFactor into image pixels
+const DEFAULT_FONT = 'Noto Sans KR'
+const FALLBACK_FONTS = 'system-ui, "Malgun Gothic", sans-serif'
+/** Families shipped with the app (@fontsource); everything else is the system UI font. */
+const BUNDLED_FONTS: ReadonlySet<string> = new Set([
+  'Noto Sans KR', 'Nanum Gothic', 'Nanum Pen Script', 'Jua', 'Do Hyeon', 'Black Han Sans'
+])
+/** Gothic faces are bundled bold; the display / handwriting faces only have a regular cut. */
+const BOLD_FONTS: ReadonlySet<string> = new Set(['Noto Sans KR', 'Nanum Gothic'])
+const ERASE_TOLERANCE = 6 // CSS px around the eraser path
 const BADGE_SIZE = 22 // CSS px diameter
 const BLUR_BLOCK = 14 // CSS px per pixelation block
 const MIN_DRAG = 3 // image px
@@ -31,7 +48,14 @@ interface Doc {
 }
 
 function isTool(v: string | undefined): v is Tool {
-  return v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur' || v === 'crop'
+  return (
+    v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur' ||
+    v === 'crop' || v === 'eraser'
+  )
+}
+
+function isTextStyle(v: string): v is TextStyle {
+  return v === 'plate' || v === 'outline' || v === 'plain'
 }
 
 const sameRect = (a: Rect, b: Rect): boolean =>
@@ -72,7 +96,11 @@ const baseCtx = ctxOf(base, true) // blur and the compare diff read it back
 const inkCtx = ctxOf(ink)
 const toolBtns = document.querySelectorAll<HTMLButtonElement>('[data-tool]')
 const colorBtns = document.querySelectorAll<HTMLButtonElement>('[data-color]')
-const widthBtns = document.querySelectorAll<HTMLButtonElement>('[data-width]')
+const widthInput = byId<HTMLInputElement>('width')
+const widthDot = byId<HTMLElement>('width-dot')
+const fontSelect = byId<HTMLSelectElement>('font')
+const sizeSelect = byId<HTMLSelectElement>('font-size')
+const styleSelect = byId<HTMLSelectElement>('text-style')
 
 let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
@@ -80,6 +108,9 @@ let t0 = 0
 let tool: Tool = 'pen'
 let color = '#E5484D'
 let widthCss = 3
+let fontFamily: string | undefined = DEFAULT_FONT // undefined = system UI font
+let fontSizeCss = 24
+let textStyle: TextStyle = 'plate'
 let view = 1 // displayed size / natural on-screen size
 let doc: Doc = { annotations: [], links: new Map(), crop: { x: 0, y: 0, width: 0, height: 0 } }
 let annotations: readonly Annotation[] = doc.annotations
@@ -90,6 +121,10 @@ const history = new History<Doc>(100)
 let drawing: StrokeAnn | null = null
 /** In-progress drag of an arrow / rect / badge / blur. */
 let shape: { tool: DragTool; start: Point; cur: Point; tStart: number } | null = null
+/** In-progress drag of an existing text annotation (text / move). */
+let moveDrag: { index: number; orig: TextAnn; ann: TextAnn; start: Point; moved: boolean } | null = null
+/** In-progress eraser sweep: indices hit so far (hidden live, deleted on pointerup). */
+let erasing: { hits: Set<number>; last: Point } | null = null
 /** In-progress crop drag (image px). */
 let cropDrag: { start: Point; cur: Point } | null = null
 /** Debug/self-test: how many pointer events the ink canvas saw. */
@@ -104,7 +139,19 @@ let cmpMode: CompareMode = 'overlay'
 let cmpOpacity = 0.5
 let cmpWipe = 0.5
 let diffCache: number | null = null
-let textBox: HTMLInputElement | null = null
+/** The open text input: a new text (index -1) or an edit of annotations[index]. */
+interface TextSession {
+  box: HTMLInputElement
+  index: number
+  orig: TextAnn | null
+  at: Point
+  tStart: number
+  color: string
+  font: string | undefined
+  sizeCss: number
+  style: TextStyle
+}
+let textSession: TextSession | null = null
 let busy = false
 let pinned = false // small always-on-top reference window; 전송 no longer closes it
 let scrubT: number | null = null // non-null while the timeline is scrubbed/replaying
@@ -145,15 +192,104 @@ function applyStroke(ctx: CanvasRenderingContext2D, a: StrokeAnn): void {
   ctx.lineJoin = 'round'
 }
 
-function drawText(ctx: CanvasRenderingContext2D, a: Extract<Annotation, { kind: 'text' }>): void {
-  ctx.font = `bold ${a.fontSize}px system-ui, "Malgun Gothic", sans-serif`
+/** Canvas / CSS font shorthand for a text annotation's family and size (px). */
+function fontString(family: string | undefined, sizePx: number): string {
+  if (!family) return `700 ${sizePx}px ${FALLBACK_FONTS}`
+  const weight = BOLD_FONTS.has(family) ? 700 : 400
+  return `${weight} ${sizePx}px "${family}", ${FALLBACK_FONTS}`
+}
+
+const fontLoads = new Set<string>() // "font|text" combos already requested
+
+/** Bundled faces load lazily (and per unicode-range subset): request them once and repaint when ready. */
+function ensureFont(font: string, text: string): void {
+  if (!BUNDLED_FONTS.has(font.split('"')[1] ?? '')) return
+  const key = `${font}|${text}`
+  if (fontLoads.has(key) || document.fonts.check(font, text)) return
+  fontLoads.add(key)
+  void document.fonts.load(font, text).then(() => { render(); timeline.refresh() }, () => undefined)
+}
+
+/** Resolves once every bundled font the document uses is available (before exporting pixels). */
+async function loadDocFonts(): Promise<void> {
+  const jobs: Promise<unknown>[] = []
+  for (const a of annotations) {
+    if (a.kind !== 'text') continue
+    const f = fontString(a.font, a.fontSize)
+    if (BUNDLED_FONTS.has(a.font ?? '')) jobs.push(document.fonts.load(f, a.text).catch(() => undefined))
+  }
+  if (jobs.length) await Promise.all(jobs)
+}
+
+const measureCtx = ctxOf(document.createElement('canvas'))
+
+interface TextMetrics { font: string; width: number; ascent: number; descent: number; pad: number }
+
+function measureText(a: TextAnn): TextMetrics {
+  const font = fontString(a.font, a.fontSize)
+  measureCtx.font = font
+  measureCtx.textBaseline = 'middle'
+  const m = measureCtx.measureText(a.text)
+  return {
+    font,
+    width: m.width,
+    ascent: m.actualBoundingBoxAscent,
+    descent: m.actualBoundingBoxDescent,
+    pad: a.fontSize * 0.35
+  }
+}
+
+/** Rect (image px) the text occupies including its plate padding: used for drawing and hit-testing. */
+function textRect(a: TextAnn): Rect {
+  const m = measureText(a)
+  return { x: a.x - m.pad, y: a.y - m.ascent - m.pad, width: m.width + m.pad * 2, height: m.ascent + m.descent + m.pad * 2 }
+}
+
+/** '#rrggbb' or 'rgb(r, g, b)' -> perceived brightness 0..1 (unknown strings count as dark). */
+function brightness(c: string): number {
+  let r = 0
+  let g = 0
+  let b = 0
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim())
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].replace(/./g, '$&$&') : hex[1]
+    r = parseInt(h.slice(0, 2), 16)
+    g = parseInt(h.slice(2, 4), 16)
+    b = parseInt(h.slice(4, 6), 16)
+  } else {
+    const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(c)
+    if (m) { r = Number(m[1]); g = Number(m[2]); b = Number(m[3]) }
+  }
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+}
+
+/** Light text gets a dark plate, dark / saturated text a white one. */
+function plateColor(textColor: string): string {
+  return brightness(textColor) > 0.6 ? 'rgba(20,20,24,0.78)' : 'rgba(255,255,255,0.85)'
+}
+
+function drawText(ctx: CanvasRenderingContext2D, a: TextAnn): void {
+  const m = measureText(a)
+  ensureFont(m.font, a.text)
+  ctx.save()
+  ctx.font = m.font
   ctx.textBaseline = 'middle'
-  ctx.lineJoin = 'round'
-  ctx.lineWidth = Math.max(3, a.fontSize / 6)
-  ctx.strokeStyle = 'rgba(0,0,0,0.75)'
-  ctx.strokeText(a.text, a.x, a.y)
+  ctx.textAlign = 'start'
+  const style = a.style ?? 'plate'
+  if (style === 'plate') {
+    ctx.fillStyle = plateColor(a.color)
+    ctx.beginPath()
+    ctx.roundRect(a.x - m.pad, a.y - m.ascent - m.pad, m.width + m.pad * 2, m.ascent + m.descent + m.pad * 2, a.fontSize * 0.3)
+    ctx.fill()
+  } else if (style === 'outline') {
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = Math.max(1, a.fontSize / 9)
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'
+    ctx.strokeText(a.text, a.x, a.y)
+  }
   ctx.fillStyle = a.color
   ctx.fillText(a.text, a.x, a.y)
+  ctx.restore()
 }
 
 /** Draw the first `count` points of a stroke (all when undefined). */
@@ -316,7 +452,10 @@ function drawAnnotationAt(ctx: CanvasRenderingContext2D, a: Annotation, t: numbe
 /** Draw the whole document: live (t = null) or as it looked at time t. Badges are numbered by array order. */
 function drawAll(ctx: CanvasRenderingContext2D, t: number | null): void {
   let badgeNo = 0
-  for (const a of annotations) {
+  for (let i = 0; i < annotations.length; i++) {
+    if (textSession && textSession.index === i) continue // being edited: the text box shows it
+    if (erasing?.hits.has(i)) continue // swept by the eraser: already gone visually, committed on pointerup
+    const a = moveDrag && moveDrag.index === i ? moveDrag.ann : annotations[i]
     const no = a.kind === 'badge' ? ++badgeNo : undefined
     if (t === null) drawAnnotation(ctx, a, no)
     else drawAnnotationAt(ctx, a, t, no)
@@ -408,7 +547,7 @@ function annotationBox(a: Annotation): Rect {
     case 'badge':
       return { x: a.x - a.size / 2, y: a.y - a.size / 2, width: a.size, height: a.size }
     case 'text':
-      return { x: a.x, y: a.y - a.fontSize / 2, width: a.fontSize * a.text.length * 0.6, height: a.fontSize }
+      return textRect(a)
   }
 }
 
@@ -634,7 +773,7 @@ function commitLinks(label: string, nextLinks: ReadonlyMap<number, number | null
 }
 
 function undo(): void {
-  if (drawing || shape || cropDrag) return
+  if (drawing || shape || cropDrag || moveDrag || erasing) return
   commitPendingText()
   const prev = history.undo()
   if (prev === undefined) return
@@ -643,7 +782,7 @@ function undo(): void {
 }
 
 function redo(): void {
-  if (drawing || shape || cropDrag) return
+  if (drawing || shape || cropDrag || moveDrag || erasing) return
   commitPendingText()
   const next = history.redo()
   if (next === undefined) return
@@ -658,51 +797,229 @@ function ensureLive(): void {
 
 // ---------- text tool ----------
 
-function finishText(box: HTMLInputElement, commitIt: boolean, tStart: number, at: Point): void {
-  if (textBox !== box) return
-  textBox = null // first, so the blur fired by remove() is a no-op
-  const text = box.value.trim()
-  const boxColor = box.style.color
-  box.remove()
-  if (!commitIt || !text || !init) return
+/** Mirror the session's font, size, colour and plate onto the live text input. */
+function styleTextBox(sess: TextSession): void {
+  const box = sess.box
+  box.style.font = fontString(sess.font, sess.sizeCss * view)
+  box.style.lineHeight = '1.3'
+  box.style.color = sess.color
+  box.style.background = sess.style === 'plate' ? plateColor(sess.color) : 'transparent'
+  box.classList.toggle('st-outline', sess.style === 'outline')
+}
+
+function finishText(sess: TextSession, commitIt: boolean): void {
+  if (textSession !== sess) return
+  textSession = null // first, so the blur fired by remove() is a no-op
+  const text = sess.box.value.trim()
+  sess.box.remove()
+  if (!commitIt || !text || !init) { render(); return }
+  const fontSize = sess.sizeCss * init.meta.scaleFactor
+  if (sess.orig) {
+    const o = sess.orig
+    const unchanged =
+      o.text === text && o.color === sess.color && o.font === sess.font &&
+      (o.style ?? 'plate') === sess.style && Math.abs(o.fontSize - fontSize) < 0.01
+    if (unchanged || annotations[sess.index] !== o) { render(); return }
+    const next = [...annotations]
+    next[sess.index] = { ...o, text, color: sess.color, font: sess.font, style: sess.style, fontSize, tEnd: now() }
+    commit('텍스트 수정', next)
+    return
+  }
   commit('텍스트', [
     ...annotations,
     {
-      kind: 'text', text, x: at.x, y: at.y, color: boxColor,
-      fontSize: TEXT_SIZE * init.meta.scaleFactor, tStart, tEnd: now()
+      kind: 'text', text, x: sess.at.x, y: sess.at.y, color: sess.color, fontSize,
+      font: sess.font, style: sess.style, tStart: sess.tStart, tEnd: now()
     }
   ])
 }
 
 function commitPendingText(): void {
-  textBox?.blur() // blur handler commits
+  if (textSession) finishText(textSession, true)
 }
 
-function startText(p: Point, e: PointerEvent): void {
-  const rect = ink.getBoundingClientRect()
+const isToolbarControl = (n: EventTarget | null): boolean =>
+  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range')
+
+/** Open the text input at (left, top) in wrap CSS px; `orig` = existing annotation being edited. */
+function openTextBox(left: number, top: number, at: Point, index: number, orig: TextAnn | null, initial: string): void {
   const box = document.createElement('input')
   box.type = 'text'
   box.className = 'textbox'
   box.spellcheck = false
-  box.style.color = color
-  box.style.fontSize = `${TEXT_SIZE * view}px`
-  box.style.left = `${e.clientX - rect.left}px`
-  box.style.top = `${e.clientY - rect.top}px`
-  const tStart = now()
+  box.value = initial
+  box.style.left = `${left}px`
+  box.style.top = `${top}px`
+  const sess: TextSession = {
+    box, index, orig, at, tStart: orig ? orig.tStart : now(),
+    color, font: fontFamily, sizeCss: fontSizeCss, style: textStyle
+  }
+  styleTextBox(sess)
   box.addEventListener('keydown', (ev) => {
     if (ev.isComposing) return // Korean IME: Enter confirms the composition
-    if (ev.key === 'Enter') { ev.preventDefault(); finishText(box, true, tStart, p) }
-    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finishText(box, false, tStart, p) }
+    if (ev.key === 'Enter') { ev.preventDefault(); finishText(sess, true) }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finishText(sess, false) }
   })
-  box.addEventListener('blur', () => finishText(box, true, tStart, p))
-  textBox = box
+  box.addEventListener('blur', (ev) => {
+    if (isToolbarControl(ev.relatedTarget)) return // picking a font / size / style keeps the box open
+    finishText(sess, true)
+  })
+  textSession = sess
   wrap.appendChild(box)
-  setTimeout(() => box.focus(), 0) // after the browser's own mousedown focus handling
+  if (orig) render() // hide the original under the box
+  setTimeout(() => { box.focus(); if (orig) box.select() }, 0) // after the browser's own mousedown focus handling
+}
+
+function startText(p: Point, e: PointerEvent): void {
+  const rect = ink.getBoundingClientRect()
+  openTextBox(e.clientX - rect.left, e.clientY - rect.top, p, -1, null, '')
+}
+
+const SIZE_CHOICES = [14, 18, 24, 32, 48]
+
+/** Edit annotations[index] in place: the toolbar adopts its font / size / colour / style. */
+function startEditText(index: number): void {
+  const a = annotations[index]
+  if (!init || !a || a.kind !== 'text') return
+  commitPendingText()
+  fontFamily = a.font
+  textStyle = a.style ?? 'plate'
+  color = a.color
+  const css = a.fontSize / init.meta.scaleFactor
+  fontSizeCss = SIZE_CHOICES.reduce((best, v) => (Math.abs(v - css) < Math.abs(best - css) ? v : best), SIZE_CHOICES[0])
+  syncToolbar()
+  const r = ink.getBoundingClientRect()
+  openTextBox(a.x * (r.width / ink.width), a.y * (r.height / ink.height), { x: a.x, y: a.y }, index, a, a.text)
+  if (textSession) { textSession.sizeCss = css; styleTextBox(textSession) } // keep the exact size until the user picks another
+}
+
+/** Topmost text annotation whose measured box contains p (image px), or -1. */
+function hitText(p: Point): number {
+  for (let i = annotations.length - 1; i >= 0; i--) {
+    const a = annotations[i]
+    if (a.kind !== 'text' || (textSession && textSession.index === i)) continue
+    const r = textRect(a)
+    if (p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height) return i
+  }
+  return -1
+}
+
+function endMove(commitIt: boolean): void {
+  if (!moveDrag) return
+  const m = moveDrag
+  moveDrag = null
+  if (commitIt && m.moved && annotations[m.index] === m.orig) {
+    const next = [...annotations]
+    next[m.index] = m.ann
+    commit('텍스트 이동', next)
+  } else render()
+}
+
+// ---------- eraser ----------
+
+const dist = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y)
+
+function ptSegDist(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const l2 = dx * dx + dy * dy
+  if (l2 === 0) return dist(p, a)
+  const t = clamp01(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)
+  return dist(p, { x: a.x + t * dx, y: a.y + t * dy })
+}
+
+function segsCross(a: Point, b: Point, c: Point, d: Point): boolean {
+  const o = (p: Point, q: Point, r: Point): number => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x))
+  const o1 = o(a, b, c)
+  const o2 = o(a, b, d)
+  const o3 = o(c, d, a)
+  const o4 = o(c, d, b)
+  return o1 !== o2 && o3 !== o4
+}
+
+function segSegDist(a: Point, b: Point, c: Point, d: Point): number {
+  if (segsCross(a, b, c, d)) return 0
+  return Math.min(ptSegDist(a, c, d), ptSegDist(b, c, d), ptSegDist(c, a, b), ptSegDist(d, a, b))
+}
+
+/** Distance from segment a-b to the filled rectangle (0 when it touches or lies inside). */
+function segRectDist(a: Point, b: Point, r: Rect): number {
+  const inside = (p: Point): boolean => p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
+  if (inside(a) || inside(b)) return 0
+  const tl = { x: r.x, y: r.y }
+  const tr = { x: r.x + r.width, y: r.y }
+  const br = { x: r.x + r.width, y: r.y + r.height }
+  const bl = { x: r.x, y: r.y + r.height }
+  return Math.min(segSegDist(a, b, tl, tr), segSegDist(a, b, tr, br), segSegDist(a, b, br, bl), segSegDist(a, b, bl, tl))
+}
+
+/** Does the eraser path segment p0-p1 touch this annotation? `tol` is the slack in image px. */
+function eraserHits(a: Annotation, p0: Point, p1: Point, tol: number): boolean {
+  switch (a.kind) {
+    case 'stroke': {
+      const reach = a.width / 2 + tol
+      if (a.points.length === 1) return ptSegDist(a.points[0], p0, p1) <= reach
+      for (let i = 1; i < a.points.length; i++) {
+        if (segSegDist(a.points[i - 1], a.points[i], p0, p1) <= reach) return true
+      }
+      return false
+    }
+    case 'arrow':
+      return segSegDist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }, p0, p1) <= a.width / 2 + tol
+    case 'rect':
+    case 'blur':
+      return segRectDist(p0, p1, { x: a.x, y: a.y, width: a.w, height: a.h }) <= tol
+    case 'badge':
+      return ptSegDist({ x: a.x, y: a.y }, p0, p1) <= a.size / 2
+    case 'text':
+      return segRectDist(p0, p1, textRect(a)) <= 0
+  }
+}
+
+function eraseSweep(from: Point, to: Point): void {
+  if (!erasing || !init) return
+  const tol = ERASE_TOLERANCE * init.meta.scaleFactor
+  let added = false
+  annotations.forEach((a, i) => {
+    if (!erasing || erasing.hits.has(i)) return
+    if (eraserHits(a, from, to, tol)) { erasing.hits.add(i); added = true }
+  })
+  erasing.last = to
+  if (added) render()
+}
+
+function endErase(commitIt: boolean): void {
+  if (!erasing) return
+  const hits = erasing.hits
+  erasing = null
+  if (!commitIt || hits.size === 0) { render(); return }
+  const kept: Annotation[] = []
+  const remap = new Map<number, number>()
+  annotations.forEach((a, i) => {
+    if (hits.has(i)) return
+    remap.set(i, kept.length)
+    kept.push(a)
+  })
+  let badgeNo = 0
+  const renumbered = kept.map((a) => (a.kind === 'badge' ? { ...a, n: ++badgeNo } : a))
+  const nextLinks = new Map<number, number | null>()
+  for (const [seg, ai] of links) {
+    if (ai === null) nextLinks.set(seg, null)
+    else {
+      const ni = remap.get(ai)
+      if (ni !== undefined) nextLinks.set(seg, ni)
+    }
+  }
+  const after: Doc = { annotations: renumbered, links: nextLinks, crop }
+  history.commit('지우기', doc, after)
+  setDoc(after)
+  afterChange()
+  setStatus(`지우기: ${hits.size}개 삭제 (Ctrl+Z로 되돌리기)`)
 }
 
 // ---------- pen tool ----------
 
-function toImg(e: PointerEvent): Point {
+function toImg(e: MouseEvent): Point {
   const r = ink.getBoundingClientRect()
   return { x: (e.clientX - r.left) * (ink.width / r.width), y: (e.clientY - r.top) * (ink.height / r.height) }
 }
@@ -757,12 +1074,26 @@ function endShape(commitIt: boolean): void {
 
 ink.addEventListener('pointerdown', (e) => {
   pointerCounts.down++
-  if (!init || e.button !== 0 || drawing || shape || cropDrag) return
+  if (!init || e.button !== 0 || drawing || shape || cropDrag || moveDrag || erasing) return
   e.preventDefault()
   commitPendingText()
   ensureLive()
   const p = toImg(e)
-  if (tool === 'text') { startText(p, e); return }
+  if (tool === 'text') {
+    const hit = hitText(p)
+    if (hit < 0) { startText(p, e); return }
+    const orig = annotations[hit]
+    if (orig.kind !== 'text') return
+    moveDrag = { index: hit, orig, ann: orig, start: p, moved: false }
+    ink.setPointerCapture(e.pointerId)
+    return
+  }
+  if (tool === 'eraser') {
+    erasing = { hits: new Set<number>(), last: p }
+    ink.setPointerCapture(e.pointerId)
+    eraseSweep(p, p)
+    return
+  }
   if (tool === 'crop') {
     cropDrag = { start: p, cur: p }
     ink.setPointerCapture(e.pointerId)
@@ -786,6 +1117,22 @@ ink.addEventListener('pointerdown', (e) => {
 
 ink.addEventListener('pointermove', (e) => {
   pointerCounts.move++
+  if (moveDrag && init) {
+    const p = toImg(e)
+    const m = moveDrag
+    if (!m.moved && dist(p, m.start) < 4 * init.meta.scaleFactor) return // a click, not a drag
+    m.moved = true
+    m.ann = { ...m.orig, x: m.orig.x + (p.x - m.start.x), y: m.orig.y + (p.y - m.start.y) }
+    render()
+    return
+  }
+  if (erasing) {
+    const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : []
+    for (const ev of coalesced.length ? coalesced : [e]) {
+      if (erasing) eraseSweep(erasing.last, toImg(ev))
+    }
+    return
+  }
   if (cropDrag) {
     cropDrag.cur = toImg(e)
     render()
@@ -796,7 +1143,10 @@ ink.addEventListener('pointermove', (e) => {
     render()
     return
   }
-  if (!drawing) return
+  if (!drawing) {
+    if (tool === 'text' && init) wrap.classList.toggle('over-text', hitText(toImg(e)) >= 0)
+    return
+  }
   const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : []
   for (const ev of coalesced.length ? coalesced : [e]) {
     const last = drawing.points[drawing.points.length - 1]
@@ -826,19 +1176,31 @@ function endCrop(commitIt: boolean, at?: Point): void {
 
 ink.addEventListener('pointerup', (e) => {
   pointerCounts.up++
+  if (moveDrag) { endMove(true); return }
+  if (erasing) { endErase(true); return }
   if (cropDrag) { endCrop(true, toImg(e)); return }
   if (shape) shape.cur = toImg(e)
   endStroke()
   endShape(true)
 })
+ink.addEventListener('pointerleave', () => wrap.classList.remove('over-text'))
+ink.addEventListener('dblclick', (e) => {
+  if (!init || tool !== 'text' || drawing || shape || cropDrag || moveDrag || erasing) return
+  const hit = hitText(toImg(e))
+  if (hit >= 0) { e.preventDefault(); startEditText(hit) }
+})
 // A capture lost without an up (window focus change, synthetic input): finish instead of sticking.
 ink.addEventListener('lostpointercapture', () => {
+  if (moveDrag) endMove(true)
+  if (erasing) endErase(true)
   if (cropDrag) endCrop(true)
   if (drawing) endStroke()
   if (shape) endShape(true)
 })
 ink.addEventListener('pointercancel', () => {
   pointerCounts.cancel++
+  endMove(false)
+  endErase(false)
   endCrop(false)
   endStroke()
   endShape(false)
@@ -920,7 +1282,11 @@ async function send(): Promise<void> {
     setStatus('전송 중…')
     const r = await window.backseat.editor.send(payload, { pressEnter: false })
     setStatus(r.message, !r.ok)
-    if (r.ok) {
+    if (r.ok && r.delivered === 'clipboard') {
+      // nothing was pasted anywhere: keep the editor open so the user sees what happened
+      targetBar.textContent = '대상 창이 없어 클립보드에 복사했습니다. 채팅창이나 터미널에 Ctrl+V 하세요.'
+      targetBar.title = ''
+    } else if (r.ok && r.delivered === 'pasted') {
       closing = true // stay busy: no double send while the status is visible
       if (!pinned) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
     }
@@ -996,6 +1362,7 @@ async function exportVideo(): Promise<void> {
   busy = true
   setStatus(`녹화 중… (${((end - start) / 1000).toFixed(1)}초)`)
   try {
+    await loadDocFonts()
     const stream = c.captureStream(30)
     const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4_000_000 })
     const chunks: Blob[] = []
@@ -1130,6 +1497,7 @@ function stopRecording(): Promise<void> {
 /** Called before save / copy / send: end a running recording and wait for its transcript. */
 async function settleRecording(): Promise<void> {
   await stopRecording()
+  await loadDocFonts() // the flattened PNG must not fall back to a system font
 }
 
 async function toggleRecording(): Promise<void> {
@@ -1234,8 +1602,15 @@ function setTool(next: Tool): void {
 function syncToolbar(): void {
   toolBtns.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool))
   colorBtns.forEach((b) => b.classList.toggle('active', b.dataset.color === color))
-  widthBtns.forEach((b) => b.classList.toggle('active', Number(b.dataset.width) === widthCss))
+  widthInput.value = String(widthCss)
+  widthDot.style.width = widthDot.style.height = `${widthCss}px`
+  widthDot.style.background = color
+  fontSelect.value = fontFamily ?? ''
+  sizeSelect.value = String(fontSizeCss)
+  styleSelect.value = textStyle
   wrap.classList.toggle('text-tool', tool === 'text')
+  wrap.classList.toggle('eraser-tool', tool === 'eraser')
+  if (tool !== 'text') wrap.classList.remove('over-text')
   wrap.classList.toggle('crop-tool', tool === 'crop')
   timelineBtn.classList.toggle('active', timeline.isOpen)
 }
@@ -1258,21 +1633,51 @@ compareBar.addEventListener('mousedown', (e) => { if (!(e.target instanceof HTML
 toolBtns.forEach((b) => b.addEventListener('click', () => setTool(isTool(b.dataset.tool) ? b.dataset.tool : 'pen')))
 colorBtns.forEach((b) => b.addEventListener('click', () => {
   color = b.dataset.color ?? color
-  if (textBox) textBox.style.color = color
+  if (textSession) { textSession.color = color; styleTextBox(textSession) }
   syncToolbar()
 }))
-widthBtns.forEach((b) => b.addEventListener('click', () => {
-  widthCss = Number(b.dataset.width) || widthCss
+function setWidth(v: number): void {
+  widthCss = Math.min(24, Math.max(1, Math.round(v)))
   syncToolbar()
-}))
-// keep focus (e.g. in the text box) when clicking toolbar controls
-byId('toolbar').addEventListener('mousedown', (e) => e.preventDefault())
+}
+widthInput.addEventListener('input', () => setWidth(Number(widthInput.value) || widthCss))
+widthInput.addEventListener('change', () => widthInput.blur())
+
+/** A font / size / style pick applies to the open text box too, and hands focus back to it. */
+function textPropChanged(sel: HTMLSelectElement): void {
+  if (textSession) {
+    textSession.font = fontFamily
+    textSession.sizeCss = fontSizeCss
+    textSession.style = textStyle
+    styleTextBox(textSession)
+  }
+  syncToolbar()
+  sel.blur()
+  textSession?.box.focus()
+}
+fontSelect.addEventListener('change', () => {
+  fontFamily = fontSelect.value || undefined
+  textPropChanged(fontSelect)
+})
+sizeSelect.addEventListener('change', () => {
+  fontSizeCss = Number(sizeSelect.value) || fontSizeCss
+  textPropChanged(sizeSelect)
+})
+styleSelect.addEventListener('change', () => {
+  const v = styleSelect.value
+  if (isTextStyle(v)) textStyle = v
+  textPropChanged(styleSelect)
+})
+// keep focus (e.g. in the text box) when clicking toolbar buttons; selects and sliders need the mouse
+for (const bar of [byId('toolbar'), byId('toolbar2')]) {
+  bar.addEventListener('mousedown', (e) => { if (!isToolbarControl(e.target)) e.preventDefault() })
+}
 
 const hotkeys = new Hotkeys([
   {
     id: 'send', label: '전송', keys: ['Enter', 'Ctrl+Enter'],
     run: (e) => {
-      if (e.code === 'Enter' && textBox) return false // Enter belongs to the open text box
+      if (e.code === 'Enter' && textSession) return false // Enter belongs to the open text box
       void send()
     }
   },
@@ -1287,6 +1692,9 @@ const hotkeys = new Hotkeys([
   { id: 'badge', label: '번호', keys: ['KeyN'], run: () => setTool('badge') },
   { id: 'blur', label: '블러', keys: ['KeyB'], run: () => setTool('blur') },
   { id: 'crop', label: '자르기', keys: ['KeyC'], run: () => setTool('crop') },
+  { id: 'eraser', label: '지우개', keys: ['KeyE'], run: () => setTool('eraser') },
+  { id: 'width-down', label: '굵기 줄이기', keys: ['BracketLeft'], run: () => setWidth(widthCss - 1) },
+  { id: 'width-up', label: '굵기 늘리기', keys: ['BracketRight'], run: () => setWidth(widthCss + 1) },
   { id: 'compare', label: '이전 캡처와 비교', keys: ['KeyO'], run: () => setCompare(!cmpOn) },
   { id: 'timeline', label: '타임라인', keys: ['KeyL'], run: () => { timeline.toggle(); syncToolbar() } },
   { id: 'play', label: '재생/일시정지', keys: ['Space'], run: () => { if (!timeline.isOpen) return false; timeline.togglePlay() } },
@@ -1301,7 +1709,10 @@ const hotkeys = new Hotkeys([
     id: 'close', label: '닫기', keys: ['Escape'], context: 'global',
     run: (e) => {
       if (e.target === memoInput) { memoInput.blur(); return }
+      if (e.target instanceof HTMLSelectElement) { e.target.blur(); return }
       if (e.target instanceof HTMLInputElement) return false // the text box handles its own Escape
+      if (moveDrag) { endMove(false); return }
+      if (erasing) { endErase(false); return }
       if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first
       if (cropDrag) { endCrop(false); return }
       if (cmpOn) { setCompare(false); return }
@@ -1346,7 +1757,9 @@ window.backseat.editor.onInit((data) => {
       state: () => ({
         annotations: annotations.map((a) => {
           const b = annotationBox(a)
-          return { kind: a.kind, tStart: Math.round(a.tStart), tEnd: Math.round(a.tEnd), x: Math.round(b.x), y: Math.round(b.y) }
+          const x = a.kind === 'text' ? a.x : b.x
+          const y = a.kind === 'text' ? a.y - a.fontSize / 2 : b.y
+          return { kind: a.kind, tStart: Math.round(a.tStart), tEnd: Math.round(a.tEnd), x: Math.round(x), y: Math.round(y) }
         }),
         links: [...links],
         canUndo: history.canUndo,

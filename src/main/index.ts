@@ -5,7 +5,7 @@ import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
 import { ensureConfig, loadSettings } from './config'
 import { createEditorWindow, installEditorIpc } from './editor'
 import { pruneRegistry } from './mcp/registry'
-import { getForegroundWindow, listTopLevelWindows } from './native/win32'
+import { getForegroundWindow, isWindow, listTopLevelWindows } from './native/win32'
 import { startRequestWatcher, takePendingRequest } from './requests'
 import { scrollCapture } from './scroll'
 import { cancelSelector, runSelector, selectorActive } from './selector'
@@ -16,6 +16,8 @@ import { createTray } from './tray'
 let capturing = false
 /** Last confirmed selection, for "마지막 영역 다시 캡처" (before/after comparisons). */
 let lastSelection: SelectionResult | null = null
+/** Last target that had a real window, reused when the hotkey is pressed from the desktop/tray. */
+let lastTarget: AgentTarget | null = null
 
 /** Merge the window-based guess with agents registered through backseat-mcp. */
 async function pickTarget(active: ReturnType<typeof getForegroundWindow>): Promise<AgentTarget | null> {
@@ -59,7 +61,11 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
   try {
     const settings = loadSettings()
     const active = getForegroundWindow() // before any of our windows show up
-    const target = await pickTarget(active)
+    let target = await pickTarget(active)
+    if (!target && lastTarget && isWindow(lastTarget.hwnd)) {
+      target = { ...lastTarget, confidence: Math.min(lastTarget.confidence, 0.5), label: `${lastTarget.label} (직전 대상)` }
+    }
+    if (target && target.hwnd) lastTarget = target
     const ask = request ?? takePendingRequest() ?? undefined
     const caps = await captureAllDisplays()
     let sel: SelectionResult | null

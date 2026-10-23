@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Backseat</title>
     <link rel="stylesheet" href="./editor.css" />
@@ -18,15 +18,12 @@
         <button type="button" class="btn" data-tool="badge" title="번호">번호</button>
         <button type="button" class="btn" data-tool="blur" title="블러">블러</button>
         <button type="button" class="btn" data-tool="crop" title="자르기">자르기</button>
+        <button type="button" class="btn" data-tool="eraser" title="지우개 (E)">지우개</button>
       </div>
       <div class="group" role="group" aria-label="색상">
         <button type="button" class="swatch active" data-color="#E5484D" style="--c: #E5484D" title="빨강" aria-label="빨강"></button>
         <button type="button" class="swatch" data-color="#F5A623" style="--c: #F5A623" title="노랑" aria-label="노랑"></button>
         <button type="button" class="swatch" data-color="#2F80ED" style="--c: #2F80ED" title="파랑" aria-label="파랑"></button>
-      </div>
-      <div class="group" role="group" aria-label="굵기">
-        <button type="button" class="btn active" data-width="3" title="얇게">얇게</button>
-        <button type="button" class="btn" data-width="6" title="굵게">굵게</button>
       </div>
       <div class="group" role="group" aria-label="히스토리">
         <button type="button" class="btn" id="undo" data-command="undo" aria-label="되돌리기">↶</button>
@@ -40,6 +37,38 @@
       <button type="button" class="btn" id="save" data-command="save">저장</button>
       <button type="button" class="btn primary" id="send" data-command="send">전송</button>
     </header>
+
+    <div id="toolbar2">
+      <div class="group" role="group" aria-label="굵기">
+        <label class="lbl" for="width">굵기</label>
+        <input type="range" id="width" min="1" max="24" step="1" value="3" title="펜 굵기 ([ / ])" />
+        <span class="dot-box"><span id="width-dot" class="width-dot"></span></span>
+      </div>
+      <div class="group" role="group" aria-label="글자">
+        <label class="lbl" for="font">글자</label>
+        <select id="font" title="글꼴">
+          <option value="">시스템</option>
+          <option value="Noto Sans KR" selected>Noto Sans KR</option>
+          <option value="Nanum Gothic">나눔고딕</option>
+          <option value="Nanum Pen Script">나눔펜</option>
+          <option value="Jua">주아</option>
+          <option value="Do Hyeon">도현</option>
+          <option value="Black Han Sans">검은고딕</option>
+        </select>
+        <select id="font-size" title="글자 크기">
+          <option value="14">14</option>
+          <option value="18">18</option>
+          <option value="24" selected>24</option>
+          <option value="32">32</option>
+          <option value="48">48</option>
+        </select>
+        <select id="text-style" title="글자 배경">
+          <option value="plate" selected>판</option>
+          <option value="outline">외곽선</option>
+          <option value="plain">없음</option>
+        </select>
+      </div>
+    </div>
 
     <div id="targetbar" role="status"></div>
 

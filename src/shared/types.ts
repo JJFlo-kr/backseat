@@ -176,6 +176,10 @@ export type Annotation =
       y: number
       color: string
       fontSize: number
+      /** CSS font-family name, e.g. "Noto Sans KR"; undefined = system UI font. */
+      font?: string
+      /** How the text is made legible over the screenshot: dark outline, a translucent plate, or nothing. */
+      style?: 'outline' | 'plate' | 'plain'
       tStart: number
       tEnd: number
     }

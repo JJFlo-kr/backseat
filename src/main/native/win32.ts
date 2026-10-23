@@ -186,6 +186,17 @@ export function listTopLevelWindows(): WindowInfo[] {
   return out
 }
 
+/** True when the handle still refers to a live window. */
+export function isWindow(hwnd: number): boolean {
+  const a = load()
+  if (!a || !hwnd) return false
+  try {
+    return Boolean(a.IsWindowVisible(hwnd)) || Boolean(a.IsIconic(hwnd))
+  } catch {
+    return false
+  }
+}
+
 export function getForegroundWindow(): WindowInfo | null {
   const a = load()
   if (!a) return null

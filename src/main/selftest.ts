@@ -490,6 +490,41 @@ export async function runSelfTest(): Promise<void> {
         report.speechLane = lane
         if (!lane.includes('디버그 전사 주입')) errors.push(`transcript injection failed: ${lane}`)
         await shot(ed, join(shotsDir, 'editor-speech.png'), warnings)
+
+        // Text tool: type Korean, commit with Enter, then erase it with the eraser.
+        step = 'text-eraser'
+        const countAnn = (): Promise<number> =>
+          ed.webContents.executeJavaScript(`window.__backseat.state().annotations.length`) as Promise<number>
+        const before = await countAnn()
+        await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="text"]').click(); true`)
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 80, y: cy - 90, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx - 80, y: cy - 90, button: 'left', clickCount: 1 })
+        await sleep(250)
+        for (const ch of '가독성 OK') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
+        await sleep(100)
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+        await sleep(400)
+        const afterText = await countAnn()
+        const lastKind = (await ed.webContents.executeJavaScript(
+          `(() => { const s = window.__backseat.state().annotations; return s.length ? s[s.length - 1].kind : 'none' })()`
+        )) as string
+        report.textTool = { before, afterText, lastKind }
+        if (afterText !== before + 1 || lastKind !== 'text') errors.push(`text tool did not add a text: ${JSON.stringify(report.textTool)}`)
+        await shot(ed, join(shotsDir, 'editor-text.png'), warnings)
+
+        await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="eraser"]').click(); true`)
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 90, y: cy - 90, button: 'left', clickCount: 1 })
+        for (let i = 1; i <= 6; i++) {
+          ed.webContents.sendInputEvent({ type: 'mouseMove', x: cx - 90 + i * 15, y: cy - 90, button: 'left' })
+          await sleep(16)
+        }
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx, y: cy - 90, button: 'left', clickCount: 1 })
+        await sleep(300)
+        const afterErase = await countAnn()
+        report.eraser = { afterErase, status: await statusText() }
+        if (afterErase !== before) errors.push(`eraser did not remove exactly the text: ${afterText} -> ${afterErase}`)
+        await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="pen"]').click(); true`)
       }
     }
     ed.destroy()
