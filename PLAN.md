@@ -330,4 +330,4 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - [x] 실제 발화(16초)가 전사되어 전역 지시로 브리프에 들어오는 것 확인
 - [ ] 미해결: 앱 시작 후 **첫** Ctrl+Shift+A에서 선택 창이 흰 화면으로 남고, 단축키를 한 번 더 눌러(취소) 없앤 뒤부터는 정상.
   - 의심: src/main/selector.ts 가 did-finish-load 에서 바로 show() 하는데, 렌더러 콜드 스타트(4K@200%에서 JPEG 약 3MB 전달)에는 첫 페인트 전에 창이 떠서 흰 상태로 멈춤. 렌더러 로그가 없어 확정 못 함.
-  - 다음 단계: userData/backseat.log 파일 로거로 렌더러 console·render-process-gone 기록, 선택 창은 ready-to-show 에서 표시하고 3초 안에 안 뜨면 강제 표시+로그,  로 띄운 뒤 3초 후 화면을 찍어 재현. 임시 우회: 앱을 켠 직후 한 번 캡처를 열었다 취소.
+  - 다음 단계: userData/backseat.log 파일 로거로 렌더러 console·render-process-gone 기록, 선택 창은 ready-to-show 에서 표시하고 3초 안에 안 뜨면 강제 표시+로그, electron . --capture 로 띄운 뒤 3초 후 화면을 찍어 재현. 임시 우회: 앱을 켠 직후 한 번 캡처를 열었다 취소.
