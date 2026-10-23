@@ -1,0 +1,62 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+}
+
+#shot,
+#overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+}
+
+#shot {
+  pointer-events: none;
+}
+
+#overlay {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+#hint {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(20, 20, 24, 0.78);
+  color: #fff;
+  font: 13px/1.2 system-ui, 'Segoe UI', sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.25s ease;
+}
+
+body.dragging #hint {
+  opacity: 0;
+}
+
+#size {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(20, 20, 24, 0.85);
+  color: #fff;
+  font: 12px/1.3 ui-monospace, Consolas, 'Courier New', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+}

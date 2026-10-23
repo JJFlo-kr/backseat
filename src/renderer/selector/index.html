@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backseat Selector</title>
+    <link rel="stylesheet" href="./selector.css" />
+  </head>
+  <body>
+    <img id="shot" alt="" draggable="false" />
+    <canvas id="overlay"></canvas>
+    <div id="size"></div>
+    <div id="hint">드래그로 영역 선택 · Enter 확인 · Esc 취소</div>
+    <script type="module" src="./selector.ts"></script>
+  </body>
+</html>

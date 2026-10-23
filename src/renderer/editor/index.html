@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backseat</title>
+    <link rel="stylesheet" href="./editor.css" />
+    <script type="module" src="./editor.ts"></script>
+  </head>
+  <body>
+    <header id="toolbar">
+      <div class="group" role="group" aria-label="도구">
+        <button type="button" class="btn active" data-tool="pen" title="펜">펜</button>
+        <button type="button" class="btn" data-tool="text" title="텍스트">텍스트</button>
+      </div>
+      <div class="group" role="group" aria-label="색상">
+        <button type="button" class="swatch active" data-color="#E5484D" style="--c: #E5484D" title="빨강" aria-label="빨강"></button>
+        <button type="button" class="swatch" data-color="#F5A623" style="--c: #F5A623" title="노랑" aria-label="노랑"></button>
+        <button type="button" class="swatch" data-color="#2F80ED" style="--c: #2F80ED" title="파랑" aria-label="파랑"></button>
+      </div>
+      <div class="group" role="group" aria-label="굵기">
+        <button type="button" class="btn active" data-width="3" title="얇게">얇게</button>
+        <button type="button" class="btn" data-width="6" title="굵게">굵게</button>
+      </div>
+      <div class="group" role="group" aria-label="히스토리">
+        <button type="button" class="btn" id="undo" data-command="undo">되돌리기</button>
+        <button type="button" class="btn" id="redo" data-command="redo">다시 실행</button>
+      </div>
+      <button type="button" class="btn" id="timeline-toggle" data-command="timeline">타임라인</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn" id="copy" data-command="copy">복사</button>
+      <button type="button" class="btn primary" id="save" data-command="save">저장</button>
+    </header>
+
+    <main id="stage">
+      <div id="wrap">
+        <canvas id="base"></canvas>
+        <canvas id="ink"></canvas>
+      </div>
+    </main>
+
+    <section id="timeline" hidden aria-label="타임라인">
+      <div class="tl-bar">
+        <button type="button" class="btn tl-btn" data-tl="play" title="재생/일시정지 (Space)">▶</button>
+        <button type="button" class="btn tl-btn" data-tl="live" title="라이브로 (End)">LIVE</button>
+        <span class="tl-clock" data-tl="clock"></span>
+        <span class="spacer"></span>
+        <span class="tl-hint">드래그로 스크럽 · ←→ 0.2초 · Home 처음</span>
+        <button type="button" class="btn tl-btn" data-command="video">녹화 내보내기</button>
+      </div>
+      <canvas id="tl-canvas"></canvas>
+    </section>
+
+    <footer>
+      <input id="memo" type="text" autocomplete="off" spellcheck="false" placeholder="이 이미지에 대한 한 줄 메모 (선택)" />
+      <span id="status" role="status"></span>
+    </footer>
+  </body>
+</html>

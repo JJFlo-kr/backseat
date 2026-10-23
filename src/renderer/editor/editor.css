@@ -1,0 +1,185 @@
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #1b1b1f;
+  color: #e6e6e6;
+  font: 13px system-ui, "Malgun Gothic", sans-serif;
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+#toolbar {
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  overflow: hidden;
+  background: #2a2a30;
+  border-bottom: 1px solid #111;
+  user-select: none;
+}
+
+.group { display: flex; align-items: center; gap: 6px; }
+.group + .group, .group + .btn { margin-left: 6px; }
+.spacer { flex: 1; }
+
+.btn {
+  height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #3a3a42;
+  color: #e6e6e6;
+  font: inherit;
+  cursor: pointer;
+}
+.btn:hover { background: #46464f; }
+.btn:active { background: #52525c; }
+.btn.active { outline: 2px solid #E5484D; outline-offset: -2px; }
+.btn.primary { background: #E5484D; color: #fff; font-weight: 600; }
+.btn.primary:hover { background: #ee5a5f; }
+.btn.primary:active { background: #cf3b40; }
+.btn:focus-visible, .swatch:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 1px; }
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid #2a2a30;
+  border-radius: 50%;
+  background: var(--c);
+  cursor: pointer;
+}
+.swatch.active { box-shadow: 0 0 0 2px #e6e6e6; }
+
+#stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: auto;
+  padding: 16px;
+  background-color: #111;
+  background-image:
+    linear-gradient(45deg, #161618 25%, transparent 25%, transparent 75%, #161618 75%),
+    linear-gradient(45deg, #161618 25%, transparent 25%, transparent 75%, #161618 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+#wrap {
+  position: relative;
+  margin: auto; /* centers, and stays scrollable when larger than the stage */
+  flex: none;
+  border: 1px solid #444;
+  line-height: 0;
+}
+
+#wrap canvas { display: block; touch-action: none; }
+#ink { position: absolute; left: 0; top: 0; cursor: crosshair; }
+#wrap.text-tool #ink { cursor: text; }
+
+.textbox {
+  position: absolute;
+  transform: translateY(-50%);
+  min-width: 4ch;
+  field-sizing: content;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dashed currentColor;
+  outline: none;
+  background: transparent;
+  font: bold 18px system-ui, "Malgun Gothic", sans-serif;
+  line-height: 1.3;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9), 0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:hover { background: #3a3a42; }
+
+#timeline-toggle { position: relative; }
+#timeline-toggle.has-items::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #E5484D;
+}
+
+#timeline {
+  flex: none;
+  padding: 6px 8px 8px;
+  background: #222228;
+  border-top: 1px solid #111;
+  user-select: none;
+}
+#timeline.scrubbed { background: #2a2228; }
+.tl-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin-bottom: 6px;
+}
+.tl-btn { height: 24px; padding: 0 10px; font-size: 12px; }
+.tl-btn.active { outline: 2px solid #E5484D; outline-offset: -2px; }
+.tl-clock {
+  font: 12px ui-monospace, Consolas, monospace;
+  color: #c8c8d2;
+  white-space: nowrap;
+}
+.tl-hint { font-size: 11px; color: #74747f; white-space: nowrap; }
+#tl-canvas {
+  display: block;
+  width: 100%;
+  border-radius: 4px;
+  background: #1b1b1f;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+footer {
+  flex: none;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  background: #2a2a30;
+  border-top: 1px solid #111;
+}
+
+#memo {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #44444c;
+  border-radius: 6px;
+  background: #1b1b1f;
+  color: #e6e6e6;
+  font: inherit;
+}
+#memo::placeholder { color: #777782; }
+#memo:focus { outline: none; border-color: #6a6a76; }
+
+#status {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a0a0ab;
+  font-size: 12px;
+}
+#status.error { color: #ff7b80; }
