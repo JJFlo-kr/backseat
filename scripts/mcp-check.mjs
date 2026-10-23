@@ -39,5 +39,22 @@ const t0 = Date.now()
 const w = await client.callTool({ name: 'backseat_wait', arguments: { timeoutSec: 1 } })
 console.log('WAIT', Math.round((Date.now() - t0) / 100) / 10 + 's', w.content[0].text.slice(0, 30))
 
+// ask round trip: the server writes requests/<id>.json; we play the app and answer with a package
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+const askPromise = client.callTool({ name: 'backseat_ask', arguments: { question: '어느 버튼이 문제인지 표시해 주세요', timeoutSec: 15 } })
+await new Promise((r) => setTimeout(r, 800))
+const reqDir = join(root, 'requests')
+const reqFiles = (await readdir(reqDir)).filter((f) => f.endsWith('.json'))
+const req = JSON.parse(await readFile(join(reqDir, reqFiles[reqFiles.length - 1]), 'utf8'))
+console.log('REQUEST', req.question === '어느 버튼이 문제인지 표시해 주세요' ? 'written' : 'mismatch', req.agent)
+const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/^(\d{8})(\d{6}).*/, '$1-$2')
+const dir = join(root, stamp + '-ask')
+await mkdir(dir, { recursive: true })
+await writeFile(join(dir, 'brief.md'), `# answer\n\n> ${req.question}\n\n① 번호 1 (10,10)\n`, 'utf8')
+await writeFile(join(dir, 'meta.json'), JSON.stringify({ id: stamp, requestId: req.requestId, files: ['brief.md', 'meta.json'] }), 'utf8')
+const ans = await askPromise
+const ansText = ans.content.find((c) => c.type === 'text')?.text ?? ''
+console.log('ASK', ansText.includes('# answer') ? 'resolved with the answer package' : 'unexpected: ' + ansText.slice(0, 60))
+
 await client.close()
 console.log('MCP_OK')
