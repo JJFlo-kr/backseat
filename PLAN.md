@@ -282,9 +282,33 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - 자르기 외 M1 항목은 전부 들어갔고 자가 테스트로 창 열거(3개), 전경 창 판별, 대상 분류, 브리프의 6종 주석 서술, 패키지 4개 파일을 확인했다.
 - `.backseat/sessions/` 를 프로젝트 안에 쓰려면 에이전트의 작업 폴더를 알아야 한다. 다른 프로세스의 cwd는 권한 없이 얻기 어려워 M1은 Pictures 아래 고정 경로 + 절대 경로 지시문으로 간다. M3의 `backseat_register(cwd)` 로 해결.
 
-## 13. 다음 액션 (M2 음성)
-- [ ] 편집기 마이크 버튼 + 오버레이 모드에서 자동 녹음 (MediaRecorder → WAV/Opus)
-- [ ] STT 어댑터: whisper.cpp 사이드카(기본) / 클라우드(옵션), 단어 타임스탬프
-- [ ] 음성 레인 + `alignSegments` 결과를 brief.md에 "주석 ↔ 발화"로 병합, `source/confidence` 기록
-- [ ] 재생 마스터 클럭을 오디오로, 스크럽 시 오디오 조각 재생
-- [ ] 세그먼트 드래그 재할당(manual 링크 명령), `audioOffsetMs` 보정 UI
+## 13. M2 음성 (2026-10-23 완료)
+- [x] 편집기 마이크(M): MediaRecorder(webm/opus) → AudioContext(16k)로 디코드 → 메인으로 PCM 전송. `autoRecord` 설정이면 편집기 열릴 때 자동 시작
+- [x] STT: whisper.cpp 사이드카 대신 **transformers.js(ONNX) 워커 스레드**를 택했다. npm 의존성만으로 설치되고 네이티브 빌드가 없다. 기본 모델 `onnx-community/whisper-small_timestamped`(한국어 단어 타임스탬프, 8초 음성 ≈ 3초). `whisper-small`(일반)은 cross-attention이 없어 단어 타임스탬프가 안 된다. 모델은 첫 사용 때 내려받아 `userData/models`(개발 시 `.cache/hf`)에 캐시. `BACKSEAT_STT_MODEL`로 교체 가능
+- [x] 단어 → 문장 세그먼트 그룹화(구두점·700ms 침묵, `src/shared/transcript.ts`, 테스트 5개). "1" + ".5팩" 같은 조각은 붙여 씀
+- [x] 음성 레인: 세그먼트 막대 + 링크 번호 뱃지(수동은 흰색), 드래그해서 주석에 떨어뜨리면 수동 링크(히스토리 1단계), 음성 레인 빈 곳에 놓으면 자동으로 복귀
+- [x] 재생 마스터 클럭 = 오디오 `currentTime`, 스크럽 시 90ms 조각 재생(120ms 스로틀)
+- [x] brief.md: 주석마다 🗣 줄(자동/수동, 신뢰도), 전역 지시, 전체 전사, 해석 가이드. 패키지에 `audio.webm`, `transcript.json`(alignment 포함)
+- [ ] `audioOffsetMs` 미세 조정 UI — 현재는 MediaRecorder `start` 이벤트 시각을 기준으로 쓰며 실측 오차가 작아 M5로 미룸
+
+## 14. M3 에이전트 연결 (2026-10-23 완료)
+- [x] `backseat-mcp` stdio 서버 (`out/main/mcp-server.js`, Electron 없이 Node로 실행): `backseat_register / latest / list / get / wait / ask / agents`. 브리프는 텍스트, 이미지는 MCP image content로 같이 반환
+- [x] 앱 ↔ 서버 통신은 파일 기반: `<sessionsRoot>/registry.json`(등록 에이전트, pid 생존 검사로 정리), `requests/*.json`(질문), 세션 폴더 감시(`fs.watch` + 1초 폴링). 서버는 `%APPDATA%\backseat\config.json`의 `sessionsRoot`를 읽음
+- [x] `backseat_ask`: 서버가 요청 파일 작성 → 앱이 Windows 알림 표시 → 클릭하면 캡처 시작, 편집기 대상 바에 ❓ 질문 표시 → 전송 시 `meta.json.requestId`로 매칭되어 서버가 응답 반환
+- [x] MCP로 등록된 에이전트는 전송 대상에 합쳐짐: 앞에 터미널이 있으면 "backseat_latest로 읽어줘" 한 줄을 붙여넣고, 없으면 클립보드 + 파일
+- [x] `integrations/claude-code/SKILL.md`(/backseat 스킬), `mcp.json` 템플릿. 검증: `scripts/mcp-check.mjs`가 공식 MCP 클라이언트로 7개 툴, 등록, 최신(텍스트+이미지), 대기 타임아웃, ask 왕복을 확인
+- [ ] Orca·Cursor·Codex는 같은 `mcp.json`으로 붙지만 실제 환경에서 미검증
+
+## 15. M4 마무리 (2026-10-23)
+- [x] 설정 `%APPDATA%\backseat\config.json` (`src/main/config.ts`): 자동 녹음, 전송 후 Enter, STT 모델·언어, 단축키 2개, 세션 폴더. 트레이 메뉴에서 체크박스로 토글, "설정 파일 열기"
+- [x] 트레이 메뉴: 영역 캡처, 창 캡처, 마지막 영역 다시 캡처(전/후 비교용), 세션 폴더 열기, 종료
+- [x] 고정(📌, Ctrl+P): 편집기를 480px 항상-위 참조창으로 바꾸고 전송 후에도 닫지 않음
+- [x] 렌더러 권한: 마이크·클립보드는 우리 창에서만 묻지 않고 허용
+- [x] electron-builder NSIS 패키징(`npm run dist`): koffi·onnxruntime·transformers는 asarUnpack
+- [ ] 자르기, 스크롤 캡처, 클라우드 STT 옵션, `audioOffsetMs` 미세 조정, Before/After 비교 뷰 — M5 후보
+
+## 16. 전체 검증 방법 (현재 기준)
+1. `npm test` — 단위 테스트 23개 (정렬 18, 전사 그룹화 5)
+2. `npm run selftest -- --selftest-wav=<한국어 wav> --selftest-shots=<dir>` — 캡처·창 열거·전경 창·대상 판별·선택창·편집기(스트로크 2개, 타임라인, 스크럽, undo/redo)·마이크 녹음→STT·음성 레인 주입·클립보드·브리프(6종 주석 + 🗣)·세션 패키지(audio/transcript/requestId) 검증, 스크린샷 5장
+3. `node scripts/mcp-check.mjs <sessionsRoot>` — MCP 툴 7개, ask 왕복
+4. 사람이 확인할 것: 실제 터미널 창에 붙여넣기, 실제 마이크 발화의 정렬 품질, 설치 파일 실행

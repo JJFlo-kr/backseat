@@ -5,6 +5,7 @@ import { BrowserWindow, clipboard, ClipboardItem } from 'electron'
 import { readFile } from 'fs/promises'
 import type { AgentTarget, ExportPayload, SendOptions, SendResult } from '../shared/types'
 import { instructionLine } from './agents'
+import { loadSettings } from './config'
 import { focusWindow, getForegroundWindow, sendCtrlV, sendEnter, win32Available } from './native/win32'
 import { markAnswered } from './requests'
 import { sessionsRoot, writeSessionPackage } from './sessions'
@@ -65,7 +66,8 @@ export async function sendToTarget(
     }
     await sleep(80)
     sendCtrlV()
-    if (opts.pressEnter) {
+    const pressEnter = opts.pressEnter ?? loadSettings().pressEnter
+    if (pressEnter) {
       await sleep(150)
       sendEnter()
     }
@@ -73,7 +75,7 @@ export async function sendToTarget(
       ok: true,
       delivered: 'pasted',
       sessionDir,
-      message: `${target.label} 에 붙여넣음${opts.pressEnter ? '' : ' · Enter를 눌러 보내세요'}`
+      message: `${target.label} 에 붙여넣음${pressEnter ? '' : ' · Enter를 눌러 보내세요'}`
     }
   } catch (err) {
     editorWin?.show()

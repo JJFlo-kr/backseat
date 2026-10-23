@@ -50,6 +50,9 @@ const api: BackseatApi = {
     onSttProgress(cb) {
       ipcRenderer.on(IPC.editorSttProgress, (_e, p: SttProgress) => cb(p))
     },
+    pin(): Promise<boolean> {
+      return ipcRenderer.invoke(IPC.editorPin)
+    },
     close() {
       ipcRenderer.send(IPC.editorClose)
     }

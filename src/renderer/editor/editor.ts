@@ -75,7 +75,19 @@ let drawing: StrokeAnn | null = null
 let shape: { tool: DragTool; start: Point; cur: Point; tStart: number } | null = null
 let textBox: HTMLInputElement | null = null
 let busy = false
+let pinned = false // small always-on-top reference window; 전송 no longer closes it
 let scrubT: number | null = null // non-null while the timeline is scrubbed/replaying
+
+async function togglePin(): Promise<void> {
+  try {
+    pinned = await window.backseat.editor.pin()
+    document.body.classList.toggle('pinned', pinned)
+    setStatus(pinned ? '고정됨: 항상 위에 떠 있고 전송 후에도 남습니다 (Ctrl+P 해제)' : '고정 해제')
+    layout()
+  } catch (err) {
+    setStatus(`고정 실패: ${err instanceof Error ? err.message : String(err)}`, true)
+  }
+}
 
 // voice: the finished recording (replaces any previous one) and its transcript
 let transcript: Transcript | null = null
@@ -603,7 +615,7 @@ async function send(): Promise<void> {
     setStatus(r.message, !r.ok)
     if (r.ok) {
       closing = true // stay busy: no double send while the status is visible
-      setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
+      if (!pinned) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
     }
   } catch (err) {
     setStatus(`전송 실패: ${errText(err)}`, true)
@@ -959,6 +971,7 @@ const hotkeys = new Hotkeys([
   { id: 'live', label: '라이브로', keys: ['End'], run: () => { if (!timeline.isOpen) return false; timeline.setLive() } },
   { id: 'mic', label: '녹음', keys: ['KeyM'], run: () => void toggleRecording() },
   { id: 'video', label: '녹화 내보내기', keys: ['Ctrl+KeyE'], run: () => void exportVideo() },
+  { id: 'pin', label: '고정 (참조창)', keys: ['Ctrl+KeyP'], run: () => void togglePin() },
   {
     id: 'close', label: '닫기', keys: ['Escape'], context: 'global',
     run: (e) => {

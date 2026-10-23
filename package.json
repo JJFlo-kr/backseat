@@ -12,11 +12,13 @@
     "icon": "node scripts/gen-icon.cjs",
     "capture": "electron-vite build && electron . --capture",
     "selftest": "electron-vite build && electron . --selftest",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"tests/**/*.test.ts\""
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"tests/**/*.test.ts\"",
+    "dist": "electron-vite build && electron-builder --win --x64"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
@@ -26,5 +28,49 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "koffi": "^3.3.3",
     "zod": "^4.6.7"
+  },
+  "build": {
+    "appId": "com.backseat.app",
+    "productName": "Backseat",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**",
+      "resources/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/onnxruntime-node/**",
+      "node_modules/@huggingface/transformers/**",
+      "node_modules/onnxruntime-common/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Backseat"
+    },
+    "extraResources": [
+      {
+        "from": "resources/tray.png",
+        "to": "tray.png"
+      }
+    ]
   }
 }
