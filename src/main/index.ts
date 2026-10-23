@@ -1,5 +1,5 @@
 import { app, globalShortcut, session } from 'electron'
-import type { AgentTarget, AskRequest, CaptureMode, EditorInit } from '../shared/types'
+import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult } from '../shared/types'
 import { classifyTarget } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
 import { ensureConfig, loadSettings } from './config'
@@ -13,6 +13,8 @@ import { sessionsRoot } from './sessions'
 import { createTray } from './tray'
 
 let capturing = false
+/** Last confirmed selection, for "마지막 영역 다시 캡처" (before/after comparisons). */
+let lastSelection: SelectionResult | null = null
 
 /** Merge the window-based guess with agents registered through backseat-mcp. */
 async function pickTarget(active: ReturnType<typeof getForegroundWindow>): Promise<AgentTarget | null> {
@@ -42,8 +44,11 @@ async function pickTarget(active: ReturnType<typeof getForegroundWindow>): Promi
   }
 }
 
-/** Full flow: remember the active window -> freeze screens -> pick a region/window -> open the editor. */
-export async function startCapture(mode: CaptureMode = 'rect', request?: AskRequest): Promise<void> {
+/**
+ * Full flow: remember the active window -> freeze screens -> pick a region/window -> open the editor.
+ * mode 'last' reuses the previous selection without showing the selector.
+ */
+export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?: AskRequest): Promise<void> {
   if (capturing) {
     // Hotkey pressed again while the selector is up: treat as cancel.
     if (selectorActive()) cancelSelector()
@@ -56,11 +61,18 @@ export async function startCapture(mode: CaptureMode = 'rect', request?: AskRequ
     const target = await pickTarget(active)
     const ask = request ?? takePendingRequest() ?? undefined
     const caps = await captureAllDisplays()
-    const windows = listTopLevelWindows()
-    const sel = await runSelector(caps, windows, mode)
+    let sel: SelectionResult | null
+    if (mode === 'last') {
+      sel = lastSelection
+      if (!sel) return
+    } else {
+      const windows = listTopLevelWindows()
+      sel = await runSelector(caps, windows, mode)
+    }
     if (!sel) return
     const cap = captureForDisplayId(caps, sel.displayId)
     if (!cap) return
+    lastSelection = sel
     const { image, rectPx } = cropDip(cap, sel.rect)
     const init: EditorInit = {
       imageDataUrl: `data:image/png;base64,${image.toPNG().toString('base64')}`,
@@ -115,7 +127,12 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       return
     }
     const settings = await ensureConfig()
-    createTray(() => void startCapture())
+    createTray({
+      capture: () => void startCapture('rect'),
+      captureWindow: () => void startCapture('window'),
+      recaptureLast: () => void startCapture('last'),
+      hasLast: () => lastSelection !== null
+    })
     for (const [accel, mode] of [
       [settings.hotkeyRect, 'rect'],
       [settings.hotkeyWindow, 'window']

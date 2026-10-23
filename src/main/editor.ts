@@ -106,6 +106,22 @@ export function installEditorIpc(): void {
   ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions) =>
     sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, targets.get(e.sender) ?? null, opts)
   )
+  ipcMain.handle(IPC.editorPin, (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return false
+    const pinned = !win.isAlwaysOnTop()
+    if (pinned) {
+      const [w, h] = win.getSize()
+      const scale = 480 / w
+      win.setAlwaysOnTop(true, 'floating')
+      win.setSize(480, Math.max(300, Math.round(h * scale)))
+      const wa = screen.getDisplayMatching(win.getBounds()).workArea
+      win.setPosition(wa.x + wa.width - 480 - 16, wa.y + 16)
+    } else {
+      win.setAlwaysOnTop(false)
+    }
+    return pinned
+  })
   ipcMain.handle(IPC.editorTranscribe, (e, req: TranscribeRequest) =>
     transcribe(req, (p) => {
       if (!e.sender.isDestroyed()) e.sender.send(IPC.editorSttProgress, p)

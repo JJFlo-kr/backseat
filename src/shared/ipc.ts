@@ -16,6 +16,7 @@ export const IPC = {
   // editor window -> main (invoke) / main -> editor (send)
   editorTranscribe: 'editor:transcribe',
   editorSttProgress: 'editor:stt-progress',
+  editorPin: 'editor:pin',
   // editor window -> main (send)
   editorClose: 'editor:close'
 } as const

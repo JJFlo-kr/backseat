@@ -324,6 +324,8 @@ export interface BackseatApi {
     /** Speech recognition on decoded audio; progress arrives via onSttProgress. */
     transcribe(req: TranscribeRequest): Promise<TranscribeResult>
     onSttProgress(cb: (p: SttProgress) => void): void
+    /** Toggle "pinned": a small always-on-top reference window that survives 전송. Resolves the new state. */
+    pin(): Promise<boolean>
     close(): void
   }
 }
