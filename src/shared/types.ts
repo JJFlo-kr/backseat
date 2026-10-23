@@ -16,7 +16,7 @@ export interface DisplayInfo {
   isPrimary: boolean
 }
 
-export type CaptureMode = 'rect' | 'window' | 'full'
+export type CaptureMode = 'rect' | 'window' | 'full' | 'scroll'
 
 /** A top-level window as seen at capture time. */
 export interface WindowInfo {
@@ -108,6 +108,29 @@ export interface CaptureMeta {
   activeWindow?: { title: string; process: string }
   /** When this capture answers a backseat_ask question. */
   request?: { requestId: string; question: string; agent: string }
+  /** Scroll capture (mode === 'scroll'): how many frames were stitched into the tall image. */
+  scroll?: { frames: number; viewportPx: number }
+  /** Set by the editor when the user cropped: the kept region in px of the original capture. */
+  crop?: Rect
+}
+
+/** A previous capture of the same region, for the editor's before/after comparison. */
+export interface CompareSource {
+  /** PNG data URL of the previous annotated.png. */
+  imageDataUrl: string
+  /** Session package directory the image came from. */
+  sessionDir: string
+  capturedAt?: string
+}
+
+export type CompareMode = 'overlay' | 'wipe' | 'diff'
+
+/** What the editor records about a comparison the user looked at. */
+export interface CompareInfo {
+  sessionDir: string
+  mode: CompareMode
+  /** 0..100 share of sampled pixels that differ noticeably from the previous capture. */
+  diffPercent: number
 }
 
 /** main -> editor renderer, once. */
@@ -123,6 +146,8 @@ export interface EditorInit {
   autoRecord?: boolean
   /** The agent's question this capture is answering, if any. */
   request?: AskRequest
+  /** Previous capture of the same region (tray "마지막 영역 다시 캡처"): enables the compare view (O). */
+  compare?: CompareSource
   /** Self-test only: lets the harness inject a transcript via a DOM event. */
   debug?: boolean
 }
@@ -270,6 +295,8 @@ export interface ExportPayload {
   /** The recording itself, stored in the session package as audio.<ext>. */
   audio?: { bytes: Uint8Array; mimeType: string }
   links?: ManualLink[]
+  /** Present when the user compared this capture with the previous one. */
+  compare?: CompareInfo
 }
 
 export interface SaveResult {

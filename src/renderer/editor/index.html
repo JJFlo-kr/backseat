@@ -17,6 +17,7 @@
         <button type="button" class="btn" data-tool="rect" title="사각형">사각</button>
         <button type="button" class="btn" data-tool="badge" title="번호">번호</button>
         <button type="button" class="btn" data-tool="blur" title="블러">블러</button>
+        <button type="button" class="btn" data-tool="crop" title="자르기">자르기</button>
       </div>
       <div class="group" role="group" aria-label="색상">
         <button type="button" class="swatch active" data-color="#E5484D" style="--c: #E5484D" title="빨강" aria-label="빨강"></button>
@@ -42,9 +43,22 @@
 
     <div id="targetbar" role="status"></div>
 
+    <div id="comparebar" hidden aria-label="이전 캡처와 비교">
+      <button type="button" class="btn cmp-btn" id="compare-toggle" data-command="compare">전/후 비교</button>
+      <span class="cmp-modes" role="group" aria-label="비교 모드">
+        <button type="button" class="btn cmp-btn active" data-cmp-mode="overlay" title="이전 캡처를 반투명으로 겹침">겹치기</button>
+        <button type="button" class="btn cmp-btn" data-cmp-mode="wipe" title="세로선 왼쪽은 이전, 오른쪽은 현재">와이프</button>
+        <button type="button" class="btn cmp-btn" data-cmp-mode="diff" title="달라진 부분만 밝게">차이</button>
+      </span>
+      <label class="cmp-slider">불투명도 <input id="cmp-opacity" type="range" min="0" max="100" value="50" /></label>
+      <label class="cmp-slider off">위치 <input id="cmp-wipe" type="range" min="0" max="100" value="50" /></label>
+      <span id="cmp-diff" class="cmp-diff"></span>
+    </div>
+
     <main id="stage">
       <div id="wrap">
         <canvas id="base"></canvas>
+        <canvas id="cmp"></canvas>
         <canvas id="ink"></canvas>
       </div>
     </main>

@@ -14,8 +14,10 @@ npm start          # 트레이 상주
 | 동작 | 키 |
 |---|---|
 | 영역 캡처 (화면이 멈추고 드래그로 선택) | `Ctrl+Shift+A` |
-| 창 캡처 (마우스 아래 창을 클릭) | `Ctrl+Shift+W` — 선택 화면 안에서는 R/W/F로 전환 |
-| 편집기 도구 | 펜 P · 텍스트 T · 화살표 A · 사각형 R · 번호 N · 블러 B |
+| 창 캡처 (마우스 아래 창을 클릭) | `Ctrl+Shift+W` — 선택 화면 안에서는 R/W/F/S로 전환 |
+| 스크롤 캡처 (긴 페이지를 자동 스크롤해 이어붙임) | 선택 화면에서 `S` 후 창 클릭 — 진행 중 `Esc`로 중단 |
+| 편집기 도구 | 펜 P · 텍스트 T · 화살표 A · 사각형 R · 번호 N · 블러 B · 자르기 C (되돌리기 가능) |
+| 전/후 비교 (트레이 "마지막 영역 다시 캡처"로 찍었을 때) | O — 겹치기 / 와이프 / 차이, 브리프에 한 줄로 기록 |
 | 녹음 시작/정지 | M (말하면서 그리면 발화가 주석에 자동으로 붙는다) |
 | 타임라인 열기 / 재생 / 라이브 | L · Space · End |
 | 되돌리기 / 다시 실행 | Ctrl+Z · Ctrl+Shift+Z |
@@ -43,10 +45,14 @@ transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-
 첫 녹음 때 내려받아 `%APPDATA%\backseat\models` 에 캐시된다. 환경변수 `BACKSEAT_STT_MODEL` 로 바꿀 수 있다
 (예: `onnx-community/whisper-large-v3-turbo_timestamped`, 더 정확하지만 큼).
 
+클라우드로 돌리려면 `config.json`에 `"sttBackend": "openai"`(필요하면 `sttApiBase`, `sttCloudModel`)를 쓰고, API 키는 **환경변수
+`BACKSEAT_STT_API_KEY`** 로만 준다(파일에 저장하지 않음). OpenAI 호환 `/v1/audio/transcriptions`(verbose_json, 단어 타임스탬프)를 쓰는
+서버라면 어디든 된다.
+
 ## 검증
 
-- `npm test` — 정렬·전사 그룹화 단위 테스트
-- `npm run selftest` — 캡처, 창 열거, 선택창·편집기 렌더링, 타임라인 스크럽, undo/redo, 클립보드, 세션 패키지, 브리프 검증.
+- `npm test` — 정렬·전사 그룹화·스크롤 스티칭·클라우드 STT 어댑터(모의 서버) 단위 테스트
+- `npm run selftest` — 캡처, 창 열거, 선택창·편집기 렌더링, 타임라인 스크럽, undo/redo, 자르기(좌표·meta), 전/후 비교, 스크롤 캡처(자체 긴 페이지 창), 클라우드 STT(로컬 모의 서버), 클립보드, 세션 패키지, 브리프 검증.
   `--selftest-wav=<wav>` 를 주면 STT와 음성 레인까지 확인한다.
 - `node scripts/mcp-check.mjs <sessionsRoot>` — MCP 서버를 공식 클라이언트로 검증(ask 왕복 포함)
 

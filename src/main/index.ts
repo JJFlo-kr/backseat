@@ -7,9 +7,10 @@ import { createEditorWindow, installEditorIpc } from './editor'
 import { pruneRegistry } from './mcp/registry'
 import { getForegroundWindow, listTopLevelWindows } from './native/win32'
 import { startRequestWatcher, takePendingRequest } from './requests'
+import { scrollCapture } from './scroll'
 import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
-import { sessionsRoot } from './sessions'
+import { latestCompareSource, sessionsRoot } from './sessions'
 import { createTray } from './tray'
 
 let capturing = false
@@ -72,8 +73,27 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
     if (!sel) return
     const cap = captureForDisplayId(caps, sel.displayId)
     if (!cap) return
-    lastSelection = sel
-    const { image, rectPx } = cropDip(cap, sel.rect)
+    // A "last area" capture compares against the package of the previous send, when there is one.
+    const compare = mode === 'last' ? (await latestCompareSource()) ?? undefined : undefined
+    if (sel.mode !== 'scroll') lastSelection = sel
+    let image: Electron.NativeImage
+    let rectPx: EditorInit['meta']['rectPx']
+    let rectDip = sel.rect
+    let scroll: EditorInit['meta']['scroll']
+    if (sel.mode === 'scroll' && sel.window) {
+      // The selector overlays are gone (settled); wheel the real window and stitch.
+      const r = await scrollCapture(cap.display, sel.window, sel.rect, { maxHeightPx: settings.scrollMaxHeightPx })
+      if (r.stoppedBy === 'cancel') return
+      image = r.image
+      const { rectPx: top } = cropDip(cap, sel.rect)
+      rectPx = { x: top.x, y: top.y, width: r.widthPx, height: r.heightPx }
+      rectDip = { ...sel.rect, height: Math.round(r.heightPx / cap.display.scaleFactor) }
+      scroll = { frames: r.frames, viewportPx: r.viewportPx }
+    } else {
+      const c = cropDip(cap, sel.rect)
+      image = c.image
+      rectPx = c.rectPx
+    }
     const init: EditorInit = {
       imageDataUrl: `data:image/png;base64,${image.toPNG().toString('base64')}`,
       width: rectPx.width,
@@ -82,16 +102,18 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
         capturedAt: new Date().toISOString(),
         displayId: cap.display.id,
         scaleFactor: cap.display.scaleFactor,
-        rectDip: sel.rect,
+        rectDip,
         rectPx,
         mode: sel.mode,
         window: sel.window ? { title: sel.window.title, process: sel.window.process } : undefined,
         activeWindow: active ? { title: active.title, process: active.process } : undefined,
-        request: ask ? { requestId: ask.requestId, question: ask.question, agent: ask.agent } : undefined
+        request: ask ? { requestId: ask.requestId, question: ask.question, agent: ask.agent } : undefined,
+        scroll
       },
       target,
       autoRecord: settings.autoRecord,
-      request: ask
+      request: ask,
+      compare
     }
     createEditorWindow(init)
   } catch (err) {

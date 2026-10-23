@@ -109,3 +109,7 @@ body.mode-full #overlay {
   white-space: nowrap;
   pointer-events: none;
 }
+
+body.mode-scroll #overlay {
+  cursor: pointer;
+}

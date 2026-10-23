@@ -17,9 +17,21 @@ export interface Settings {
   sttModel: string
   /** Whisper language hint. */
   sttLanguage: string
+  /**
+   * 'local' runs Whisper in-process (default). 'openai' posts the audio to an OpenAI-compatible
+   * /audio/transcriptions endpoint; the API key comes ONLY from the BACKSEAT_STT_API_KEY
+   * environment variable and is never written to this file.
+   */
+  sttBackend: 'local' | 'openai'
+  /** Base URL of the OpenAI-compatible API (without the trailing /audio/transcriptions). */
+  sttApiBase: string
+  /** Model name sent to the cloud backend. */
+  sttCloudModel: string
   /** Capture hotkeys (Electron accelerator syntax). */
   hotkeyRect: string
   hotkeyWindow: string
+  /** Scroll capture: stop once the stitched image is this tall (device px). */
+  scrollMaxHeightPx: number
 }
 
 const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
@@ -28,6 +40,10 @@ const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
   pressEnter: false,
   sttModel: 'onnx-community/whisper-small_timestamped',
   sttLanguage: 'korean',
+  sttBackend: 'local',
+  sttApiBase: 'https://api.openai.com/v1',
+  sttCloudModel: 'whisper-1',
+  scrollMaxHeightPx: 16000,
   hotkeyRect: 'CommandOrControl+Shift+A',
   hotkeyWindow: 'CommandOrControl+Shift+W'
 }
@@ -47,7 +63,13 @@ export function loadSettings(): Settings {
     console.error('[backseat] config unreadable, using defaults:', err)
   }
   cached = { ...DEFAULTS, sessionsRoot: sessionsRoot(), ...stored }
+  if (cached.sttBackend !== 'openai') cached.sttBackend = 'local'
   return cached
+}
+
+/** The cloud STT key is environment-only on purpose: config.json is plain text next to the sessions. */
+export function sttApiKey(): string {
+  return process.env.BACKSEAT_STT_API_KEY ?? ''
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {

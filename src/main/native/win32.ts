@@ -42,6 +42,11 @@ interface Api {
   OpenProcess: Fn
   QueryFullProcessImageNameW: Fn
   CloseHandle: Fn
+  SetCursorPos: Fn
+  GetCursorPos: Fn
+  SendInput: Fn
+  PostMessageW: Fn
+  WindowFromPoint: Fn
 }
 
 let api: Api | null | undefined
@@ -75,7 +80,12 @@ function load(): Api | null {
       QueryFullProcessImageNameW: kernel32.func(
         'bool QueryFullProcessImageNameW(uintptr_t h, uint32_t flags, _Out_ uint16_t *buf, _Inout_ uint32_t *size)'
       ) as Fn,
-      CloseHandle: kernel32.func('bool CloseHandle(uintptr_t h)') as Fn
+      CloseHandle: kernel32.func('bool CloseHandle(uintptr_t h)') as Fn,
+      SetCursorPos: user32.func('bool SetCursorPos(int x, int y)') as Fn,
+      GetCursorPos: user32.func('bool GetCursorPos(_Out_ uint8_t *pt)') as Fn,
+      SendInput: user32.func('uint32_t SendInput(uint32_t n, _In_ uint8_t *inputs, int cb)') as Fn,
+      PostMessageW: user32.func('bool PostMessageW(uintptr_t hwnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)') as Fn,
+      WindowFromPoint: user32.func('uintptr_t WindowFromPoint(int64_t pt)') as Fn
     }
   } catch (err) {
     console.error('[backseat] win32 layer unavailable:', err)
@@ -225,4 +235,73 @@ export function sendEnter(): boolean {
   if (!a) return false
   tap(a, VK_RETURN)
   return true
+}
+
+// ---------- mouse wheel (scroll capture) ----------
+
+const INPUT_MOUSE = 0
+const MOUSEEVENTF_WHEEL = 0x0800
+export const WHEEL_DELTA = 120
+const WM_MOUSEWHEEL = 0x020a
+/** sizeof(INPUT) on x64: DWORD type + 4 pad + MOUSEINPUT (32 bytes). */
+const INPUT_SIZE = 40
+
+/** Physical-pixel cursor position, or null off Windows. */
+export function getCursorPos(): { x: number; y: number } | null {
+  const a = load()
+  if (!a) return null
+  const raw = new Uint8Array(8)
+  if (!a.GetCursorPos(raw)) return null
+  const p = new Int32Array(raw.buffer, raw.byteOffset, 2)
+  return { x: p[0], y: p[1] }
+}
+
+export function setCursorPos(x: number, y: number): boolean {
+  const a = load()
+  if (!a) return false
+  return Boolean(a.SetCursorPos(Math.round(x), Math.round(y)))
+}
+
+/**
+ * One wheel event with a raw delta in WHEEL_DELTA units (120 = one notch; negative = down) through
+ * SendInput, i.e. exactly what a real wheel does: the window under the cursor scrolls.
+ * Chromium-based windows honour fractions of a notch (precision scrolling). Returns 1 on success.
+ */
+export function sendWheelDelta(delta: number): number {
+  const a = load()
+  if (!a || delta === 0) return 0
+  const buf = new Uint8Array(INPUT_SIZE)
+  const dv = new DataView(buf.buffer)
+  dv.setUint32(0, INPUT_MOUSE, true)
+  dv.setInt32(8, 0, true) // dx
+  dv.setInt32(12, 0, true) // dy
+  dv.setInt32(16, Math.round(delta), true) // mouseData
+  dv.setUint32(20, MOUSEEVENTF_WHEEL, true)
+  dv.setUint32(24, 0, true) // time; dwExtraInfo (8 bytes at +32) stays 0
+  return Number(a.SendInput(1, buf, INPUT_SIZE))
+}
+
+/** Whole notches (negative = down), one event each, for apps that only act on full WHEEL_DELTA steps. */
+export function sendWheel(ticks: number): number {
+  let sent = 0
+  for (let i = 0; i < Math.abs(ticks); i++) sent += sendWheelDelta(ticks < 0 ? -WHEEL_DELTA : WHEEL_DELTA)
+  return sent
+}
+
+/** Fallback when SendInput is blocked (UIPI): post WM_MOUSEWHEEL straight to the window. */
+export function postWheel(hwnd: number, delta: number, screenX: number, screenY: number): boolean {
+  const a = load()
+  if (!a || delta === 0) return false
+  const wParam = BigInt(delta & 0xffff) << 16n // HIWORD = signed wheel delta, LOWORD = no modifier keys
+  const lParam = ((screenY & 0xffff) << 16) | (screenX & 0xffff)
+  return Boolean(a.PostMessageW(hwnd, WM_MOUSEWHEEL, wParam, lParam))
+}
+
+/** Top-level window under a physical-pixel point (0 when none). */
+export function windowAtPoint(x: number, y: number): number {
+  const a = load()
+  if (!a) return 0
+  const packed = (BigInt(y & 0xffffffff) << 32n) | BigInt(x & 0xffffffff)
+  const hwnd = Number(a.WindowFromPoint(BigInt.asIntN(64, packed)))
+  return hwnd ? (a.GetAncestor(hwnd, GA_ROOT) as number) : 0
 }
