@@ -269,9 +269,22 @@ StykAnimate(GPL-3.0, github.com/filippocalippo/StykAnimate-App)를 읽기 전용
 ### 적용하지 않는 것
 WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advanced 이중 타임라인, 오디오 믹서, Pivot 호환 규칙. 벡터 스트로크 수십 개 규모에는 과하다.
 
-## 12. 다음 액션 (M1)
-- [ ] 창 캡처 모드: 마우스 아래 창 하이라이트 (Win32 EnumWindows + DWMWA_EXTENDED_FRAME_BOUNDS, koffi)
-- [ ] 화살표·사각형·번호 뱃지·블러·자르기 도구
-- [ ] strokes.json + meta.json을 포함한 세션 패키지 저장 (`.backseat/sessions/<id>/`)
-- [ ] 활성 에이전트 판별(포커스 창) + 터미널 자동입력 전송
-- [ ] 전체/모니터 캡처 모드 선택 UI
+## 12. M1 진행 상황 (2026-10-23)
+- [x] 창 캡처 모드: 선택 창에서 W(창)/R(사각형)/F(전체) 전환, 창 위에 마우스를 올리면 윤곽 하이라이트 + 제목·크기, 클릭으로 캡처. 창 목록은 koffi로 Win32 `GetTopWindow/GetWindow` z-order 순회 + `DWMWA_EXTENDED_FRAME_BOUNDS`(DIP 변환은 `screen.screenToDipRect`), cloaked·툴윈도우·최소화 창 제외. 단축키 `Ctrl+Shift+W`는 창 모드로 바로 시작
+- [x] 화살표(A)·사각형(R)·번호 뱃지(N, 배열 순서로 자동 번호)·블러(B, 베이스 픽셀 모자이크) 도구. 스크럽/재생에서 화살표·사각형은 진행도에 따라 자람
+- [x] 세션 패키지: `Pictures/Backseat/sessions/<id>/` 에 annotated.png, brief.md, strokes.json, meta.json + `latest.txt` 포인터 (`src/main/sessions.ts`)
+- [x] 활성 에이전트 판별: 캡처 직전 전경 창의 프로세스·제목으로 분류 (`src/main/agents.ts`: 터미널+제목 'claude' → Claude Code, claude.exe → Claude 앱, cursor/code/windsurf, 브라우저 채팅). 편집기 상단에 "→ 대상" 표시
+- [x] 전송(Enter / Ctrl+Enter): 패키지 저장 → 클립보드(터미널은 경로 지시문 텍스트, 채팅 UI는 이미지+텍스트) → 편집기 숨김 → `SetForegroundWindow`(Alt 탭 트릭) → 전경 확인 → Ctrl+V. Enter는 기본으로 치지 않음. 포커스 실패 시 클립보드 복사로 폴백하고 메시지로 알림
+- [ ] 자르기(crop) 도구 — 좌표계가 바뀌어 타임라인·주석과 얽히므로 M4로 미룸
+- [ ] 실제 붙여넣기 경로는 사람이 확인 필요(자가 테스트는 패키지 생성·클립보드·판별까지만 검증)
+
+### M1 노트
+- 자르기 외 M1 항목은 전부 들어갔고 자가 테스트로 창 열거(3개), 전경 창 판별, 대상 분류, 브리프의 6종 주석 서술, 패키지 4개 파일을 확인했다.
+- `.backseat/sessions/` 를 프로젝트 안에 쓰려면 에이전트의 작업 폴더를 알아야 한다. 다른 프로세스의 cwd는 권한 없이 얻기 어려워 M1은 Pictures 아래 고정 경로 + 절대 경로 지시문으로 간다. M3의 `backseat_register(cwd)` 로 해결.
+
+## 13. 다음 액션 (M2 음성)
+- [ ] 편집기 마이크 버튼 + 오버레이 모드에서 자동 녹음 (MediaRecorder → WAV/Opus)
+- [ ] STT 어댑터: whisper.cpp 사이드카(기본) / 클라우드(옵션), 단어 타임스탬프
+- [ ] 음성 레인 + `alignSegments` 결과를 brief.md에 "주석 ↔ 발화"로 병합, `source/confidence` 기록
+- [ ] 재생 마스터 클럭을 오디오로, 스크럽 시 오디오 조각 재생
+- [ ] 세그먼트 드래그 재할당(manual 링크 명령), `audioOffsetMs` 보정 UI

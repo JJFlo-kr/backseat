@@ -1,5 +1,5 @@
 import { resolve } from 'path'
-import { defineConfig } from 'electron-vite'
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
 // Paths are resolved against the project root (process.cwd()), like the official
 // electron-vite templates.
@@ -11,6 +11,8 @@ const root = process.cwd()
 
 export default defineConfig({
   main: {
+    // koffi is a native (N-API) module: it must stay external, loaded from node_modules at runtime.
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
         input: resolve(root, 'src/main/index.ts')
@@ -18,6 +20,7 @@ export default defineConfig({
     }
   },
   preload: {
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
         input: resolve(root, 'src/preload/index.ts')

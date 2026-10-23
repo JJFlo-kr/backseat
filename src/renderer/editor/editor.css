@@ -46,6 +46,7 @@ body { display: flex; flex-direction: column; }
 .btn.primary { background: #E5484D; color: #fff; font-weight: 600; }
 .btn.primary:hover { background: #ee5a5f; }
 .btn.primary:active { background: #cf3b40; }
+#toolbar .btn { padding: 0 8px; font-size: 12px; }
 .btn:focus-visible, .swatch:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 1px; }
 
 .swatch {
@@ -58,6 +59,22 @@ body { display: flex; flex-direction: column; }
   cursor: pointer;
 }
 .swatch.active { box-shadow: 0 0 0 2px #e6e6e6; }
+
+#targetbar {
+  flex: none;
+  height: 26px;
+  line-height: 26px;
+  padding: 0 10px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #26262c;
+  border-bottom: 1px solid #111;
+  color: #cfcfd8;
+  font-size: 12px;
+}
+#targetbar .hint { margin-left: 8px; color: #7d7d88; }
 
 #stage {
   flex: 1;
