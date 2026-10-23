@@ -17,10 +17,13 @@ const PAD_R = 14
 const RULER_H = 18
 const LANE_H = 16
 const LANE_GAP = 4
-const LANES: { kind: Annotation['kind']; label: string }[] = [
-  { kind: 'stroke', label: '펜' },
-  { kind: 'text', label: '텍스트' }
+const LANES: { kinds: readonly Annotation['kind'][]; label: string }[] = [
+  { kinds: ['stroke'], label: '펜' },
+  { kinds: ['arrow', 'rect', 'badge', 'blur'], label: '도형' },
+  { kinds: ['text'], label: '텍스트' }
 ]
+/** Point-in-time annotations are drawn as a diamond at tStart instead of a [tStart,tEnd] bar. */
+const isMarker = (a: Annotation): boolean => a.kind === 'text' || a.kind === 'badge' || a.kind === 'blur'
 const TICK_STEPS = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000]
 
 export class TimeAxis {
@@ -256,7 +259,7 @@ export class Timeline {
       ctx.textBaseline = 'middle'
       ctx.fillText(lane.label, PAD_L + 3, y + LANE_H / 2)
       annotations.forEach((a, i) => {
-        if (a.kind !== lane.kind) return
+        if (!lane.kinds.includes(a.kind)) return
         this.drawBar(ctx, axis, a, i, y)
       })
     })
@@ -296,11 +299,12 @@ export class Timeline {
     const x0 = axis.xOf(a.tStart)
     const x1 = Math.max(x0 + 3, axis.xOf(a.tEnd))
     // Hold tail: the annotation stays visible after it is finished.
-    ctx.fillStyle = a.color
+    ctx.fillStyle = 'color' in a ? a.color : '#8a8a96' // blur has no colour
     ctx.globalAlpha = 0.16
     ctx.fillRect(x1, y + LANE_H / 2 - 1, axis.xOf(axis.durationMs) - x1, 2)
     ctx.globalAlpha = 1
-    if (a.kind === 'text') {
+    const marker = isMarker(a)
+    if (marker) {
       ctx.beginPath()
       ctx.moveTo(x0, y + 2)
       ctx.lineTo(x0 + 6, y + LANE_H / 2)
@@ -313,11 +317,11 @@ export class Timeline {
       ctx.roundRect(x0, y + 2, x1 - x0, LANE_H - 4, 3)
       ctx.fill()
     }
-    if (x1 - x0 >= 14 || a.kind === 'text') {
+    if (x1 - x0 >= 14 || marker) {
       ctx.fillStyle = '#fff'
       ctx.font = 'bold 10px system-ui, sans-serif'
       ctx.textBaseline = 'middle'
-      ctx.fillText(String(index + 1), (a.kind === 'text' ? x0 + 9 : x0 + 4), y + LANE_H / 2)
+      ctx.fillText(String(index + 1), (marker ? x0 + 9 : x0 + 4), y + LANE_H / 2)
     }
   }
 

@@ -12,6 +12,7 @@ export const IPC = {
   editorSave: 'editor:save',
   editorCopy: 'editor:copy',
   editorSaveVideo: 'editor:save-video',
+  editorSend: 'editor:send',
   // editor window -> main (send)
   editorClose: 'editor:close'
 } as const

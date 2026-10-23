@@ -1,13 +1,26 @@
-import type { EditorInit, ExportPayload, Annotation, Point } from '../../shared/types'
+import type { EditorInit, ExportPayload, Annotation, AgentTarget, Point } from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
 
-type Tool = 'pen' | 'text'
+type Tool = 'pen' | 'text' | 'arrow' | 'rect' | 'badge' | 'blur'
+type DragTool = 'arrow' | 'rect' | 'badge' | 'blur'
 type StrokeAnn = Extract<Annotation, { kind: 'stroke' }>
+type ArrowAnn = Extract<Annotation, { kind: 'arrow' }>
+type RectAnn = Extract<Annotation, { kind: 'rect' }>
+type BadgeAnn = Extract<Annotation, { kind: 'badge' }>
+type BlurAnn = Extract<Annotation, { kind: 'blur' }>
 
 const TEXT_SIZE = 18 // CSS px; scaled by meta.scaleFactor into image pixels
+const BADGE_SIZE = 22 // CSS px diameter
+const BLUR_BLOCK = 14 // CSS px per pixelation block
+const MIN_DRAG = 3 // image px
+const SEND_CLOSE_DELAY = 700 // ms the status stays visible before the editor closes
+
+function isTool(v: string | undefined): v is Tool {
+  return v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur'
+}
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id)
@@ -26,6 +39,7 @@ const base = byId<HTMLCanvasElement>('base')
 const ink = byId<HTMLCanvasElement>('ink')
 const memoInput = byId<HTMLInputElement>('memo')
 const statusEl = byId<HTMLElement>('status')
+const targetBar = byId<HTMLElement>('targetbar')
 const undoBtn = byId<HTMLButtonElement>('undo')
 const redoBtn = byId<HTMLButtonElement>('redo')
 const timelineBtn = byId<HTMLButtonElement>('timeline-toggle')
@@ -45,6 +59,8 @@ let view = 1 // displayed size / natural on-screen size
 let annotations: readonly Annotation[] = []
 const history = new History<readonly Annotation[]>(100)
 let drawing: StrokeAnn | null = null
+/** In-progress drag of an arrow / rect / badge / blur. */
+let shape: { tool: DragTool; start: Point; cur: Point; tStart: number } | null = null
 let textBox: HTMLInputElement | null = null
 let busy = false
 let scrubT: number | null = null // non-null while the timeline is scrubbed/replaying
@@ -89,9 +105,112 @@ function drawStroke(ctx: CanvasRenderingContext2D, a: StrokeAnn, count?: number)
   ctx.stroke()
 }
 
-function drawAnnotation(ctx: CanvasRenderingContext2D, a: Annotation): void {
-  if (a.kind === 'stroke') drawStroke(ctx, a)
-  else drawText(ctx, a)
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
+
+/** 0 before tStart, 1 from tEnd on, linear in between. */
+function progressAt(a: { tStart: number; tEnd: number }, t: number): number {
+  if (t < a.tStart) return 0
+  if (a.tEnd <= a.tStart) return 1
+  return clamp01((t - a.tStart) / (a.tEnd - a.tStart))
+}
+
+function drawArrow(ctx: CanvasRenderingContext2D, a: ArrowAnn, x2 = a.x2, y2 = a.y2): void {
+  const dx = x2 - a.x1
+  const dy = y2 - a.y1
+  const len = Math.hypot(dx, dy)
+  if (len < 0.5) return
+  const ux = dx / len
+  const uy = dy / len
+  const head = Math.min(len, a.width * 4 + 8)
+  const bx = x2 - ux * head // base centre of the head
+  const by = y2 - uy * head
+  const half = head * 0.42
+  ctx.strokeStyle = a.color
+  ctx.fillStyle = a.color
+  ctx.lineWidth = a.width
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  ctx.moveTo(a.x1, a.y1)
+  ctx.lineTo(bx + ux * head * 0.3, by + uy * head * 0.3) // tuck the line under the head
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(x2, y2)
+  ctx.lineTo(bx - uy * half, by + ux * half)
+  ctx.lineTo(bx + uy * half, by - ux * half)
+  ctx.closePath()
+  ctx.fill()
+}
+
+function drawRect(ctx: CanvasRenderingContext2D, a: RectAnn, w = a.w, h = a.h): void {
+  ctx.strokeStyle = a.color
+  ctx.lineWidth = a.width
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  ctx.roundRect(a.x, a.y, w, h, 3)
+  ctx.stroke()
+}
+
+function drawBadge(ctx: CanvasRenderingContext2D, a: BadgeAnn, no: number): void {
+  const r = a.size / 2
+  ctx.beginPath()
+  ctx.arc(a.x, a.y, r, 0, Math.PI * 2)
+  ctx.fillStyle = a.color
+  ctx.fill()
+  ctx.lineWidth = Math.max(1, a.size / 16)
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+  ctx.stroke()
+  ctx.fillStyle = '#fff'
+  ctx.font = `bold ${Math.round(a.size * 0.58)}px system-ui, "Malgun Gothic", sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(String(no), a.x, a.y + a.size * 0.04)
+  ctx.textAlign = 'start'
+}
+
+/** Pixelate the base image inside the box with opaque average-colour blocks. */
+function drawBlur(ctx: CanvasRenderingContext2D, a: BlurAnn): void {
+  const x0 = Math.max(0, Math.floor(a.x))
+  const y0 = Math.max(0, Math.floor(a.y))
+  const x1 = Math.min(base.width, Math.ceil(a.x + a.w))
+  const y1 = Math.min(base.height, Math.ceil(a.y + a.h))
+  const w = x1 - x0
+  const h = y1 - y0
+  if (w <= 0 || h <= 0) return
+  const data = baseCtx.getImageData(x0, y0, w, h).data
+  const bs = Math.max(2, Math.round(a.strength))
+  for (let by = 0; by < h; by += bs) {
+    for (let bx = 0; bx < w; bx += bs) {
+      const ex = Math.min(w, bx + bs)
+      const ey = Math.min(h, by + bs)
+      let r = 0
+      let g = 0
+      let b = 0
+      for (let y = by; y < ey; y++) {
+        let i = (y * w + bx) * 4
+        for (let x = bx; x < ex; x++, i += 4) {
+          r += data[i]
+          g += data[i + 1]
+          b += data[i + 2]
+        }
+      }
+      const n = (ex - bx) * (ey - by)
+      ctx.fillStyle = `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`
+      ctx.fillRect(x0 + bx, y0 + by, ex - bx, ey - by)
+    }
+  }
+}
+
+/** `no` = display number for badges (position among badges); falls back to the stored n. */
+function drawAnnotation(ctx: CanvasRenderingContext2D, a: Annotation, no?: number): void {
+  switch (a.kind) {
+    case 'stroke': drawStroke(ctx, a); break
+    case 'text': drawText(ctx, a); break
+    case 'arrow': drawArrow(ctx, a); break
+    case 'rect': drawRect(ctx, a); break
+    case 'badge': drawBadge(ctx, a, no ?? a.n); break
+    case 'blur': drawBlur(ctx, a); break
+  }
 }
 
 /** How many points of a stroke existed at time t. */
@@ -107,18 +226,47 @@ function pointsAt(a: StrokeAnn, t: number): number {
 }
 
 /** The scene as it looked at time t: the heart of scrubbing, replay and video export. */
-function drawAnnotationAt(ctx: CanvasRenderingContext2D, a: Annotation, t: number): void {
-  if (a.kind === 'text') {
-    if (t >= a.tEnd) drawText(ctx, a)
-    return
+function drawAnnotationAt(ctx: CanvasRenderingContext2D, a: Annotation, t: number, no?: number): void {
+  switch (a.kind) {
+    case 'text':
+    case 'badge':
+    case 'blur':
+      if (t >= a.tEnd) drawAnnotation(ctx, a, no)
+      return
+    case 'arrow': {
+      if (t < a.tStart) return
+      const p = progressAt(a, t)
+      drawArrow(ctx, a, a.x1 + (a.x2 - a.x1) * p, a.y1 + (a.y2 - a.y1) * p)
+      return
+    }
+    case 'rect': {
+      if (t < a.tStart) return
+      const p = progressAt(a, t)
+      drawRect(ctx, a, a.w * p, a.h * p)
+      return
+    }
+    case 'stroke':
+      drawStroke(ctx, a, pointsAt(a, t))
   }
-  drawStroke(ctx, a, pointsAt(a, t))
+}
+
+/** Draw the whole document: live (t = null) or as it looked at time t. Badges are numbered by array order. */
+function drawAll(ctx: CanvasRenderingContext2D, t: number | null): void {
+  let badgeNo = 0
+  for (const a of annotations) {
+    const no = a.kind === 'badge' ? ++badgeNo : undefined
+    if (t === null) drawAnnotation(ctx, a, no)
+    else drawAnnotationAt(ctx, a, t, no)
+  }
 }
 
 function render(): void {
   inkCtx.clearRect(0, 0, ink.width, ink.height)
-  if (scrubT === null) for (const a of annotations) drawAnnotation(inkCtx, a)
-  else for (const a of annotations) drawAnnotationAt(inkCtx, a, scrubT)
+  drawAll(inkCtx, scrubT)
+  if (shape && init) {
+    const prev = buildShape(shape.tool, shape.start, shape.cur, shape.tStart, now(), init.meta.scaleFactor, true)
+    if (prev) drawAnnotation(inkCtx, prev, prev.kind === 'badge' ? prev.n : undefined)
+  }
 }
 
 function layout(): void {
@@ -140,7 +288,7 @@ function flatten(): string {
   out.height = base.height
   const ctx = ctxOf(out)
   ctx.drawImage(base, 0, 0)
-  for (const a of annotations) drawAnnotation(ctx, a) // always the full picture, even while scrubbed
+  drawAll(ctx, null) // always the full picture, even while scrubbed
   return out.toDataURL('image/png')
 }
 
@@ -172,7 +320,7 @@ function commit(label: string, next: readonly Annotation[]): void {
 }
 
 function undo(): void {
-  if (drawing) return
+  if (drawing || shape) return
   commitPendingText()
   const prev = history.undo()
   if (prev === undefined) return
@@ -181,7 +329,7 @@ function undo(): void {
 }
 
 function redo(): void {
-  if (drawing) return
+  if (drawing || shape) return
   commitPendingText()
   const next = history.redo()
   if (next === undefined) return
@@ -256,13 +404,56 @@ function segment(a: StrokeAnn, from: Point, to: Point): void {
 // Event timestamps share performance.now()'s origin, so coalesced samples keep their real times.
 const evTime = (ev: PointerEvent): number => Math.max(0, ev.timeStamp - t0)
 
+/** Build a finished (or preview) shape annotation; null when too small to keep. */
+function buildShape(
+  kind: DragTool, a: Point, b: Point, tStart: number, tEnd: number, scale: number, preview = false
+): Extract<Annotation, { kind: DragTool }> | null {
+  const width = widthCss * scale
+  switch (kind) {
+    case 'arrow':
+      if (!preview && Math.hypot(b.x - a.x, b.y - a.y) < MIN_DRAG) return null
+      return { kind, x1: a.x, y1: a.y, x2: b.x, y2: b.y, color, width, tStart, tEnd }
+    case 'rect':
+    case 'blur': {
+      const x = Math.min(a.x, b.x)
+      const y = Math.min(a.y, b.y)
+      const w = Math.abs(b.x - a.x)
+      const h = Math.abs(b.y - a.y)
+      if (!preview && (w < MIN_DRAG || h < MIN_DRAG)) return null
+      if (kind === 'rect') return { kind, x, y, w, h, color, width, tStart, tEnd }
+      return { kind, x, y, w, h, strength: BLUR_BLOCK * scale, tStart, tEnd }
+    }
+    case 'badge': {
+      const n = annotations.reduce((c, x) => c + (x.kind === 'badge' ? 1 : 0), 0) + 1
+      return { kind, x: a.x, y: a.y, n, color, size: BADGE_SIZE * scale, tStart, tEnd }
+    }
+  }
+}
+
+const LABELS: Record<DragTool, string> = { arrow: '화살표', rect: '사각형', badge: '번호', blur: '블러' }
+
+function endShape(commitIt: boolean): void {
+  if (!shape || !init) return
+  const s = shape
+  shape = null
+  const a = commitIt ? buildShape(s.tool, s.start, s.cur, s.tStart, now(), init.meta.scaleFactor) : null
+  if (a) commit(LABELS[s.tool], [...annotations, a])
+  else render() // drop the preview
+}
+
 ink.addEventListener('pointerdown', (e) => {
-  if (!init || e.button !== 0 || drawing) return
+  if (!init || e.button !== 0 || drawing || shape) return
   e.preventDefault()
   commitPendingText()
   ensureLive()
   const p = toImg(e)
   if (tool === 'text') { startText(p, e); return }
+  if (tool !== 'pen') {
+    shape = { tool, start: p, cur: p, tStart: now() }
+    ink.setPointerCapture(e.pointerId)
+    render()
+    return
+  }
   const tStart = now()
   drawing = {
     kind: 'stroke', color, width: widthCss * init.meta.scaleFactor,
@@ -273,6 +464,11 @@ ink.addEventListener('pointerdown', (e) => {
 })
 
 ink.addEventListener('pointermove', (e) => {
+  if (shape) {
+    shape.cur = toImg(e)
+    render()
+    return
+  }
   if (!drawing) return
   const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : []
   for (const ev of coalesced.length ? coalesced : [e]) {
@@ -291,8 +487,15 @@ function endStroke(): void {
   drawing = null
   commit('펜', [...annotations, done])
 }
-ink.addEventListener('pointerup', endStroke)
-ink.addEventListener('pointercancel', endStroke)
+ink.addEventListener('pointerup', (e) => {
+  if (shape) shape.cur = toImg(e)
+  endStroke()
+  endShape(true)
+})
+ink.addEventListener('pointercancel', () => {
+  endStroke()
+  endShape(false)
+})
 
 // ---------- export ----------
 
@@ -322,6 +525,48 @@ async function save(): Promise<void> {
   } finally {
     busy = false
   }
+}
+
+async function send(): Promise<void> {
+  if (busy) return
+  const payload = buildPayload()
+  if (!payload) return
+  busy = true
+  setStatus('전송 중…')
+  let closing = false
+  try {
+    const r = await window.backseat.editor.send(payload, { pressEnter: false })
+    setStatus(r.message, !r.ok)
+    if (r.ok) {
+      closing = true // stay busy: no double send while the status is visible
+      setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
+    }
+  } catch (err) {
+    setStatus(`전송 실패: ${errText(err)}`, true)
+  } finally {
+    if (!closing) busy = false
+  }
+}
+
+const METHOD_HINT: Record<AgentTarget['method'], string> = {
+  'paste-path': '붙여넣기',
+  'paste-image': '붙여넣기',
+  clipboard: '클립보드'
+}
+
+function showTarget(target: AgentTarget | null): void {
+  targetBar.textContent = ''
+  if (!target) {
+    targetBar.textContent = '대상 없음 · 전송하면 클립보드에 복사됩니다'
+    targetBar.title = ''
+    return
+  }
+  targetBar.append(`→ ${target.label}`)
+  const hint = document.createElement('span')
+  hint.className = 'hint'
+  hint.textContent = METHOD_HINT[target.method]
+  targetBar.append(hint)
+  targetBar.title = `${target.title} (${target.process})`
 }
 
 async function copy(): Promise<void> {
@@ -359,7 +604,7 @@ async function exportVideo(): Promise<void> {
   const frame = (t: number): void => {
     cctx.setTransform(scale, 0, 0, scale, 0, 0)
     cctx.drawImage(base, 0, 0)
-    for (const a of annotations) drawAnnotationAt(cctx, a, t)
+    drawAll(cctx, t)
   }
   const mime =
     ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ??
@@ -414,7 +659,7 @@ function syncToolbar(): void {
   timelineBtn.classList.toggle('active', timeline.isOpen)
 }
 
-toolBtns.forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool === 'text' ? 'text' : 'pen')))
+toolBtns.forEach((b) => b.addEventListener('click', () => setTool(isTool(b.dataset.tool) ? b.dataset.tool : 'pen')))
 colorBtns.forEach((b) => b.addEventListener('click', () => {
   color = b.dataset.color ?? color
   if (textBox) textBox.style.color = color
@@ -428,12 +673,23 @@ widthBtns.forEach((b) => b.addEventListener('click', () => {
 byId('toolbar').addEventListener('mousedown', (e) => e.preventDefault())
 
 const hotkeys = new Hotkeys([
+  {
+    id: 'send', label: '전송', keys: ['Enter', 'Ctrl+Enter'],
+    run: (e) => {
+      if (e.code === 'Enter' && textBox) return false // Enter belongs to the open text box
+      void send()
+    }
+  },
   { id: 'save', label: '저장', keys: ['Ctrl+KeyS'], context: 'global', run: () => void save() },
   { id: 'copy', label: '복사', keys: ['Ctrl+KeyC'], run: () => void copy() },
   { id: 'undo', label: '되돌리기', keys: ['Ctrl+KeyZ'], run: undo },
   { id: 'redo', label: '다시 실행', keys: ['Ctrl+Shift+KeyZ', 'Ctrl+KeyY'], run: redo },
   { id: 'pen', label: '펜', keys: ['KeyP'], run: () => setTool('pen') },
   { id: 'text', label: '텍스트', keys: ['KeyT'], run: () => setTool('text') },
+  { id: 'arrow', label: '화살표', keys: ['KeyA'], run: () => setTool('arrow') },
+  { id: 'rect', label: '사각형', keys: ['KeyR'], run: () => setTool('rect') },
+  { id: 'badge', label: '번호', keys: ['KeyN'], run: () => setTool('badge') },
+  { id: 'blur', label: '블러', keys: ['KeyB'], run: () => setTool('blur') },
   { id: 'timeline', label: '타임라인', keys: ['KeyL'], run: () => { timeline.toggle(); syncToolbar() } },
   { id: 'play', label: '재생/일시정지', keys: ['Space'], run: () => { if (!timeline.isOpen) return false; timeline.togglePlay() } },
   { id: 'step-back', label: '0.2초 뒤로', keys: ['ArrowLeft'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(-200) } },
@@ -467,6 +723,7 @@ window.backseat.editor.onInit((data) => {
   t0 = performance.now()
   document.title = 'Backseat'
   syncToolbar()
+  showTarget(data.target)
   afterChange()
   const img = new Image()
   img.onload = () => {

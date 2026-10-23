@@ -1,16 +1,19 @@
 import { app, globalShortcut } from 'electron'
-import type { EditorInit } from '../shared/types'
+import type { CaptureMode, EditorInit } from '../shared/types'
+import { classifyTarget } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
 import { createEditorWindow, installEditorIpc } from './editor'
-import { runSelector, selectorActive, cancelSelector } from './selector'
+import { getForegroundWindow, listTopLevelWindows } from './native/win32'
+import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
 import { createTray } from './tray'
 
 const HOTKEY = 'CommandOrControl+Shift+A'
+const HOTKEY_WINDOW = 'CommandOrControl+Shift+W'
 let capturing = false
 
-/** Full M0 flow: freeze screens -> pick a region -> open the editor. */
-export async function startCapture(): Promise<void> {
+/** Full flow: remember the active window -> freeze screens -> pick a region/window -> open the editor. */
+export async function startCapture(mode: CaptureMode = 'rect'): Promise<void> {
   if (capturing) {
     // Hotkey pressed again while the selector is up: treat as cancel.
     if (selectorActive()) cancelSelector()
@@ -18,8 +21,11 @@ export async function startCapture(): Promise<void> {
   }
   capturing = true
   try {
+    const active = getForegroundWindow() // before any of our windows show up
+    const target = classifyTarget(active)
     const caps = await captureAllDisplays()
-    const sel = await runSelector(caps)
+    const windows = listTopLevelWindows()
+    const sel = await runSelector(caps, windows, mode)
     if (!sel) return
     const cap = captureForDisplayId(caps, sel.displayId)
     if (!cap) return
@@ -33,8 +39,12 @@ export async function startCapture(): Promise<void> {
         displayId: cap.display.id,
         scaleFactor: cap.display.scaleFactor,
         rectDip: sel.rect,
-        rectPx
-      }
+        rectPx,
+        mode: sel.mode,
+        window: sel.window ? { title: sel.window.title, process: sel.window.process } : undefined,
+        activeWindow: active ? { title: active.title, process: active.process } : undefined
+      },
+      target
     }
     createEditorWindow(init)
   } catch (err) {
@@ -60,8 +70,12 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
     createTray(() => void startCapture())
-    const ok = globalShortcut.register(HOTKEY, () => void startCapture())
-    if (!ok) console.error(`[backseat] could not register hotkey ${HOTKEY}`)
+    if (!globalShortcut.register(HOTKEY, () => void startCapture('rect'))) {
+      console.error(`[backseat] could not register hotkey ${HOTKEY}`)
+    }
+    if (!globalShortcut.register(HOTKEY_WINDOW, () => void startCapture('window'))) {
+      console.error(`[backseat] could not register hotkey ${HOTKEY_WINDOW}`)
+    }
     if (process.argv.includes('--capture')) void startCapture()
   })
 }

@@ -8,6 +8,8 @@ import type {
   SaveResult,
   SelectionResult,
   SelectorInit,
+  SendOptions,
+  SendResult,
   VideoSave
 } from '../shared/types'
 
@@ -35,6 +37,9 @@ const api: BackseatApi = {
     },
     saveVideo(video: VideoSave): Promise<SaveResult> {
       return ipcRenderer.invoke(IPC.editorSaveVideo, video)
+    },
+    send(payload: ExportPayload, opts?: SendOptions): Promise<SendResult> {
+      return ipcRenderer.invoke(IPC.editorSend, payload, opts ?? {})
     },
     close() {
       ipcRenderer.send(IPC.editorClose)

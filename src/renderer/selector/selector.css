@@ -43,8 +43,57 @@ body {
   transition: opacity 0.25s ease;
 }
 
-body.dragging #hint {
+body.dragging #hint,
+body.dragging #modes {
   opacity: 0;
+  pointer-events: none;
+}
+
+#modes {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(20, 20, 24, 0.78);
+  transition: opacity 0.25s ease;
+}
+
+#modes button {
+  margin: 0;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font: 12px/1.2 system-ui, 'Segoe UI', sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#modes button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#modes button.active {
+  color: #fff;
+  background: #e5484d;
+}
+
+body.mode-rect #overlay {
+  cursor: crosshair;
+}
+
+body.mode-window #overlay {
+  cursor: pointer;
+}
+
+body.mode-full #overlay {
+  cursor: default;
 }
 
 #size {

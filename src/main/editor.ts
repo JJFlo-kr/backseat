@@ -2,11 +2,22 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, screen }
 import { mkdir, writeFile } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { IPC } from '../shared/ipc'
-import type { CopyResult, EditorInit, ExportPayload, SaveResult, VideoSave } from '../shared/types'
+import type {
+  AgentTarget,
+  CopyResult,
+  EditorInit,
+  ExportPayload,
+  SaveResult,
+  SendOptions,
+  VideoSave
+} from '../shared/types'
 import { buildBrief } from './brief'
+import { sendToTarget } from './send'
 import { baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
 let ipcInstalled = false
+/** Delivery target per editor window (several editors can be open at once). */
+const targets = new WeakMap<Electron.WebContents, AgentTarget | null>
 
 function stamp(d = new Date()): string {
   const p = (n: number): string => String(n).padStart(2, '0')
@@ -90,6 +101,9 @@ export function installEditorIpc(): void {
   ipcMain.handle(IPC.editorSaveVideo, (e, video: VideoSave) =>
     handleSaveVideo(BrowserWindow.fromWebContents(e.sender), video)
   )
+  ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions) =>
+    sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, targets.get(e.sender) ?? null, opts)
+  )
   ipcMain.handle(IPC.editorCopy, (_e, payload: ExportPayload) => copyToClipboard(payload))
   ipcMain.on(IPC.editorClose, (e) => BrowserWindow.fromWebContents(e.sender)?.close())
 }
@@ -105,7 +119,7 @@ export function createEditorWindow(init: EditorInit, errors?: string[]): Browser
   const dipW = init.width / init.meta.scaleFactor
   const dipH = init.height / init.meta.scaleFactor
   // Wide enough for the whole toolbar; tall enough for the image plus the timeline panel.
-  const width = Math.round(clamp(dipW + 48, 780, wa.width * 0.92))
+  const width = Math.round(clamp(dipW + 48, 840, wa.width * 0.92))
   const height = Math.round(clamp(dipH + 40 + 36 + 56 + 110, 520, wa.height * 0.92))
 
   const win = new BrowserWindow({
@@ -113,7 +127,7 @@ export function createEditorWindow(init: EditorInit, errors?: string[]): Browser
     height,
     x: Math.round(wa.x + (wa.width - width) / 2),
     y: Math.round(wa.y + (wa.height - height) / 2),
-    minWidth: 760,
+    minWidth: 820,
     minHeight: 420,
     title: 'Backseat',
     backgroundColor: '#1b1b1f',
@@ -122,6 +136,7 @@ export function createEditorWindow(init: EditorInit, errors?: string[]): Browser
     webPreferences: baseWebPreferences()
   })
   win.setMenu(null)
+  targets.set(win.webContents, init.target)
   if (errors) watchRendererErrors(win.webContents, errors, 'editor')
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return

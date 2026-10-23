@@ -13,6 +13,10 @@
       <div class="group" role="group" aria-label="도구">
         <button type="button" class="btn active" data-tool="pen" title="펜">펜</button>
         <button type="button" class="btn" data-tool="text" title="텍스트">텍스트</button>
+        <button type="button" class="btn" data-tool="arrow" title="화살표">화살</button>
+        <button type="button" class="btn" data-tool="rect" title="사각형">사각</button>
+        <button type="button" class="btn" data-tool="badge" title="번호">번호</button>
+        <button type="button" class="btn" data-tool="blur" title="블러">블러</button>
       </div>
       <div class="group" role="group" aria-label="색상">
         <button type="button" class="swatch active" data-color="#E5484D" style="--c: #E5484D" title="빨강" aria-label="빨강"></button>
@@ -24,14 +28,17 @@
         <button type="button" class="btn" data-width="6" title="굵게">굵게</button>
       </div>
       <div class="group" role="group" aria-label="히스토리">
-        <button type="button" class="btn" id="undo" data-command="undo">되돌리기</button>
-        <button type="button" class="btn" id="redo" data-command="redo">다시 실행</button>
+        <button type="button" class="btn" id="undo" data-command="undo" aria-label="되돌리기">↶</button>
+        <button type="button" class="btn" id="redo" data-command="redo" aria-label="다시 실행">↷</button>
       </div>
       <button type="button" class="btn" id="timeline-toggle" data-command="timeline">타임라인</button>
       <div class="spacer"></div>
       <button type="button" class="btn" id="copy" data-command="copy">복사</button>
-      <button type="button" class="btn primary" id="save" data-command="save">저장</button>
+      <button type="button" class="btn" id="save" data-command="save">저장</button>
+      <button type="button" class="btn primary" id="send" data-command="send">전송</button>
     </header>
+
+    <div id="targetbar" role="status"></div>
 
     <main id="stage">
       <div id="wrap">
