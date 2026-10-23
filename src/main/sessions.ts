@@ -1,9 +1,9 @@
 // Session package: one folder per send with everything an agent (or a later
 // backseat-mcp) needs. Layout documented in PLAN.md §5.
 import { app } from 'electron'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
-import type { AgentTarget, ExportPayload } from '../shared/types'
+import type { AgentTarget, CompareSource, ExportPayload } from '../shared/types'
 import { alignSegments } from '../shared/align'
 import { buildBrief } from './brief'
 
@@ -97,4 +97,26 @@ export async function writeSessionPackage(
   // Pointer for tools (and the future MCP server) that just want "the latest".
   await writeFile(join(root, 'latest.txt'), dir, 'utf8')
   return pkg
+}
+
+/**
+ * The most recent session package's annotated.png, for the editor's before/after view.
+ * null when there is no package yet or it cannot be read.
+ */
+export async function latestCompareSource(root = sessionsRoot()): Promise<CompareSource | null> {
+  try {
+    const dir = (await readFile(join(root, 'latest.txt'), 'utf8')).trim()
+    if (!dir) return null
+    const png = await readFile(join(dir, 'annotated.png'))
+    let capturedAt: string | undefined
+    try {
+      const meta = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8')) as { meta?: { capturedAt?: string } }
+      capturedAt = meta.meta?.capturedAt
+    } catch {
+      /* optional */
+    }
+    return { imageDataUrl: `data:image/png;base64,${png.toString('base64')}`, sessionDir: dir, capturedAt }
+  } catch {
+    return null
+  }
 }

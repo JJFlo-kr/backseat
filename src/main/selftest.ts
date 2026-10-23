@@ -5,22 +5,91 @@
  * selector and editor windows briefly to make sure both renderers load without
  * console errors. Exits 0 on success, 1 on failure, printing a JSON report.
  */
-import { app, BrowserWindow, clipboard, screen } from 'electron'
+import { app, BrowserWindow, clipboard, nativeImage, screen } from 'electron'
 import { access, mkdir, readFile, writeFile } from 'fs/promises'
+import { createServer } from 'http'
 import { dirname, join } from 'path'
 import { IPC } from '../shared/ipc'
-import type { AgentTarget, EditorInit, ExportPayload, Transcript } from '../shared/types'
+import type { AgentTarget, Annotation, CaptureMeta, CompareInfo, EditorInit, ExportPayload, Transcript } from '../shared/types'
 import { classifyTarget, instructionLine } from './agents'
 import { buildBrief } from './brief'
 import { captureAllDisplays, cropDip } from './capture'
+import { loadSettings } from './config'
 import { copyToClipboard, createEditorWindow } from './editor'
 import { getForegroundWindow, listTopLevelWindows, win32Available } from './native/win32'
+import { scrollCapture } from './scroll'
 import { writeSessionPackage } from './sessions'
 import { stopStt, transcribe } from './stt'
 import { wavToFloat16k } from './stt/wav'
 import { createSelectorWindow, selectorInitFor } from './selector'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Copy of an image with the left half's colours inverted (alpha untouched). */
+function invertedHalf(img: Electron.NativeImage): Electron.NativeImage {
+  const { width, height } = img.getSize()
+  const bmp = Buffer.from(img.toBitmap())
+  const half = Math.floor(width / 2)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < half; x++) {
+      const i = (y * width + x) * 4
+      bmp[i] = 255 - bmp[i]
+      bmp[i + 1] = 255 - bmp[i + 1]
+      bmp[i + 2] = 255 - bmp[i + 2]
+    }
+  }
+  return nativeImage.createFromBitmap(bmp, { width, height })
+}
+
+/** HWND of one of our own BrowserWindows (x64: 8-byte little-endian handle). */
+function hwndOf(win: BrowserWindow): number {
+  const buf = win.getNativeWindowHandle()
+  return buf.length >= 8 ? Number(buf.readBigUInt64LE(0)) : buf.readUInt32LE(0)
+}
+
+/** A long numbered page in our own window: the scroll-capture target nobody else has to provide. */
+function longPageHtml(rows: number): string {
+  const items: string[] = []
+  for (let i = 1; i <= rows; i++) {
+    const hue = (i * 47) % 360
+    items.push(`<div class="r" style="background:hsl(${hue} 70% ${i % 2 ? 88 : 80}%)">row ${i} · ${'▮'.repeat((i * 7) % 23)}</div>`)
+  }
+  return `<!doctype html><meta charset="utf-8"><style>
+    html,body{margin:0;background:#fff;font:bold 18px/40px Consolas,monospace;color:#222}
+    .h{position:sticky;top:0;height:44px;line-height:44px;background:#1b1b1f;color:#fff;padding:0 12px}
+    .r{height:40px;padding:0 12px;white-space:nowrap}
+  </style><div class="h">Backseat scroll-capture self-test</div>${items.join('')}`
+}
+
+/** Minimal OpenAI-compatible /audio/transcriptions mock: records the request, answers verbose_json. */
+function mockSttServer(): Promise<{ port: number; seen: { url?: string; auth?: string; bytes: number }[]; close: () => void }> {
+  const seen: { url?: string; auth?: string; bytes: number }[] = []
+  const server = createServer((req, res) => {
+    let bytes = 0
+    req.on('data', (c: Buffer) => { bytes += c.length })
+    req.on('end', () => {
+      seen.push({ url: req.url, auth: req.headers.authorization, bytes })
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({
+        text: '이 로그인 버튼이 너무 작아. 한 1.5배 키워줘.',
+        language: 'ko',
+        duration: 4.2,
+        words: [
+          { word: '이', start: 0.2, end: 0.35 }, { word: '로그인', start: 0.35, end: 0.8 }, { word: '버튼이', start: 0.8, end: 1.2 },
+          { word: '너무', start: 1.25, end: 1.5 }, { word: '작아.', start: 1.5, end: 2.0 },
+          { word: '한', start: 2.6, end: 2.8 }, { word: '1.5배', start: 2.8, end: 3.4 }, { word: '키워줘.', start: 3.4, end: 4.1 }
+        ],
+        segments: [{ text: '이 로그인 버튼이 너무 작아. 한 1.5배 키워줘.', start: 0.2, end: 4.1 }]
+      }))
+    })
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as { port: number }).port
+      resolve({ port, seen, close: () => server.close() })
+    })
+  })
+}
 
 function argValue(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
@@ -176,6 +245,12 @@ export async function runSelfTest(): Promise<void> {
       },
       target,
       request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest', cwd: '', createdAt: new Date().toISOString() },
+      // "Previous capture" for the compare view: the same image with its left half inverted, so it
+      // differs whatever happens to be on screen (the diff share must come out near 50%).
+      compare: {
+        imageDataUrl: `data:image/png;base64,${invertedHalf(image).toPNG().toString('base64')}`,
+        sessionDir: join(app.getPath('temp'), 'backseat-selftest', 'sessions', '20260101-000000')
+      },
       debug: true
     }
     const ed = createEditorWindow(init, errors)
@@ -260,6 +335,119 @@ export async function runSelfTest(): Promise<void> {
       report.history = hist
       if (!hist.afterUndo || !hist.redoLeft || !hist.undoNow) errors.push(`history state wrong: ${JSON.stringify(hist)}`)
 
+      // Crop: drag the middle half of the image with the crop tool; the canvas, meta and the
+      // remaining stroke must all move together, and one undo must bring everything back.
+      step = 'crop'
+      type DbgAnn = { kind: string; x: number; y: number }
+      type DbgState = { tool: string; size: [number, number]; crop: { x: number; y: number; width: number; height: number }; annotations: DbgAnn[]; meta: CaptureMeta | null; canUndo: boolean; compare: { available: boolean; on: boolean; mode: string; diffPercent: number | null } }
+      const state = (): Promise<DbgState> => ed.webContents.executeJavaScript(`window.__backseat.state()`) as Promise<DbgState>
+      const before = await state()
+      // Drag inside the part of the image that is actually on screen (the stage clips a tall image;
+      // a mouse-up over the timeline panel never reaches the canvas).
+      const geo = (await ed.webContents.executeJavaScript(
+        `(() => { document.querySelector('[data-tool=crop]').click();
+           const r = document.getElementById('ink').getBoundingClientRect(), s = document.getElementById('stage').getBoundingClientRect();
+           const top = Math.max(r.top, s.top), bottom = Math.min(r.bottom, s.bottom), left = Math.max(r.left, s.left), right = Math.min(r.right, s.right);
+           return { left, top, width: right - left, height: bottom - top, inkLeft: r.left, inkTop: r.top, inkWidth: r.width }; })()`
+      )) as { left: number; top: number; width: number; height: number; inkLeft: number; inkTop: number; inkWidth: number }
+      const cx0 = Math.round(geo.left + geo.width * 0.25)
+      const cy0 = Math.round(geo.top + geo.height * 0.25)
+      const cx1 = Math.round(geo.left + geo.width * 0.75)
+      const cy1 = Math.round(geo.top + geo.height * 0.75)
+      ed.webContents.sendInputEvent({ type: 'mouseMove', x: cx0, y: cy0 })
+      ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx0, y: cy0, button: 'left', clickCount: 1 })
+      ed.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round((cx0 + cx1) / 2), y: Math.round((cy0 + cy1) / 2), button: 'left' })
+      await sleep(40)
+      ed.webContents.sendInputEvent({ type: 'mouseMove', x: cx1, y: cy1, button: 'left' })
+      await sleep(40)
+      ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx1, y: cy1, button: 'left', clickCount: 1 })
+      await sleep(250)
+      const after = await state()
+      report.cropPointer = (after as unknown as { pointer: unknown; cropDrag: boolean }).pointer
+      const pxPerCss = before.size[0] / geo.inkWidth
+      const expW = Math.round((cx1 - cx0) * pxPerCss)
+      const expH = Math.round((cy1 - cy0) * pxPerCss)
+      const expX = Math.round((cx0 - geo.inkLeft) * pxPerCss)
+      const expY = Math.round((cy0 - geo.inkTop) * pxPerCss)
+      const near = (a: number, b: number, tol = 3): boolean => Math.abs(a - b) <= tol
+      report.crop = { before: before.size, after: after.size, crop: after.crop, expected: [expX, expY, expW, expH], annBefore: before.annotations[0], annAfter: after.annotations[0] }
+      if (!near(after.size[0], expW) || !near(after.size[1], expH)) errors.push(`crop size wrong: ${JSON.stringify(report.crop)}`)
+      if (!near(after.crop.x, expX) || !near(after.crop.y, expY)) errors.push(`crop origin wrong: ${JSON.stringify(after.crop)}`)
+      if (!after.canUndo) errors.push('crop should be undoable')
+      if (before.annotations.length === 1 && after.annotations.length === 1) {
+        // The stroke crosses the middle of the image, so it survives and shifts by the crop origin.
+        if (!near(after.annotations[0].x, before.annotations[0].x - after.crop.x) || !near(after.annotations[0].y, before.annotations[0].y - after.crop.y)) {
+          errors.push(`annotation did not move with the crop: ${JSON.stringify(report.crop)}`)
+        }
+      } else errors.push(`unexpected annotation count around crop: ${before.annotations.length} -> ${after.annotations.length}`)
+      const m = after.meta
+      if (!m || !m.crop || m.rectPx.width !== after.size[0] || m.rectPx.height !== after.size[1] || m.rectPx.x !== rectPx.x + after.crop.x) {
+        errors.push(`meta after crop wrong: ${JSON.stringify(m && { rectPx: m.rectPx, crop: m.crop })}`)
+      }
+      if (m && Math.abs(m.rectDip.width - after.size[0] / cap.display.scaleFactor) > 0.2) errors.push(`rectDip after crop wrong: ${JSON.stringify(m.rectDip)}`)
+      await shot(ed, join(shotsDir, 'editor-crop.png'), warnings)
+      const cropPayload = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { meta: CaptureMeta; annotations: Annotation[] }
+      const cropBrief = buildBrief({ pngDataUrl: '', memo: '', annotations: cropPayload.annotations, meta: cropPayload.meta }, 'annotated.png')
+      if (!cropBrief.includes('자르기: 원본 캡처의') || !cropBrief.includes(`${after.size[0]}×${after.size[1]} px`)) errors.push('brief lacks the crop line / cropped size')
+      const stroke = cropPayload.annotations[0]
+      if (stroke && stroke.kind === 'stroke' && stroke.points.some((p) => p.x < -1 || p.y < -1 || p.x > after.size[0] + 1 || p.y > after.size[1] + 1)) {
+        warnings.push('cropped stroke has points outside the cropped image (it crosses the crop edge: fine)')
+      }
+      await ed.webContents.executeJavaScript(`document.getElementById('undo').click(); true`)
+      await sleep(150)
+      const restored = await state()
+      if (restored.size[0] !== before.size[0] || restored.size[1] !== before.size[1]) errors.push(`undo did not restore the image size: ${restored.size}`)
+      if (!restored.annotations[0] || restored.annotations[0].x !== before.annotations[0].x) errors.push('undo did not restore annotation coordinates')
+      if (restored.meta?.crop) errors.push('meta.crop should be gone after undo')
+      await ed.webContents.executeJavaScript(`document.querySelector('[data-tool=pen]').click(); true`)
+
+      // Before/after comparison: the init carried a shifted "previous capture"; toggle and cycle the modes.
+      step = 'compare'
+      let cmpReady = false
+      for (let i = 0; i < 40 && !cmpReady; i++) {
+        cmpReady = (await state()).compare.available
+        if (!cmpReady) await sleep(100)
+      }
+      if (!cmpReady) errors.push('compare image never became available')
+      else {
+        const barVisible = (await ed.webContents.executeJavaScript(`!document.getElementById('comparebar').hidden`)) as boolean
+        if (!barVisible) errors.push('compare bar hidden although a previous capture exists')
+        // O key toggles it on (through the real hotkey path), buttons switch the mode.
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'O' })
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'O' })
+        await sleep(150)
+        const on = await state()
+        if (!on.compare.on) errors.push(`O did not turn the comparison on: ${JSON.stringify(on.compare)}`)
+        if (on.compare.diffPercent === null || on.compare.diffPercent < 40 || on.compare.diffPercent > 60) errors.push(`compare diff percent off (expected ~50): ${on.compare.diffPercent}`)
+        const cmpShots: Record<string, number> = {}
+        for (const mode of ['overlay', 'wipe', 'diff']) {
+          await ed.webContents.executeJavaScript(`document.querySelector('[data-cmp-mode=${mode}]').click(); true`)
+          await sleep(120)
+          const s = await state()
+          if (s.compare.mode !== mode || !s.compare.on) errors.push(`compare mode ${mode} not applied: ${JSON.stringify(s.compare)}`)
+          // The compare layer must hold pixels in every mode (overlay/wipe show the previous image, diff lights up changes).
+          cmpShots[mode] = (await ed.webContents.executeJavaScript(
+            `(() => { const c = document.getElementById('cmp'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+               let n = 0; for (let i = 3; i < d.length; i += 64) if (d[i] > 0) n++; return n; })()`
+          )) as number
+          if (cmpShots[mode] === 0) errors.push(`compare layer empty in ${mode} mode`)
+          await shot(ed, join(shotsDir, `editor-compare-${mode}.png`), warnings)
+        }
+        report.compare = { diffPercent: on.compare.diffPercent, layerPixels: cmpShots }
+        const cmpPayload = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { meta: CaptureMeta; annotations: Annotation[]; compare?: CompareInfo }
+        if (!cmpPayload.compare || cmpPayload.compare.mode !== 'diff') errors.push(`payload.compare missing: ${JSON.stringify(cmpPayload.compare)}`)
+        const cmpBrief = buildBrief({ pngDataUrl: '', memo: '', annotations: [], meta: cmpPayload.meta, compare: cmpPayload.compare }, 'annotated.png')
+        const cmpLines = cmpBrief.split('\n').filter((l) => l.startsWith('이전 캡처와 비교:'))
+        if (cmpLines.length !== 1 || !cmpLines[0].includes('20260101-000000') || !cmpLines[0].includes('차이')) errors.push(`brief compare line wrong: ${cmpLines.join(' | ')}`)
+        report.compareLine = cmpLines[0]
+        // Esc turns it off (before anything else Esc would do).
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+        await sleep(120)
+        if ((await state()).compare.on) errors.push('Esc did not turn the comparison off')
+        if (ed.isDestroyed()) errors.push('Esc closed the editor instead of the comparison')
+      }
+
       // Microphone path: start/stop a real recording (silence is fine) and let it run through STT.
       step = 'mic'
       const statusText = (): Promise<string> =>
@@ -305,6 +493,80 @@ export async function runSelfTest(): Promise<void> {
       }
     }
     ed.destroy()
+
+    // Scroll capture: a long page in our own always-on-top window, wheeled by the real Win32 path.
+    step = 'scroll'
+    if (win32Available() && !process.argv.includes('--selftest-no-scroll')) {
+      const wa = cap.display.workArea
+      const sw = Math.min(520, wa.width - 40)
+      const sh = Math.min(420, wa.height - 40)
+      const page = new BrowserWindow({
+        x: Math.round(wa.x + (wa.width - sw) / 2), y: Math.round(wa.y + (wa.height - sh) / 2), width: sw, height: sh,
+        frame: false, alwaysOnTop: true, skipTaskbar: true, backgroundColor: '#ffffff', show: false,
+        webPreferences: { sandbox: true, contextIsolation: true }
+      })
+      page.setMenu(null)
+      page.setAlwaysOnTop(true, 'screen-saver')
+      await Promise.all([
+        new Promise<void>((r) => page.once('ready-to-show', () => r())),
+        page.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(longPageHtml(70))}`)
+      ])
+      page.show()
+      page.focus()
+      await sleep(500)
+      const cb = page.getContentBounds() // DIP, virtual desktop
+      const pageRect = { x: cb.x - cap.display.bounds.x, y: cb.y - cap.display.bounds.y, width: cb.width, height: cb.height }
+      const t0s = Date.now()
+      const r = await scrollCapture(cap.display, { hwnd: hwndOf(page) }, pageRect, {
+        maxHeightPx: 2600, showProgress: false, escCancels: false, dumpDir: argValue('selftest-scroll-dump')
+      })
+      page.destroy()
+      const scrollPng = join(shotsDir ?? dirname(out), 'scroll.png')
+      await writeFile(scrollPng, r.image.toPNG())
+      report.scroll = { frames: r.frames, viewportPx: r.viewportPx, heightPx: r.heightPx, widthPx: r.widthPx, stoppedBy: r.stoppedBy, wallMs: Date.now() - t0s, png: scrollPng }
+      const expectedW = Math.round(cb.width * cap.display.scaleFactor)
+      if (r.frames < 3) errors.push(`scroll capture stitched too few frames: ${JSON.stringify(report.scroll)}`)
+      if (r.heightPx < r.viewportPx * 2) errors.push(`scroll capture not tall enough: ${JSON.stringify(report.scroll)}`)
+      if (Math.abs(r.widthPx - expectedW) > 2) errors.push(`scroll capture width ${r.widthPx} != window ${expectedW}`)
+      if (r.stoppedBy !== 'end' && r.stoppedBy !== 'limit') warnings.push(`scroll capture stopped by ${r.stoppedBy}`)
+      const sz = r.image.getSize()
+      if (sz.height !== r.heightPx) errors.push(`stitched image height ${sz.height} != reported ${r.heightPx}`)
+    } else report.scroll = 'skipped'
+
+    // Cloud STT adapter against a local mock of /v1/audio/transcriptions.
+    step = 'cloud-stt'
+    {
+      const settings = loadSettings()
+      if (settings.sttBackend !== 'local' && !process.env.BACKSEAT_SELFTEST_ALLOW_CLOUD) warnings.push(`sttBackend is ${settings.sttBackend} in config.json`)
+      if ('sttApiKey' in settings || JSON.stringify(settings).includes('BACKSEAT_STT_API_KEY')) errors.push('the API key must never live in settings')
+      const mock = await mockSttServer()
+      try {
+        const pcm = new Float32Array(16000 * 2)
+        for (let i = 0; i < pcm.length; i++) pcm[i] = Math.sin(i / 20) * 0.2
+        const cloud = await transcribe({ pcm16k: pcm, audioStartMs: 1000, language: 'korean' }, undefined, {
+          backend: 'openai', apiBase: `http://127.0.0.1:${mock.port}/v1`, apiKey: 'selftest-key', model: 'whisper-1'
+        })
+        report.cloudStt = { ok: cloud.ok, error: cloud.error, segments: cloud.transcript?.segments.map((s) => [s.start, s.end, s.text]), model: cloud.transcript?.model, request: mock.seen[0] }
+        if (!cloud.ok || !cloud.transcript) errors.push(`cloud stt failed: ${cloud.error}`)
+        else {
+          if (cloud.transcript.segments.length !== 2 || cloud.transcript.segments[0].start !== 1200) errors.push(`cloud stt segments wrong: ${JSON.stringify(report.cloudStt)}`)
+          if (!cloud.transcript.segments[1].text.includes('1.5배')) errors.push('cloud stt lost the "1.5배" glue')
+          if (cloud.transcript.durationMs !== 2000) errors.push(`cloud stt duration ${cloud.transcript.durationMs}`)
+        }
+        const seen = mock.seen[0]
+        if (!seen || seen.url !== '/v1/audio/transcriptions' || seen.auth !== 'Bearer selftest-key' || seen.bytes < 16000 * 2 * 2) {
+          errors.push(`cloud stt request wrong: ${JSON.stringify(seen)}`)
+        }
+        // Without a key the adapter must refuse before touching the network.
+        const noKey = await transcribe({ pcm16k: new Float32Array(100), audioStartMs: 0 }, undefined, {
+          backend: 'openai', apiBase: `http://127.0.0.1:${mock.port}/v1`, apiKey: '', model: 'whisper-1'
+        })
+        if (noKey.ok || !/BACKSEAT_STT_API_KEY/.test(noKey.error ?? '')) errors.push(`cloud stt without key should fail clearly: ${JSON.stringify(noKey)}`)
+        if (mock.seen.length !== 1) errors.push('cloud stt contacted the server without a key')
+      } finally {
+        mock.close()
+      }
+    }
 
     // Clipboard + brief: the two export paths the editor uses.
     step = 'clipboard'

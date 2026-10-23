@@ -43,13 +43,24 @@ export function buildBrief(payload: ExportPayload, imageFileName: string, target
   const lines: string[] = []
   lines.push(`# Backseat brief ${meta.capturedAt}`)
   lines.push('')
-  const modeLabel = meta.mode === 'window' ? '창 캡처' : meta.mode === 'full' ? '전체 화면' : '영역 캡처'
+  const modeLabel =
+    meta.mode === 'window' ? '창 캡처' : meta.mode === 'full' ? '전체 화면' : meta.mode === 'scroll' ? '스크롤 캡처' : '영역 캡처'
   const what = meta.window ? ` "${meta.window.title}" (${meta.window.process})` : ''
+  const scroll = meta.scroll ? ` · ${meta.scroll.frames}장 이어붙임 (화면 높이 ${meta.scroll.viewportPx} px)` : ''
   lines.push(
-    `캡처: ${modeLabel}${what} · 디스플레이 ${meta.displayId}, 영역 (${meta.rectDip.x},${meta.rectDip.y}) ${meta.rectDip.width}×${meta.rectDip.height} DIP → ${meta.rectPx.width}×${meta.rectPx.height} px (scale ${meta.scaleFactor})`
+    `캡처: ${modeLabel}${what} · 디스플레이 ${meta.displayId}, 영역 (${meta.rectDip.x},${meta.rectDip.y}) ${meta.rectDip.width}×${meta.rectDip.height} DIP → ${meta.rectPx.width}×${meta.rectPx.height} px (scale ${meta.scaleFactor})${scroll}`
   )
+  if (meta.crop) {
+    lines.push(`자르기: 원본 캡처의 (${r(meta.crop.x)},${r(meta.crop.y)}) ${r(meta.crop.width)}×${r(meta.crop.height)} px만 남김 · 아래 좌표는 모두 잘린 이미지 기준`)
+  }
   if (meta.activeWindow) lines.push(`작업 중이던 창: "${meta.activeWindow.title}" (${meta.activeWindow.process})`)
   if (target) lines.push(`전송 대상: ${target.label}`)
+  if (payload.compare) {
+    const c = payload.compare
+    const id = c.sessionDir.split(/[\\/]/).filter(Boolean).pop() ?? c.sessionDir
+    const mode = c.mode === 'overlay' ? '겹치기' : c.mode === 'wipe' ? '와이프' : '차이'
+    lines.push(`이전 캡처와 비교: 세션 ${id} (annotated.png) · ${mode} 모드 · 달라진 픽셀 ${c.diffPercent}%`)
+  }
   if (meta.request) {
     lines.push('')
     lines.push(`## ${meta.request.agent || '에이전트'}의 질문에 대한 답`)

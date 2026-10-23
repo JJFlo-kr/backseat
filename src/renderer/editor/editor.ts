@@ -1,10 +1,12 @@
-import type { EditorInit, ExportPayload, Annotation, AgentTarget, Point, Transcript } from '../../shared/types'
+import type {
+  EditorInit, ExportPayload, Annotation, AgentTarget, Point, Transcript, Rect, CompareMode, CaptureMeta
+} from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
 
-type Tool = 'pen' | 'text' | 'arrow' | 'rect' | 'badge' | 'blur'
+type Tool = 'pen' | 'text' | 'arrow' | 'rect' | 'badge' | 'blur' | 'crop'
 type DragTool = 'arrow' | 'rect' | 'badge' | 'blur'
 type StrokeAnn = Extract<Annotation, { kind: 'stroke' }>
 type ArrowAnn = Extract<Annotation, { kind: 'arrow' }>
@@ -19,24 +21,29 @@ const MIN_DRAG = 3 // image px
 const SEND_CLOSE_DELAY = 700 // ms the status stays visible before the editor closes
 const AUDIO_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
 
-/** The whole undoable document: drawings plus manual speech-to-annotation links. */
+/** The whole undoable document: drawings, manual speech-to-annotation links and the crop. */
 interface Doc {
   annotations: readonly Annotation[]
   /** segmentIndex -> annotationIndex (null = forced global). Absent = automatic alignment. */
   links: ReadonlyMap<number, number | null>
+  /** Visible region in px of the ORIGINAL capture. Annotation coordinates are relative to it. */
+  crop: Rect
 }
 
 function isTool(v: string | undefined): v is Tool {
-  return v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur'
+  return v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur' || v === 'crop'
 }
+
+const sameRect = (a: Rect, b: Rect): boolean =>
+  a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id)
   if (!el) throw new Error(`#${id} not found`)
   return el as T
 }
-function ctxOf(c: HTMLCanvasElement): CanvasRenderingContext2D {
-  const ctx = c.getContext('2d')
+function ctxOf(c: HTMLCanvasElement, readsOften = false): CanvasRenderingContext2D {
+  const ctx = c.getContext('2d', readsOften ? { willReadFrequently: true } : undefined)
   if (!ctx) throw new Error('2D canvas unavailable')
   return ctx
 }
@@ -44,7 +51,15 @@ function ctxOf(c: HTMLCanvasElement): CanvasRenderingContext2D {
 const stage = byId<HTMLElement>('stage')
 const wrap = byId<HTMLDivElement>('wrap')
 const base = byId<HTMLCanvasElement>('base')
+const cmp = byId<HTMLCanvasElement>('cmp') // before/after layer between the image and the ink
 const ink = byId<HTMLCanvasElement>('ink')
+const compareBar = byId<HTMLElement>('comparebar')
+const compareBtn = byId<HTMLButtonElement>('compare-toggle')
+const compareModeBtns = document.querySelectorAll<HTMLButtonElement>('[data-cmp-mode]')
+const opacityInput = byId<HTMLInputElement>('cmp-opacity')
+const wipeInput = byId<HTMLInputElement>('cmp-wipe')
+const diffLabel = byId<HTMLElement>('cmp-diff')
+const cmpCtx = ctxOf(cmp, true)
 const memoInput = byId<HTMLInputElement>('memo')
 const statusEl = byId<HTMLElement>('status')
 const targetBar = byId<HTMLElement>('targetbar')
@@ -53,7 +68,7 @@ const redoBtn = byId<HTMLButtonElement>('redo')
 const timelineBtn = byId<HTMLButtonElement>('timeline-toggle')
 const micBtn = byId<HTMLButtonElement>('mic')
 const player = byId<HTMLAudioElement>('player')
-const baseCtx = ctxOf(base)
+const baseCtx = ctxOf(base, true) // blur and the compare diff read it back
 const inkCtx = ctxOf(ink)
 const toolBtns = document.querySelectorAll<HTMLButtonElement>('[data-tool]')
 const colorBtns = document.querySelectorAll<HTMLButtonElement>('[data-color]')
@@ -66,13 +81,29 @@ let tool: Tool = 'pen'
 let color = '#E5484D'
 let widthCss = 3
 let view = 1 // displayed size / natural on-screen size
-let doc: Doc = { annotations: [], links: new Map() }
+let doc: Doc = { annotations: [], links: new Map(), crop: { x: 0, y: 0, width: 0, height: 0 } }
 let annotations: readonly Annotation[] = doc.annotations
 let links: ReadonlyMap<number, number | null> = doc.links
+let crop: Rect = doc.crop // mirrors doc.crop; the canvases are exactly this big
+let orig: HTMLImageElement | null = null // the untouched capture; crops re-blit from it
 const history = new History<Doc>(100)
 let drawing: StrokeAnn | null = null
 /** In-progress drag of an arrow / rect / badge / blur. */
 let shape: { tool: DragTool; start: Point; cur: Point; tStart: number } | null = null
+/** In-progress crop drag (image px). */
+let cropDrag: { start: Point; cur: Point } | null = null
+/** Debug/self-test: how many pointer events the ink canvas saw. */
+const pointerCounts = { down: 0, move: 0, up: 0, cancel: 0 }
+
+// before/after comparison against the previous capture of the same region
+let compareImg: HTMLImageElement | null = null
+let compareDir = ''
+let cmpOn = false
+let cmpUsed = false // the user looked at the comparison at least once -> noted in brief.md
+let cmpMode: CompareMode = 'overlay'
+let cmpOpacity = 0.5
+let cmpWipe = 0.5
+let diffCache: number | null = null
 let textBox: HTMLInputElement | null = null
 let busy = false
 let pinned = false // small always-on-top reference window; 전송 no longer closes it
@@ -292,6 +323,10 @@ function drawAll(ctx: CanvasRenderingContext2D, t: number | null): void {
   }
 }
 
+function normRect(a: Point, b: Point): Rect {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) }
+}
+
 function render(): void {
   inkCtx.clearRect(0, 0, ink.width, ink.height)
   drawAll(inkCtx, scrubT)
@@ -299,20 +334,235 @@ function render(): void {
     const prev = buildShape(shape.tool, shape.start, shape.cur, shape.tStart, now(), init.meta.scaleFactor, true)
     if (prev) drawAnnotation(inkCtx, prev, prev.kind === 'badge' ? prev.n : undefined)
   }
+  if (cropDrag && init) {
+    // Dim everything outside the future crop; dashed outline on it.
+    const r = normRect(cropDrag.start, cropDrag.cur)
+    inkCtx.save()
+    inkCtx.fillStyle = 'rgba(0,0,0,0.55)'
+    inkCtx.beginPath()
+    inkCtx.rect(0, 0, ink.width, ink.height)
+    inkCtx.rect(r.x, r.y, r.width, r.height)
+    inkCtx.fill('evenodd')
+    inkCtx.strokeStyle = '#fff'
+    inkCtx.lineWidth = Math.max(1, init.meta.scaleFactor)
+    inkCtx.setLineDash([6 * init.meta.scaleFactor, 4 * init.meta.scaleFactor])
+    inkCtx.strokeRect(r.x + 0.5, r.y + 0.5, r.width, r.height)
+    inkCtx.restore()
+  }
 }
 
 function layout(): void {
-  if (!init) return
-  const cssW = init.width / init.meta.scaleFactor
-  const cssH = init.height / init.meta.scaleFactor
+  if (!init || base.width === 0) return
+  const cssW = base.width / init.meta.scaleFactor
+  const cssH = base.height / init.meta.scaleFactor
   const availW = Math.max(50, stage.clientWidth - 32 - 2)
   const availH = Math.max(50, stage.clientHeight - 32 - 2)
   view = Math.min(1, availW / cssW, availH / cssH)
-  for (const c of [base, ink]) {
+  for (const c of [base, cmp, ink]) {
     c.style.width = `${cssW * view}px`
     c.style.height = `${cssH * view}px`
   }
 }
+
+// ---------- crop ----------
+
+/** Resize every canvas to the crop and re-blit that region of the original capture. */
+function applyCrop(c: Rect): void {
+  crop = c
+  for (const cv of [base, cmp, ink]) {
+    cv.width = c.width
+    cv.height = c.height
+  }
+  if (orig) baseCtx.drawImage(orig, c.x, c.y, c.width, c.height, 0, 0, c.width, c.height)
+  diffCache = null
+  layout()
+  renderCompare()
+}
+
+function shiftAnnotation(a: Annotation, dx: number, dy: number): Annotation {
+  switch (a.kind) {
+    case 'stroke':
+      return { ...a, points: a.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+    case 'arrow':
+      return { ...a, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy }
+    default:
+      return { ...a, x: a.x + dx, y: a.y + dy }
+  }
+}
+
+/** Bounding box of an annotation in image px (text/badge get a nominal box around their anchor). */
+function annotationBox(a: Annotation): Rect {
+  switch (a.kind) {
+    case 'stroke': {
+      const xs = a.points.map((p) => p.x)
+      const ys = a.points.map((p) => p.y)
+      const x = Math.min(...xs)
+      const y = Math.min(...ys)
+      return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }
+    }
+    case 'arrow':
+      return normRect({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 })
+    case 'rect':
+    case 'blur':
+      return { x: a.x, y: a.y, width: a.w, height: a.h }
+    case 'badge':
+      return { x: a.x - a.size / 2, y: a.y - a.size / 2, width: a.size, height: a.size }
+    case 'text':
+      return { x: a.x, y: a.y - a.fontSize / 2, width: a.fontSize * a.text.length * 0.6, height: a.fontSize }
+  }
+}
+
+function intersects(a: Rect, b: Rect): boolean {
+  return a.x <= b.x + b.width && b.x <= a.x + a.width && a.y <= b.y + b.height && b.y <= a.y + a.height
+}
+
+/**
+ * Crop to `sel` (px of the current canvas). One history step: the image region, every annotation
+ * (shifted; those entirely outside are dropped) and the speech links move together.
+ */
+function applyCropSelection(sel: Rect): void {
+  if (!init) return
+  const x = Math.max(0, Math.round(sel.x))
+  const y = Math.max(0, Math.round(sel.y))
+  const w = Math.min(base.width - x, Math.round(sel.width))
+  const h = Math.min(base.height - y, Math.round(sel.height))
+  if (w < 8 || h < 8) { render(); return }
+  const area: Rect = { x, y, width: w, height: h }
+  const before = annotations.length
+  const kept: Annotation[] = []
+  const remap = new Map<number, number>()
+  annotations.forEach((a, i) => {
+    if (!intersects(annotationBox(a), area)) return
+    remap.set(i, kept.length)
+    kept.push(shiftAnnotation(a, -x, -y))
+  })
+  let badgeNo = 0
+  const renumbered = kept.map((a) => (a.kind === 'badge' ? { ...a, n: ++badgeNo } : a))
+  const nextLinks = new Map<number, number | null>()
+  for (const [seg, ai] of links) {
+    if (ai === null) nextLinks.set(seg, null)
+    else {
+      const ni = remap.get(ai)
+      if (ni !== undefined) nextLinks.set(seg, ni)
+    }
+  }
+  const after: Doc = {
+    annotations: renumbered,
+    links: nextLinks,
+    crop: { x: crop.x + x, y: crop.y + y, width: w, height: h }
+  }
+  history.commit('자르기', doc, after)
+  setDoc(after)
+  afterChange()
+  const dropped = before - kept.length
+  setStatus(`잘라냄: ${w}×${h} px${dropped > 0 ? ` · 바깥 주석 ${dropped}개 제거` : ''} (Ctrl+Z로 되돌리기)`)
+}
+
+// ---------- before/after comparison ----------
+
+/** Source rect of the previous image matching the current crop (it may have a different size). */
+function compareSrcRect(): Rect {
+  if (!compareImg || !orig) return crop
+  const sx = compareImg.naturalWidth / orig.naturalWidth
+  const sy = compareImg.naturalHeight / orig.naturalHeight
+  return { x: crop.x * sx, y: crop.y * sy, width: crop.width * sx, height: crop.height * sy }
+}
+
+function renderCompare(): void {
+  cmpCtx.clearRect(0, 0, cmp.width, cmp.height)
+  if (!cmpOn || !compareImg || !orig || cmp.width === 0) return
+  const s = compareSrcRect()
+  const w = cmp.width
+  const h = cmp.height
+  cmpCtx.save()
+  if (cmpMode === 'overlay') {
+    cmpCtx.globalAlpha = cmpOpacity
+    cmpCtx.drawImage(compareImg, s.x, s.y, s.width, s.height, 0, 0, w, h)
+  } else if (cmpMode === 'wipe') {
+    const wx = Math.round(w * cmpWipe)
+    cmpCtx.beginPath()
+    cmpCtx.rect(0, 0, wx, h)
+    cmpCtx.clip()
+    cmpCtx.drawImage(compareImg, s.x, s.y, s.width, s.height, 0, 0, w, h)
+    cmpCtx.restore()
+    cmpCtx.save()
+    cmpCtx.fillStyle = '#fff'
+    cmpCtx.fillRect(wx - 1, 0, 2, h)
+    const fs = Math.round(12 * (init?.meta.scaleFactor ?? 1))
+    cmpCtx.font = `bold ${fs}px system-ui, "Malgun Gothic", sans-serif`
+    cmpCtx.textBaseline = 'top'
+    cmpCtx.fillStyle = 'rgba(0,0,0,0.6)'
+    cmpCtx.fillRect(Math.max(0, wx - fs * 3.2), 0, fs * 3.2, fs * 1.5)
+    cmpCtx.fillRect(wx, 0, fs * 3.2, fs * 1.5)
+    cmpCtx.fillStyle = '#fff'
+    cmpCtx.textAlign = 'right'
+    cmpCtx.fillText('이전', wx - 4, fs * 0.25)
+    cmpCtx.textAlign = 'left'
+    cmpCtx.fillText('현재', wx + 4, fs * 0.25)
+  } else {
+    // |current - previous|: identical areas go black, changes light up.
+    cmpCtx.drawImage(base, 0, 0)
+    cmpCtx.globalCompositeOperation = 'difference'
+    cmpCtx.drawImage(compareImg, s.x, s.y, s.width, s.height, 0, 0, w, h)
+  }
+  cmpCtx.restore()
+}
+
+/** Share (0..100) of sampled pixels that differ noticeably between the current crop and the previous image. */
+function diffPercent(): number {
+  if (diffCache !== null) return diffCache
+  if (!compareImg || !orig || base.width === 0) return 0
+  const w = base.width
+  const h = base.height
+  const t = document.createElement('canvas')
+  t.width = w
+  t.height = h
+  const s = compareSrcRect()
+  const tctx = ctxOf(t, true)
+  tctx.drawImage(compareImg, s.x, s.y, s.width, s.height, 0, 0, w, h)
+  const a = baseCtx.getImageData(0, 0, w, h).data
+  const b = tctx.getImageData(0, 0, w, h).data
+  let n = 0
+  let d = 0
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const i = (y * w + x) * 4
+      n++
+      if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 48) d++
+    }
+  }
+  diffCache = n ? Math.round((d / n) * 1000) / 10 : 0
+  return diffCache
+}
+
+function syncCompareUi(): void {
+  compareBar.hidden = compareImg === null
+  compareBtn.classList.toggle('active', cmpOn)
+  compareModeBtns.forEach((b) => b.classList.toggle('active', b.dataset.cmpMode === cmpMode))
+  opacityInput.parentElement?.classList.toggle('off', cmpMode !== 'overlay')
+  wipeInput.parentElement?.classList.toggle('off', cmpMode !== 'wipe')
+  compareBar.classList.toggle('on', cmpOn)
+  if (compareImg) diffLabel.textContent = `달라진 픽셀 ${diffPercent()}%`
+}
+
+function setCompare(on: boolean): void {
+  if (!compareImg) { setStatus('비교할 이전 캡처가 없습니다 (트레이 "마지막 영역 다시 캡처"로 찍으면 생깁니다)'); return }
+  cmpOn = on
+  if (on) cmpUsed = true
+  syncCompareUi()
+  renderCompare()
+  setStatus(on ? `이전 캡처와 비교 중 (${CMP_LABELS[cmpMode]}) · O로 끄기` : '비교 끔')
+}
+
+function setCompareMode(m: CompareMode): void {
+  cmpMode = m
+  if (!cmpOn && compareImg) { cmpOn = true; cmpUsed = true }
+  syncCompareUi()
+  renderCompare()
+  if (cmpOn) setStatus(`이전 캡처와 비교 중 (${CMP_LABELS[m]}) · O로 끄기`)
+}
+
+const CMP_LABELS: Record<CompareMode, string> = { overlay: '겹치기', wipe: '와이프', diff: '차이' }
 
 function flatten(): string {
   const out = document.createElement('canvas')
@@ -356,6 +606,7 @@ function setDoc(next: Doc): void {
   doc = next
   annotations = next.annotations
   links = next.links
+  if (!sameRect(next.crop, crop)) applyCrop(next.crop) // undo/redo across a crop re-blits the image
 }
 
 function afterChange(): void {
@@ -369,21 +620,21 @@ function afterChange(): void {
 }
 
 function commit(label: string, next: readonly Annotation[]): void {
-  const after: Doc = { annotations: next, links }
+  const after: Doc = { annotations: next, links, crop }
   history.commit(label, doc, after)
   setDoc(after)
   afterChange()
 }
 
 function commitLinks(label: string, nextLinks: ReadonlyMap<number, number | null>): void {
-  const after: Doc = { annotations, links: nextLinks }
+  const after: Doc = { annotations, links: nextLinks, crop }
   history.commit(label, doc, after)
   setDoc(after)
   afterChange()
 }
 
 function undo(): void {
-  if (drawing || shape) return
+  if (drawing || shape || cropDrag) return
   commitPendingText()
   const prev = history.undo()
   if (prev === undefined) return
@@ -392,7 +643,7 @@ function undo(): void {
 }
 
 function redo(): void {
-  if (drawing || shape) return
+  if (drawing || shape || cropDrag) return
   commitPendingText()
   const next = history.redo()
   if (next === undefined) return
@@ -505,12 +756,19 @@ function endShape(commitIt: boolean): void {
 }
 
 ink.addEventListener('pointerdown', (e) => {
-  if (!init || e.button !== 0 || drawing || shape) return
+  pointerCounts.down++
+  if (!init || e.button !== 0 || drawing || shape || cropDrag) return
   e.preventDefault()
   commitPendingText()
   ensureLive()
   const p = toImg(e)
   if (tool === 'text') { startText(p, e); return }
+  if (tool === 'crop') {
+    cropDrag = { start: p, cur: p }
+    ink.setPointerCapture(e.pointerId)
+    render()
+    return
+  }
   if (tool !== 'pen') {
     shape = { tool, start: p, cur: p, tStart: now() }
     ink.setPointerCapture(e.pointerId)
@@ -527,6 +785,12 @@ ink.addEventListener('pointerdown', (e) => {
 })
 
 ink.addEventListener('pointermove', (e) => {
+  pointerCounts.move++
+  if (cropDrag) {
+    cropDrag.cur = toImg(e)
+    render()
+    return
+  }
   if (shape) {
     shape.cur = toImg(e)
     render()
@@ -550,17 +814,59 @@ function endStroke(): void {
   drawing = null
   commit('펜', [...annotations, done])
 }
+function endCrop(commitIt: boolean, at?: Point): void {
+  if (!cropDrag) return
+  const c = cropDrag
+  cropDrag = null
+  if (at) c.cur = at
+  const r = normRect(c.start, c.cur)
+  if (commitIt && r.width >= MIN_DRAG && r.height >= MIN_DRAG) applyCropSelection(r)
+  else render() // drop the preview
+}
+
 ink.addEventListener('pointerup', (e) => {
+  pointerCounts.up++
+  if (cropDrag) { endCrop(true, toImg(e)); return }
   if (shape) shape.cur = toImg(e)
   endStroke()
   endShape(true)
 })
+// A capture lost without an up (window focus change, synthetic input): finish instead of sticking.
+ink.addEventListener('lostpointercapture', () => {
+  if (cropDrag) endCrop(true)
+  if (drawing) endStroke()
+  if (shape) endShape(true)
+})
 ink.addEventListener('pointercancel', () => {
+  pointerCounts.cancel++
+  endCrop(false)
   endStroke()
   endShape(false)
 })
 
 // ---------- export ----------
+
+/** Capture metadata as exported: after a crop, rectDip/rectPx describe the kept region only. */
+function exportMeta(): CaptureMeta {
+  if (!init) throw new Error('no init')
+  const m = init.meta
+  if (!orig || (crop.x === 0 && crop.y === 0 && crop.width === orig.naturalWidth && crop.height === orig.naturalHeight)) {
+    return m
+  }
+  const s = m.scaleFactor
+  const r1 = (v: number): number => Math.round(v * 10) / 10
+  return {
+    ...m,
+    crop: { ...crop },
+    rectPx: { x: m.rectPx.x + crop.x, y: m.rectPx.y + crop.y, width: crop.width, height: crop.height },
+    rectDip: {
+      x: r1(m.rectDip.x + crop.x / s),
+      y: r1(m.rectDip.y + crop.y / s),
+      width: r1(crop.width / s),
+      height: r1(crop.height / s)
+    }
+  }
+}
 
 function buildPayload(): ExportPayload | null {
   if (!init) return null
@@ -569,11 +875,12 @@ function buildPayload(): ExportPayload | null {
     pngDataUrl: flatten(),
     memo: memoInput.value.trim(),
     annotations: [...annotations],
-    meta: init.meta,
+    meta: exportMeta(),
     links: [...links].map(([segmentIndex, annotationIndex]) => ({ segmentIndex, annotationIndex }))
   }
   if (transcript) payload.transcript = transcript
   if (audioBytes) payload.audio = { bytes: audioBytes, mimeType: audioMime }
+  if (compareImg && cmpUsed) payload.compare = { sessionDir: compareDir, mode: cmpMode, diffPercent: diffPercent() }
   return payload
 }
 
@@ -673,10 +980,10 @@ async function exportVideo(): Promise<void> {
   const first = Math.min(...annotations.map((a) => a.tStart))
   const start = Math.max(0, first - 400)
   const end = sessionEnd(annotations) + 700
-  const scale = Math.min(1, 1280 / init.width)
+  const scale = Math.min(1, 1280 / base.width)
   const c = document.createElement('canvas')
-  c.width = Math.round(init.width * scale)
-  c.height = Math.round(init.height * scale)
+  c.width = Math.round(base.width * scale)
+  c.height = Math.round(base.height * scale)
   const cctx = ctxOf(c)
   const frame = (t: number): void => {
     cctx.setTransform(scale, 0, 0, scale, 0, 0)
@@ -879,7 +1186,7 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
 
   // a new recording replaces the previous audio and transcript (and the links into it)
   transcript = null
-  if (links.size > 0) setDoc({ annotations, links: new Map() })
+  if (links.size > 0) setDoc({ annotations, links: new Map(), crop })
   replaceAudio(blob, new Uint8Array(buf), a.startMs, wallMs)
   afterChange()
 
@@ -929,8 +1236,24 @@ function syncToolbar(): void {
   colorBtns.forEach((b) => b.classList.toggle('active', b.dataset.color === color))
   widthBtns.forEach((b) => b.classList.toggle('active', Number(b.dataset.width) === widthCss))
   wrap.classList.toggle('text-tool', tool === 'text')
+  wrap.classList.toggle('crop-tool', tool === 'crop')
   timelineBtn.classList.toggle('active', timeline.isOpen)
 }
+
+compareBtn.addEventListener('click', () => setCompare(!cmpOn))
+compareModeBtns.forEach((b) => b.addEventListener('click', () => {
+  const m = b.dataset.cmpMode
+  if (m === 'overlay' || m === 'wipe' || m === 'diff') setCompareMode(m)
+}))
+opacityInput.addEventListener('input', () => {
+  cmpOpacity = Number(opacityInput.value) / 100
+  renderCompare()
+})
+wipeInput.addEventListener('input', () => {
+  cmpWipe = Number(wipeInput.value) / 100
+  renderCompare()
+})
+compareBar.addEventListener('mousedown', (e) => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault() })
 
 toolBtns.forEach((b) => b.addEventListener('click', () => setTool(isTool(b.dataset.tool) ? b.dataset.tool : 'pen')))
 colorBtns.forEach((b) => b.addEventListener('click', () => {
@@ -963,6 +1286,8 @@ const hotkeys = new Hotkeys([
   { id: 'rect', label: '사각형', keys: ['KeyR'], run: () => setTool('rect') },
   { id: 'badge', label: '번호', keys: ['KeyN'], run: () => setTool('badge') },
   { id: 'blur', label: '블러', keys: ['KeyB'], run: () => setTool('blur') },
+  { id: 'crop', label: '자르기', keys: ['KeyC'], run: () => setTool('crop') },
+  { id: 'compare', label: '이전 캡처와 비교', keys: ['KeyO'], run: () => setCompare(!cmpOn) },
   { id: 'timeline', label: '타임라인', keys: ['KeyL'], run: () => { timeline.toggle(); syncToolbar() } },
   { id: 'play', label: '재생/일시정지', keys: ['Space'], run: () => { if (!timeline.isOpen) return false; timeline.togglePlay() } },
   { id: 'step-back', label: '0.2초 뒤로', keys: ['ArrowLeft'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(-200) } },
@@ -978,6 +1303,8 @@ const hotkeys = new Hotkeys([
       if (e.target === memoInput) { memoInput.blur(); return }
       if (e.target instanceof HTMLInputElement) return false // the text box handles its own Escape
       if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first
+      if (cropDrag) { endCrop(false); return }
+      if (cmpOn) { setCompare(false); return }
       if (scrubT !== null) { timeline.setLive(); return }
       window.backseat.editor.close()
     }
@@ -1017,26 +1344,50 @@ window.backseat.editor.onInit((data) => {
     const w = window as unknown as { __backseat?: unknown }
     w.__backseat = {
       state: () => ({
-        annotations: annotations.map((a) => ({ kind: a.kind, tStart: Math.round(a.tStart), tEnd: Math.round(a.tEnd) })),
+        annotations: annotations.map((a) => {
+          const b = annotationBox(a)
+          return { kind: a.kind, tStart: Math.round(a.tStart), tEnd: Math.round(a.tEnd), x: Math.round(b.x), y: Math.round(b.y) }
+        }),
         links: [...links],
         canUndo: history.canUndo,
         canRedo: history.canRedo,
         drawing: drawing !== null,
         shape: shape !== null,
         init: init !== null,
-        transcript: transcript ? transcript.segments.length : 0
-      })
+        transcript: transcript ? transcript.segments.length : 0,
+        size: [base.width, base.height],
+        crop: { ...crop },
+        meta: init ? exportMeta() : null,
+        tool,
+        cropDrag: cropDrag !== null,
+        pointer: { ...pointerCounts },
+        compare: { available: compareImg !== null, on: cmpOn, mode: cmpMode, diffPercent: compareImg ? diffPercent() : null }
+      }),
+      /** Crop programmatically (image px of the current canvas); same path as a pointer drag. */
+      crop: (x: number, y: number, w: number, h: number) => applyCropSelection({ x, y, width: w, height: h }),
+      setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
+      payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations } : null }
     }
   }
   afterChange()
   const img = new Image()
   img.onload = () => {
-    base.width = ink.width = data.width
-    base.height = ink.height = data.height
-    baseCtx.drawImage(img, 0, 0, data.width, data.height)
+    orig = img
     init = data
-    layout()
+    setDoc({ annotations: [], links: new Map(), crop: { x: 0, y: 0, width: data.width, height: data.height } })
     render()
+    if (data.compare) {
+      const prev = new Image()
+      prev.onload = () => {
+        compareImg = prev
+        compareDir = data.compare?.sessionDir ?? ''
+        diffCache = null
+        syncCompareUi()
+        setStatus('이전 캡처가 있습니다: O 키로 전/후 비교')
+      }
+      prev.onerror = () => setStatus('이전 캡처를 불러오지 못했습니다', true)
+      prev.src = data.compare.imageDataUrl
+    }
     if (data.autoRecord) void startRecording()
   }
   img.onerror = () => setStatus('이미지를 불러오지 못했습니다', true)

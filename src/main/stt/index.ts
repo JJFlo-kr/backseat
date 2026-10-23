@@ -6,6 +6,8 @@ import { join } from 'path'
 import { Worker } from 'worker_threads'
 import type { SttProgress, TranscribeRequest, TranscribeResult } from '../../shared/types'
 import { toTranscript } from '../../shared/transcript'
+import { loadSettings, sttApiKey } from '../config'
+import { transcribeOpenAi } from './openai'
 import type { WorkerOut } from './worker'
 
 export const DEFAULT_MODEL = 'onnx-community/whisper-small_timestamped'
@@ -71,7 +73,41 @@ function getWorker(): Worker {
   return worker
 }
 
-export function transcribe(req: TranscribeRequest, onProgress?: (p: SttProgress) => void): Promise<TranscribeResult> {
+export type SttBackend = 'local' | 'openai'
+
+/**
+ * Speech recognition through the configured backend (settings.sttBackend, default 'local').
+ * The cloud adapter needs BACKSEAT_STT_API_KEY in the environment; the key is never persisted.
+ */
+export async function transcribe(
+  req: TranscribeRequest,
+  onProgress?: (p: SttProgress) => void,
+  override?: { backend?: SttBackend; apiBase?: string; apiKey?: string; model?: string }
+): Promise<TranscribeResult> {
+  const s = loadSettings()
+  const backend = override?.backend ?? s.sttBackend
+  if (backend !== 'openai') return transcribeLocal(req, onProgress)
+  const t0 = Date.now()
+  const apiBase = override?.apiBase ?? s.sttApiBase
+  onProgress?.({ stage: 'transcribing', message: `클라우드 전사 중… (${apiBase})` })
+  try {
+    const transcript = await transcribeOpenAi(req.pcm16k, {
+      apiBase,
+      apiKey: override?.apiKey ?? sttApiKey(),
+      model: override?.model ?? s.sttCloudModel,
+      language: req.language ?? s.sttLanguage,
+      audioStartMs: req.audioStartMs
+    })
+    onProgress?.({ stage: 'done', message: `${transcript.segments.length} segments` })
+    return { ok: true, transcript, elapsedMs: Date.now() - t0 }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    onProgress?.({ stage: 'error', message })
+    return { ok: false, error: message, elapsedMs: Date.now() - t0 }
+  }
+}
+
+export function transcribeLocal(req: TranscribeRequest, onProgress?: (p: SttProgress) => void): Promise<TranscribeResult> {
   return new Promise((resolve) => {
     const id = nextId++
     const pcm = req.pcm16k

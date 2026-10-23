@@ -7,10 +7,14 @@ const TITLE_MAX = 40
 const HINTS: Record<CaptureMode, string> = {
   rect: '드래그로 영역 선택 · Enter 확인 · Esc 취소',
   window: '창 위에 마우스를 올리고 클릭 · Esc 취소',
-  full: 'Enter로 전체 화면 캡처 · Esc 취소'
+  full: 'Enter로 전체 화면 캡처 · Esc 취소',
+  scroll: '스크롤할 창을 클릭 → 끝까지 자동 스크롤하며 이어붙임 (진행 중 Esc 중단) · Esc 취소'
 }
 
-const MODE_KEYS: Record<string, CaptureMode> = { KeyR: 'rect', KeyW: 'window', KeyF: 'full' }
+const MODE_KEYS: Record<string, CaptureMode> = { KeyR: 'rect', KeyW: 'window', KeyF: 'full', KeyS: 'scroll' }
+const MODES: CaptureMode[] = ['rect', 'window', 'full', 'scroll']
+/** Modes where hovering highlights the window under the cursor and a click picks it. */
+const picksWindow = (m: CaptureMode): boolean => m === 'window' || m === 'scroll'
 
 interface Pt {
   x: number
@@ -61,7 +65,7 @@ function setMode(m: CaptureMode): void {
   start = null
   dragged = false
   rect = null
-  document.body.classList.remove('dragging', 'mode-rect', 'mode-window', 'mode-full')
+  document.body.classList.remove('dragging', 'mode-rect', 'mode-window', 'mode-full', 'mode-scroll')
   document.body.classList.add(`mode-${m}`)
   hintEl.textContent = HINTS[m]
   for (const b of modeButtons) b.classList.toggle('active', b.dataset.mode === m)
@@ -125,9 +129,9 @@ function render(): void {
   if (dragged && rect) {
     target = rect
     text = `${px(rect.width)} × ${px(rect.height)} px`
-  } else if (mode === 'window' && hover) {
+  } else if (picksWindow(mode) && hover) {
     target = hover.bounds
-    text = windowLabel(hover)
+    text = mode === 'scroll' ? `${windowLabel(hover)} · 스크롤 캡처` : windowLabel(hover)
   }
   if (!target) {
     sizeLabel.style.display = 'none'
@@ -171,7 +175,7 @@ function send(result: SelectionResult): void {
 
 function pickWindow(w: WindowInfo): void {
   if (!init) return
-  send({ displayId: init.displayId, rect: { ...w.bounds }, mode: 'window', window: w })
+  send({ displayId: init.displayId, rect: { ...w.bounds }, mode: mode === 'scroll' ? 'scroll' : 'window', window: w })
 }
 
 function pickFull(): void {
@@ -190,7 +194,7 @@ function confirmRect(): void {
 
 function confirm(): void {
   if (mode === 'full') pickFull()
-  else if (mode === 'window' && !(dragged && rect)) {
+  else if (picksWindow(mode) && !(dragged && rect)) {
     if (hover) pickWindow(hover)
   } else confirmRect()
 }
@@ -219,7 +223,7 @@ canvas.addEventListener('pointermove', (e) => {
   const p = point(e)
   lastPos = p
   if (!start) {
-    if (mode === 'window') {
+    if (picksWindow(mode)) {
       const next = hitTest(p)
       if (next !== hover) {
         hover = next
@@ -228,7 +232,7 @@ canvas.addEventListener('pointermove', (e) => {
     }
     return
   }
-  if (mode === 'full') return
+  if (mode === 'full' || mode === 'scroll') return // scroll capture always takes a whole window
   if (!dragged && Math.hypot(p.x - start.x, p.y - start.y) > MIN_SIZE) {
     dragged = true
     document.body.classList.add('dragging')
@@ -283,8 +287,8 @@ canvas.addEventListener('pointercancel', reset)
 for (const b of modeButtons) {
   b.addEventListener('mousedown', (e) => e.preventDefault()) // keep focus off the buttons
   b.addEventListener('click', () => {
-    const m = b.dataset.mode
-    if (m === 'rect' || m === 'window' || m === 'full') setMode(m)
+    const m = b.dataset.mode as CaptureMode | undefined
+    if (m && MODES.includes(m)) setMode(m)
   })
 }
 

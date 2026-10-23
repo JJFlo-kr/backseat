@@ -275,7 +275,7 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - [x] 세션 패키지: `Pictures/Backseat/sessions/<id>/` 에 annotated.png, brief.md, strokes.json, meta.json + `latest.txt` 포인터 (`src/main/sessions.ts`)
 - [x] 활성 에이전트 판별: 캡처 직전 전경 창의 프로세스·제목으로 분류 (`src/main/agents.ts`: 터미널+제목 'claude' → Claude Code, claude.exe → Claude 앱, cursor/code/windsurf, 브라우저 채팅). 편집기 상단에 "→ 대상" 표시
 - [x] 전송(Enter / Ctrl+Enter): 패키지 저장 → 클립보드(터미널은 경로 지시문 텍스트, 채팅 UI는 이미지+텍스트) → 편집기 숨김 → `SetForegroundWindow`(Alt 탭 트릭) → 전경 확인 → Ctrl+V. Enter는 기본으로 치지 않음. 포커스 실패 시 클립보드 복사로 폴백하고 메시지로 알림
-- [ ] 자르기(crop) 도구 — 좌표계가 바뀌어 타임라인·주석과 얽히므로 M4로 미룸
+- [x] 자르기(crop) 도구 — M5에서 구현 (17절)
 - [ ] 실제 붙여넣기 경로는 사람이 확인 필요(자가 테스트는 패키지 생성·클립보드·판별까지만 검증)
 
 ### M1 노트
@@ -305,10 +305,20 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - [x] 고정(📌, Ctrl+P): 편집기를 480px 항상-위 참조창으로 바꾸고 전송 후에도 닫지 않음
 - [x] 렌더러 권한: 마이크·클립보드는 우리 창에서만 묻지 않고 허용
 - [x] electron-builder NSIS 패키징(`npm run dist`): koffi·onnxruntime·transformers는 asarUnpack
-- [ ] 자르기, 스크롤 캡처, 클라우드 STT 옵션, `audioOffsetMs` 미세 조정, Before/After 비교 뷰 — M5 후보
+- [x] 자르기, 스크롤 캡처, 클라우드 STT 옵션, Before/After 비교 뷰 — M5로 구현 (17절)
+- [ ] `audioOffsetMs` 미세 조정 — 실측 오차가 작아 보류
 
 ## 16. 전체 검증 방법 (현재 기준)
-1. `npm test` — 단위 테스트 23개 (정렬 18, 전사 그룹화 5)
-2. `npm run selftest -- --selftest-wav=<한국어 wav> --selftest-shots=<dir>` — 캡처·창 열거·전경 창·대상 판별·선택창·편집기(스트로크 2개, 타임라인, 스크럽, undo/redo)·마이크 녹음→STT·음성 레인 주입·클립보드·브리프(6종 주석 + 🗣)·세션 패키지(audio/transcript/requestId) 검증, 스크린샷 5장
+1. `npm test` — 단위 테스트 33개 (정렬 18, 전사 그룹화 5, 스크롤 스티칭 4, 클라우드 STT 어댑터 6 — 모의 HTTP 서버 포함)
+2. `npm run selftest -- --selftest-wav=<한국어 wav> --selftest-shots=<dir>` — 캡처·창 열거·전경 창·대상 판별·선택창·편집기(스트로크 2개, 타임라인, 스크럽, undo/redo)·**자르기(캔버스 크기·주석 좌표·meta.rectPx 이동, undo 복원, 브리프 자르기 줄)**·**전/후 비교(O 키, 겹치기/와이프/차이 레이어 픽셀, 브리프 한 줄, Esc 해제)**·마이크 녹음→STT·음성 레인 주입·**스크롤 캡처(자체 긴 페이지 창을 실제 휠로 스크롤해 이어붙인 높이·폭)**·**클라우드 STT(로컬 모의 서버: 멀티파트·Bearer 키·verbose_json 파싱, 키 없으면 네트워크 전 거부)**·클립보드·브리프(6종 주석 + 🗣)·세션 패키지(audio/transcript/requestId) 검증, 스크린샷 10장(selector, editor, editor-timeline, editor-scrub, editor-crop-drag, editor-crop, editor-compare-{overlay,wipe,diff}, editor-speech) + scroll.png
 3. `node scripts/mcp-check.mjs <sessionsRoot>` — MCP 툴 7개, ask 왕복
-4. 사람이 확인할 것: 실제 터미널 창에 붙여넣기, 실제 마이크 발화의 정렬 품질, 설치 파일 실행
+4. 사람이 확인할 것: 실제 터미널 창에 붙여넣기, 실제 마이크 발화의 정렬 품질, 설치 파일 실행, 실제 브라우저·터미널에서의 스크롤 캡처(고정 헤더·가상 스크롤 페이지), 실제 OpenAI 키로 클라우드 STT 한 번
+
+## 17. M5 (2026-10-23)
+- [x] 자르기 도구(C): 편집기에서 드래그한 영역만 남긴다. 문서(`Doc`)에 `crop`(원본 px 기준 사각형)이 들어가 히스토리 1단계로 되돌릴 수 있고, base/cmp/ink 캔버스가 원본 이미지(`orig`)에서 다시 그려진다. 모든 주석 좌표는 자른 원점만큼 이동하고 완전히 바깥인 주석은 제거(번호 뱃지 재번호, 발화 링크 인덱스 재매핑). 내보낼 때 `meta.rectDip/rectPx`는 잘린 영역 기준으로 다시 계산하고 `meta.crop`에 원본 기준 사각형을 남긴다. brief.md에 "자르기: 원본 캡처의 (x,y) w×h px만 남김" 한 줄.
+- [x] 스크롤 캡처(선택 화면 S 모드): 창을 클릭하면 선택창이 닫힌 뒤 `src/main/scroll.ts`가 Win32 `SendInput`(MOUSEEVENTF_WHEEL, 커서를 창 안에 놓고)으로 휠을 돌리며 `desktopCapturer`로 디스플레이를 연속 캡처하고, `src/shared/stitch.ts`가 이전 프레임과 새 프레임의 겹침을 픽셀 상관(상단 25%는 고정 헤더로 간주해 제외, 평균 절대 오차 최소 오프셋)으로 찾아 새 행만 이어붙인다. 같은 프레임이 오면 끝, 설정 `scrollMaxHeightPx`(기본 16000)·80장 상한, 진행 중 Esc(globalShortcut)로 취소. SendInput이 막히면 `WM_MOUSEWHEEL` PostMessage로 대체. 끝나면 휠을 되돌려 원래 위치로. `meta.mode='scroll'`, `meta.scroll={frames, viewportPx}`.
+- [x] 클라우드 STT: `src/main/stt/index.ts`의 `transcribe()`가 설정 `sttBackend`('local' 기본 | 'openai')로 분기. `src/main/stt/openai.ts`가 PCM→WAV 멀티파트로 `<sttApiBase>/audio/transcriptions`(verbose_json, word+segment timestamps)에 POST하고 단어 타임스탬프를 `toTranscript`로 문장 세그먼트화(단어가 없으면 API 세그먼트 그대로). 키는 환경변수 `BACKSEAT_STT_API_KEY`만 읽고(`sttApiKey()`) config.json에는 쓰지 않는다. 설정: `sttApiBase`(기본 https://api.openai.com/v1), `sttCloudModel`(기본 whisper-1).
+- [x] Before/After 비교(O): 트레이 "마지막 영역 다시 캡처"로 열 때 `sessions/latest.txt`가 가리키는 이전 패키지의 annotated.png를 `EditorInit.compare`로 넘긴다. 편집기는 base와 ink 사이의 `#cmp` 캔버스에 겹치기(불투명도 슬라이더)·와이프(세로선 위치 슬라이더, 왼쪽 이전/오른쪽 현재)·차이(globalCompositeOperation 'difference') 세 모드로 그리며, 자르기 후에도 같은 영역이 대응된다. 내보내는 이미지에는 들어가지 않고, 비교를 한 번이라도 켰으면 `payload.compare`로 brief.md에 "이전 캡처와 비교: 세션 <id> (annotated.png) · <모드> 모드 · 달라진 픽셀 N%" 한 줄만 기록한다(2px 샘플링, 채널 합 차이 48 초과 비율).
+- 스티칭 세부: 이어붙일 때 창 테두리·상태줄처럼 움직이지 않는 하단 행(footer)은 이음새마다 복사하지 않고 마지막에 한 번만 붙인다. 휠은 1노치(120)의 분수 델타로 뷰포트의 약 1/3씩 보내고(Chromium 계열은 정밀 스크롤을 받음, 노치 단위만 받는 앱은 같은 프레임이 3번 오면 끝으로 판단), 프레임은 두 번 연속 같은 그림이 잡힐 때까지(부드러운 스크롤 종료) 기다린 뒤 비교한다. 자가 테스트: 520×420 창 70행 페이지 → 18장, 2610 px(상한 2600), 약 20초.
+- 남은 것: `audioOffsetMs` 미세 조정, 세로 스크롤바의 아래 화살표가 이음새마다 오른쪽 가장자리에 남는 것(열 단위 마스킹 필요), 가상 스크롤(내용을 재사용하는 리스트)에서의 스티칭 품질, 비교 뷰의 수평 정렬 보정(스크롤 위치가 다른 재캡처)
+
