@@ -1,7 +1,8 @@
 # AGENTS.md — Backseat (AI 소통기)
 
 Guidance for AI coding agents (Codex, Claude Code, Cursor, …) working in this repository.
-Read this first, then `README.md` (user-facing) and `PLAN.md` (design history, decisions, known issues).
+Read this first, then `README.md` (user-facing), `docs/DEVELOPMENT.md` (build, tests, file formats) and `PLAN.md`
+(design history, decisions, known issues).
 
 ## What this is
 
@@ -89,7 +90,8 @@ static review of the rest and say clearly what you could not run.
   `ko.json` and `en.json` together (natural English, `GLOSSARY.md` terms), describe it in `_context.json`, and
   give the other 7 bundles a translation, or the English text when none is at hand (runtime fallback is
   en → ko; `npm test` fails while any bundle lacks a key, has a different `{placeholder}` or an empty string).
-  Plurals: `<key>.one` + `<key>.other`, called as `t(key, { n })`. Text an agent reads (brief.md, the pasted
+  Plurals: `<key>.one` + `<key>.other`, called as `t(key, { n })`. Wording: no parenthetical asides, product
+  lists or developer jargon in UI text; tooltips say what the control does in one sentence (PLAN.md §21). Text an agent reads (brief.md, the pasted
   instruction, MCP replies) uses the brief language (`briefTranslator()`), everything else the UI language.
   Renderers: `t()` only after the init message (module scope runs first — make labels lazy), static HTML
   via `data-i18n` / `data-i18n-title` / `-placeholder` / `-aria-label`. Toolbar labels must fit 820 px
