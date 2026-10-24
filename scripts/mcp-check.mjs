@@ -102,6 +102,26 @@ check(texts(got).includes('SEED-PACKAGE') && images(got).length === 1, 'backseat
 const missing = await client.callTool({ name: 'backseat_get', arguments: { id: '20000101-000000-none' } })
 check(missing.isError === true, 'backseat_get of an unknown id is an error')
 
+// Fetch receipts (phase 4): every package handed out leaves receipts/<id>/<agent>-*.json naming this agent,
+// the tool and the exact id; nothing for an unknown id.
+async function receipts(id) {
+  try {
+    const dir = join(root, 'receipts', id)
+    const names = (await readdir(dir)).filter((n) => n.endsWith('.json'))
+    return Promise.all(names.map(async (n) => JSON.parse(await readFile(join(dir, n), 'utf8'))))
+  } catch {
+    return []
+  }
+}
+const seedReceipts = await receipts(seedId)
+const viaGet = seedReceipts.find((r) => r.tool === 'backseat_get')
+check(Boolean(viaGet), 'backseat_get leaves a fetch receipt for that send id', `${seedReceipts.length} receipt(s)`)
+check(viaGet?.sendId === seedId && viaGet?.agentId === me?.id && viaGet?.name === 'mcp-check' && viaGet?.cwd === cwd,
+  'the receipt names the exact send id and the registered agent', JSON.stringify(viaGet ?? {}).slice(0, 160))
+check(seedReceipts.some((r) => r.tool === 'backseat_latest'), 'backseat_latest leaves a receipt too')
+check((await receipts('20000101-000000-none')).length === 0, 'no receipt for an unknown id')
+console.log('RECEIPTS', seedReceipts.map((r) => r.tool).join(','))
+
 // wait: an existing package is not "new"; a short timeout returns (no hang, no image).
 let t0 = Date.now()
 const timedOut = await client.callTool({ name: 'backseat_wait', arguments: { timeoutSec: 1 } })
@@ -119,6 +139,8 @@ await publish('NEW-PACKAGE')
 const newPkg = await waitNew
 check(texts(newPkg).includes('NEW-PACKAGE'), 'backseat_wait returns the next package (and skips one addressed to another agent)', texts(newPkg).slice(0, 80))
 check(images(newPkg).length === 1, 'backseat_wait attaches annotated.png')
+const otherId = (await readdir(root)).find((n) => n.endsWith('-c001'))
+check(Boolean(otherId) && (await receipts(otherId)).length === 0, 'a package skipped for another agent gets no receipt')
 
 // ask: writes requests/<id>.json, ignores unrelated packages, resolves with the answer carrying requestId.
 const question = '어느 버튼이 문제인지 표시해 주세요'

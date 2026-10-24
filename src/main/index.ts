@@ -9,6 +9,7 @@ import { requestForCapture, startRequestWatcher } from './requests'
 import { scrollCapture } from './scroll'
 import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
+import { runDeliverySelfTest, runRealAppCheck } from './selftest-delivery'
 import { latestCompareSource } from './sessions'
 import { startForegroundTracker } from './tracker'
 import { createTray } from './tray'
@@ -105,7 +106,8 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
 
 app.setAppUserModelId('com.backseat.app')
 
-const isSelfTest = process.argv.includes('--selftest')
+const realArg = process.argv.find((a) => a.startsWith('--selftest-real='))
+const isSelfTest = process.argv.includes('--selftest') || process.argv.includes('--selftest-delivery') || Boolean(realArg)
 
 // The self-test must run even while the tray app is up, so it skips the single-instance lock.
 if (!isSelfTest && !app.requestSingleInstanceLock()) {
@@ -125,6 +127,14 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     )
     applyLocale()
     installEditorIpc()
+    if (realArg) {
+      await runRealAppCheck(Number(realArg.split('=')[1]))
+      return
+    }
+    if (process.argv.includes('--selftest-delivery')) {
+      await runDeliverySelfTest()
+      return
+    }
     if (process.argv.includes('--selftest')) {
       await runSelfTest()
       return

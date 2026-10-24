@@ -32,7 +32,16 @@ Claude app scratch folder) the Electron sandbox and the Vite renderer build brea
 - `npm run selftest -- --selftest-locale=all --selftest-shots=<dir>` — selector, editor and About window in
   every language: no visible message keys, toolbar fits at 820 px, the Japanese / Chinese fonts load.
 - `node scripts/mcp-check.mjs <sessionsRoot> [out/main/mcp-server.js]` — the MCP server against the official
-  client, including an ask round trip.
+  client, including an ask round trip and the fetch receipts.
+- `npm run selftest-delivery` — the delivery checks on the real desktop: a fake AI chat and a fake sign-in page
+  (`tests/fixtures/delivery`, fake account only) in a separate Chrome / Edge profile, sent to through the real
+  editor IPC, UI Automation and Ctrl+V. Six situations from the 2026-10-24 incident report (sign-in page
+  captured after using the AI, password field focused, AI input not focused, two windows of one app / a
+  changed tab, focus moving away, target closed and a retry). It moves the focus between windows and uses the
+  clipboard (restored afterwards): only while nobody uses the machine. Prints `BACKSEAT_DELIVERY_TEST {json}`.
+
+Self-tests that move the real focus, mouse or keyboard run one at a time: create `D:\backseat-ui-test.lock`
+only when it does not exist, delete it afterwards (a lock older than an hour may be removed).
 
 ## Session packages
 
@@ -55,7 +64,23 @@ the installer unpacks it (with `out/main/chunks/`) outside `app.asar` into `reso
 
 Tools: `backseat_register`, `backseat_latest` (brief + image), `backseat_list`, `backseat_get`,
 `backseat_wait` (wait for the next send), `backseat_ask` (show a question and wait until the user answers by
-drawing), `backseat_agents`. Copy `integrations/claude-code/SKILL.md` to `.claude/skills/backseat/` for a
+drawing), `backseat_agents`.
+
+Every package handed out by `backseat_get` / `latest` / `wait` / `ask` leaves a fetch receipt,
+`<sessions>/receipts/<id>/<agent>-<ms>-<rand>.json` (send id, registered agent id, name, cwd, tool, time),
+one file per fetch, written atomically. The app watches the receipts of its last send and tells the editor
+("AI가 자료를 가져갔어요" — fetched, not understood). The line pasted into an MCP-verified agent asks for
+`backseat_get` with that send id.
+
+## Delivery
+
+Where 보내기 goes is decided apart from the capture (`src/main/targets.ts`): the user's pick → the pinned
+default → a window an MCP agent provably runs in → the AI window used last (`tracker.ts`) → the AI app in front
+→ none. Before Ctrl+V `src/main/send.ts` checks the same window instance (hwnd + pid + process start time,
+title for browser tabs), brings it forward, and asks UI Automation (`native/uia-com.ts`, koffi COM in a worker
+thread) whether the focused element is an editable, non-password field of that process. The result is a
+`DeliveryStatus` with only the confirmed steps. `<userData>\logs\delivery.log` records steps and verdicts
+(element type, password yes/no, reason codes) — never titles, clipboard text, memos or field values. Copy `integrations/claude-code/SKILL.md` to `.claude/skills/backseat/` for a
 `/backseat` skill in Claude Code.
 
 ## Speech recognition

@@ -363,6 +363,15 @@ export function sendCtrlV(): boolean {
   return true
 }
 
+/** Press the keys in order and release them in reverse (a chord such as Ctrl+A). The self-test clears its own test input with it. */
+export function tapKeys(chord: number[]): boolean {
+  const a = load()
+  if (!a) return false
+  for (const vk of chord) a.keybd_event(vk, 0, 0, 0)
+  for (const vk of [...chord].reverse()) a.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+  return true
+}
+
 export function sendEnter(): boolean {
   const a = load()
   if (!a) return false
@@ -428,6 +437,13 @@ export function postWheel(hwnd: number, delta: number, screenX: number, screenY:
   const wParam = BigInt(delta & 0xffff) << 16n // HIWORD = signed wheel delta, LOWORD = no modifier keys
   const lParam = ((screenY & 0xffff) << 16) | (screenX & 0xffff)
   return Boolean(a.PostMessageW(hwnd, WM_MOUSEWHEEL, wParam, lParam))
+}
+
+/** Ask a window to close (WM_CLOSE), as its close button would. The delivery self-test closes its own test windows with it. */
+export function closeWindow(hwnd: number): boolean {
+  const a = load()
+  if (!a || !hwnd) return false
+  return Boolean(a.PostMessageW(hwnd, 0x0010, 0, 0))
 }
 
 /** Top-level window under a physical-pixel point (0 when none). */

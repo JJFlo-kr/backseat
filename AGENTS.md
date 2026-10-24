@@ -35,7 +35,9 @@ message keys — see **i18n** below. Korean is the source language (the author's
 | `src/main/index.ts` | App start, hotkeys, capture flow (`startCapture`), target selection. |
 | `src/main/capture.ts`, `selector.ts`, `scroll.ts` | Screen capture (desktopCapturer), per-display selector windows, scroll capture + stitching. |
 | `src/main/editor.ts` | Editor window + its IPC (save, copy, send, transcribe, pin, video). |
-| `src/main/send.ts`, `agents.ts`, `native/win32.ts` | Delivery: classify the foreground window → focus it (`SetForegroundWindow`) → clipboard → `Ctrl+V` (`keybd_event`). Win32 via **koffi**. |
+| `src/main/targets.ts`, `tracker.ts`, `destination.ts`, `agents.ts` | Where 보내기 goes, decided apart from the capture: pick → pin → MCP-verified agent → AI window used last → AI app in front → none (never the captured page or a messenger). Window classification, MCP proof by process tree. |
+| `src/main/send.ts`, `delivery.ts`, `native/uia*.ts`, `native/win32.ts` | Staged delivery: package → clipboard → same window instance in front → UI Automation says the focused element is an editable, non-password field → `Ctrl+V` after one more check → `DeliveryStatus` of the confirmed steps. Win32 and UIA COM via **koffi** (UIA in a worker thread). `diaglog.ts`: steps and verdicts only, never typed text. |
+| `src/main/mcp/receipts.ts`, `fetchwatch.ts` | Fetch receipts written by backseat-mcp per send id; the app reports "fetched" to the editor (`delivery:update`). |
 | `src/main/sessions.ts`, `brief.ts` | Session package writer (`Pictures\Backseat\sessions\<id>\`) and `brief.md` generator. |
 | `src/main/stt/*` | Speech recognition: worker thread (`worker.ts`), local Whisper or OpenAI-compatible cloud (`openai.ts`, key from env `BACKSEAT_STT_API_KEY` only). |
 | `src/main/mcp/*` | MCP server (runs under plain Node, **must never import `electron`**) and the agent registry file. |
@@ -61,6 +63,7 @@ npm start                        # run the tray app (Ctrl+Shift+A / Ctrl+Shift+W
 npm run selftest -- --selftest-shots=<dir> [--selftest-wav=<korean.wav>] [--selftest-no-stt] [--selftest-no-scroll]
 npm run selftest -- --selftest-locale=all --selftest-shots=<dir>      # per-language screenshots + checks
 node scripts/mcp-check.mjs <sessionsRoot> [out/main/mcp-server.js]   # MCP server against the official client
+npm run selftest-delivery        # fake chat + fake sign-in page in a separate browser profile: 6 delivery situations
 npm run dist                     # NSIS installer → dist/
 ```
 

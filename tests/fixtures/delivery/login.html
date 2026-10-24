@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Fake sign-in page for the delivery self-test (src/main/selftest-delivery.ts): the kind of page the user
+     captured in the 2026-10-24 incident. Fake account only; it reports field lengths, never sends them. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Tasks · Sign in (fake)</title>
+<style>
+  body { font: 15px system-ui, sans-serif; display: grid; place-items: center; height: 100vh; margin: 0; background: #eef1f6; }
+  form { background: #fff; padding: 28px; border-radius: 10px; width: 300px; display: grid; gap: 10px; }
+  input { font: inherit; padding: 8px; }
+</style>
+</head>
+<body>
+<form onsubmit="return false">
+  <b>Acme Tasks — fake sign-in for tests</b>
+  <label>ID <input id="user" autocomplete="off" placeholder="test-user"></label>
+  <label>Password <input id="pass" type="password" autocomplete="off" placeholder="fake password"></label>
+  <button id="go" type="button">Sign in</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search)
+  const id = q.get('id') || 'login'
+  const port = q.get('port')
+  const user = document.getElementById('user')
+  const pass = document.getElementById('pass')
+  // Only lengths and whether Backseat's pasted text got in: never the values themselves.
+  const field = (el) => ({ len: el.value.length, marker: el.value.includes('Backseat') })
+  async function poll() {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/cmd?page=${encodeURIComponent(id)}`)
+      const cmd = await r.json()
+      if (cmd.clear) { user.value = ''; pass.value = '' }
+      if (cmd.focus === 'user') user.focus()
+      if (cmd.focus === 'pass') pass.focus()
+      if (cmd.fill) user.value = 'test-user'
+    } catch {}
+    const state = { page: id, title: document.title, active: document.activeElement ? document.activeElement.id : '', user: field(user), pass: field(pass) }
+    try { await fetch(`http://127.0.0.1:${port}/state`, { method: 'POST', body: JSON.stringify(state) }) } catch {}
+    setTimeout(poll, 120)
+  }
+  poll()
+</script>
+</body>
+</html>

@@ -12,6 +12,7 @@
     "icon": "node scripts/render-logo.cjs --sheet=icon-sheet.png resources/logo.svg design/logo/render",
     "capture": "electron-vite build && electron . --capture",
     "selftest": "electron-vite build && electron . --selftest",
+    "selftest-delivery": "electron-vite build && electron . --selftest-delivery",
     "test": "node --experimental-test-module-mocks --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/support/register.mjs --test \"tests/**/*.test.ts\"",
     "mcp-check": "electron-vite build && node scripts/mcp-check.mjs",
     "dist": "electron-vite build && electron-builder --win --x64"
