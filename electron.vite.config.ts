@@ -39,7 +39,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           selector: resolve(root, 'src/renderer/selector/index.html'),
-          editor: resolve(root, 'src/renderer/editor/index.html')
+          editor: resolve(root, 'src/renderer/editor/index.html'),
+          about: resolve(root, 'src/renderer/about/index.html')
         }
       }
     }

@@ -359,6 +359,24 @@ export interface BackseatApi {
     pin(): Promise<boolean>
     close(): void
   }
+  about: {
+    getInfo(): Promise<AboutInfo>
+    /** Open an http(s) URL in the default browser (main refuses anything else). */
+    open(url: string): Promise<void>
+    /** Open a bundled document (LICENSE / THIRD_PARTY_NOTICES.md) with the default app. */
+    openDoc(doc: 'license' | 'notices'): Promise<void>
+  }
+}
+
+/** Static facts shown in the About window. */
+export interface AboutInfo {
+  name: string
+  version: string
+  tagline: string
+  license: string
+  repoUrl: string
+  supportUrl: string
+  issuesUrl: string
 }
 
 declare global {

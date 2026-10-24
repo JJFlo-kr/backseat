@@ -18,5 +18,10 @@ export const IPC = {
   editorSttProgress: 'editor:stt-progress',
   editorPin: 'editor:pin',
   // editor window -> main (send)
-  editorClose: 'editor:close'
+  editorClose: 'editor:close',
+
+  // about window -> main (invoke)
+  aboutInfo: 'about:info',
+  aboutOpen: 'about:open',
+  aboutOpenDoc: 'about:open-doc'
 } as const
