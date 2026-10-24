@@ -165,6 +165,10 @@ export interface EditorInit {
   /** UI language (src/shared/i18n.ts Locale) and its merged message bundle; set by main when sending. */
   locale?: string
   messages?: Record<string, string>
+  /** The target chip at open time (plan 2026-10-25 §7); `target` stays for old callers. */
+  sendTarget?: SendTargetView
+  /** Reopen a sent capture from its session package (phase 3). */
+  restore?: { sessionDir: string }
 }
 
 export interface Point {
@@ -358,6 +362,8 @@ export interface SendOptions {
   pinTarget?: boolean
   /** The user chose "clipboard only" in the target menu: write the package and copy, paste nowhere. */
   clipboardOnly?: boolean
+  /** The user chose "음성 없이 보내기" after a failed or unfinished transcription. */
+  withoutVoice?: boolean
 }
 
 export interface SendResult {
@@ -374,6 +380,8 @@ export interface SendResult {
   /** Short human message for the status bar. */
   message: string
   error?: string
+  /** Staged result: only steps main could confirm (plan 2026-10-25 §7). `delivered` stays for old callers. */
+  status?: DeliveryStatus
 }
 
 /** A recorded replay of the drawing session (WebM from MediaRecorder). */
@@ -403,6 +411,10 @@ export interface BackseatApi {
     /** Toggle "pinned": a small always-on-top reference window that survives 전송. Resolves the new state. */
     pin(): Promise<boolean>
     close(): void
+    /** Send targets for the chip menu, best first (plan 2026-10-25 §7). Optional until main implements it. */
+    targets?(): Promise<SendTargetView[]>
+    /** Later delivery news for a send, e.g. an MCP agent fetched it (DeliveryStatus.fetchedBy). */
+    onDeliveryUpdate?(cb: (s: DeliveryStatus) => void): void
   }
   about: {
     getInfo(): Promise<AboutInfo>
@@ -425,6 +437,87 @@ export interface AboutInfo {
   /** UI language and its merged message bundle (see EditorInit.locale). */
   locale?: string
   messages?: Record<string, string>
+}
+
+// ---- Delivery contract (plan 2026-10-25 §7). Shared by the main-process and editor work. ----
+
+/** Why "보내기" goes where it goes, as shown in the editor's target chip. */
+export type TargetSource =
+  /** Chosen in the editor menu / tray for this send. */
+  | 'picked'
+  /** The pinned default (config pinnedTargetProcess/Title), window alive. */
+  | 'pinned'
+  /** An MCP agent proven to run in that window (process ancestry, F03). */
+  | 'mcp-verified'
+  /** The last known AI window the user worked in, tracked by main while Backseat runs. */
+  | 'recent-agent'
+  /** The known AI app that was in front at capture time. */
+  | 'foreground-agent'
+  /** Nothing safe to paste into: the user must pick. Never the captured page or a messenger. */
+  | 'none'
+
+/** Same window, same process instance: hwnd values are reused, so pid + process start time pin it down. */
+export interface TargetIdentity {
+  hwnd: number
+  pid: number
+  /** Process creation time (ms since epoch). */
+  processStartMs: number
+  title: string
+  process: string
+}
+
+/** The editor's target chip. */
+export interface SendTargetView {
+  source: TargetSource
+  /** e.g. "Claude Code · backseat", "Codex · ChatGPT 앱"; empty when source is 'none'. */
+  label: string
+  kind?: AgentKind
+  /** MCP agent's project folder name, when known. */
+  project?: string
+  /** true unless picked / pinned / mcp-verified: the chip says "추정". */
+  estimated: boolean
+  method: 'paste-path' | 'paste-image' | 'mcp' | 'clipboard'
+  identity?: TargetIdentity
+}
+
+/** Steps main could confirm, in order. Only confirmed steps are shown as done. */
+export type DeliveryStep =
+  | 'saved'          // session package written
+  | 'clipboard'      // clipboard holds the image / instruction
+  | 'targetVerified' // the target window is the same instance and came to the front
+  | 'inputVerified'  // focused element is an editable, non-password field of that process (or a terminal)
+  | 'pasted'         // Ctrl+V was sent after re-checking focus: an ATTEMPT, never "delivered"
+  | 'fetched'        // an MCP agent fetched this send id (later, via delivery:update)
+
+export type DeliveryStopReason =
+  | 'noTarget'       // source 'none' or the user chose clipboard only
+  | 'targetExpired'  // the window closed / its process restarted
+  | 'targetChanged'  // a different window or tab came to the front, or the title changed and was not confirmed
+  | 'focusLost'      // focus moved between the check and Ctrl+V
+  | 'notEditable'    // focused element is not an editable field
+  | 'passwordField'  // focused element is a password field: never paste
+  | 'uiaUnavailable' // the focus check could not run
+  | 'error'
+
+export interface DeliveryStatus {
+  /** = session package id (unique since F02). */
+  sendId: string
+  sessionDir?: string
+  target?: SendTargetView
+  reached: DeliveryStep[]
+  stoppedAt?: { step: DeliveryStep; reason: DeliveryStopReason }
+  /** Set when an MCP agent fetched this send. `expected` = it is the agent the send was meant for. */
+  fetchedBy?: { agentId: string; name: string; cwd: string; at: string; tool: string; expected: boolean }
+  /** No fetch within the wait window (MCP targets only). */
+  fetchTimedOut?: boolean
+}
+
+/** What the editor is about to send, checked before sending. */
+export interface PreflightReport {
+  image: boolean
+  annotations: number
+  memo: boolean
+  voice: 'none' | 'recording' | 'transcribing' | 'ready' | 'failed'
 }
 
 declare global {
