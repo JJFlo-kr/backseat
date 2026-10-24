@@ -38,6 +38,8 @@ export default defineConfig({
           index: resolve(root, 'src/main/index.ts'),
           // worker_threads entry for speech recognition (out/main/stt-worker.js)
           'stt-worker': resolve(root, 'src/main/stt/worker.ts'),
+          // worker_threads entry for UI Automation focus checks before a paste (out/main/uia-worker.js)
+          'uia-worker': resolve(root, 'src/main/native/uia-worker.ts'),
           // stdio MCP server run by plain Node (out/main/mcp-server.js); never imports electron
           'mcp-server': resolve(root, 'src/main/mcp/server.ts')
         }
