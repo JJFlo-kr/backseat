@@ -4,6 +4,7 @@ import type {
   AboutInfo,
   BackseatApi,
   CopyResult,
+  DeliveryStatus,
   EditorInit,
   ExportPayload,
   SaveResult,
@@ -11,6 +12,7 @@ import type {
   SelectorInit,
   SendOptions,
   SendResult,
+  SendTargetView,
   SttProgress,
   TranscribeRequest,
   TranscribeResult,
@@ -53,6 +55,12 @@ const api: BackseatApi = {
     },
     pin(): Promise<boolean> {
       return ipcRenderer.invoke(IPC.editorPin)
+    },
+    targets(): Promise<SendTargetView[]> {
+      return ipcRenderer.invoke(IPC.editorTargets)
+    },
+    onDeliveryUpdate(cb) {
+      ipcRenderer.on(IPC.deliveryUpdate, (_e, s: DeliveryStatus) => cb(s))
     },
     close() {
       ipcRenderer.send(IPC.editorClose)

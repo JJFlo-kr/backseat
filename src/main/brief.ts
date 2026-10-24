@@ -108,6 +108,9 @@ export function buildBrief(
   const transcript = payload.transcript
   if (transcript) {
     lines.push(tr('brief.voice', { seconds: (transcript.durationMs / 1000).toFixed(1), model: transcript.model }))
+  } else if (payload.audio) {
+    // The user chose to send without the transcript (it failed): say so instead of looking like a silent capture.
+    lines.push(tr('brief.voiceMissing'))
   }
   if (meta.request) {
     lines.push('')

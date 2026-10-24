@@ -364,6 +364,11 @@ export interface SendOptions {
   clipboardOnly?: boolean
   /** The user chose "음성 없이 보내기" after a failed or unfinished transcription. */
   withoutVoice?: boolean
+  /**
+   * The previous send stopped with 'targetChanged' (a browser / picked window shows another title) and the
+   * user confirmed that window: accept its current title once. A different window instance still stops.
+   */
+  confirmTarget?: boolean
 }
 
 export interface SendResult {
@@ -478,6 +483,11 @@ export interface SendTargetView {
   estimated: boolean
   method: 'paste-path' | 'paste-image' | 'mcp' | 'clipboard'
   identity?: TargetIdentity
+  /**
+   * source 'none' because the window the user picked or pinned is not open: what it was. Backseat does not
+   * fall back to another window; the editor asks the user to pick again.
+   */
+  unavailable?: { source: TargetSource; label: string }
 }
 
 /** Steps main could confirm, in order. Only confirmed steps are shown as done. */
@@ -510,6 +520,8 @@ export interface DeliveryStatus {
   fetchedBy?: { agentId: string; name: string; cwd: string; at: string; tool: string; expected: boolean }
   /** No fetch within the wait window (MCP targets only). */
   fetchTimedOut?: boolean
+  /** Enter was pressed after a verified paste (auto-Enter setting). Absent: the user still has to submit. */
+  enterPressed?: boolean
 }
 
 /** What the editor is about to send, checked before sending. */

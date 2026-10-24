@@ -7,6 +7,10 @@ import { getLocale, LOCALE_NAMES, LOCALES, t } from '../shared/i18n'
 import { showAbout } from './about'
 import { applyLocale, STT_LANGUAGES } from './locales'
 import { sessionsRoot } from './sessions'
+import { pinParts } from './agents'
+import { resolveForTray } from './destination'
+import type { Candidate } from './targets'
+import { getPicked, setPicked } from './tracker'
 
 let tray: Tray | null = null
 
@@ -80,6 +84,60 @@ function sttMenu(): Electron.MenuItemConstructorOptions[] {
   ]
 }
 
+/**
+ * "보낼 곳": where the next captures go (request (1) item 1). Picking a window keeps it while it lives, even
+ * after the user moves to another page to capture; "자동" goes back to the last AI window used. Known AI
+ * windows are listed first; any other window (a messenger, a page) only under "다른 창", by explicit choice.
+ */
+function targetMenu(onChange: () => void): Electron.MenuItemConstructorOptions[] {
+  const s = loadSettings()
+  const { current, candidates } = resolveForTray()
+  const picked = getPicked()
+  const now = current.view.source === 'none' ? t('tray.target.none') : t('tray.target.current', { label: current.view.label })
+  const isPicked = (c: Candidate): boolean => picked?.identity.hwnd === c.identity.hwnd && picked.identity.pid === c.identity.pid
+  const pick = (c: Candidate) => (): void => {
+    setPicked(c.target, c.identity)
+    onChange()
+  }
+  const item = (c: Candidate): Electron.MenuItemConstructorOptions => ({ label: c.view.label, type: 'radio', checked: isPicked(c), click: pick(c) })
+  const known = candidates.filter((c) => c.target.kind !== 'unknown')
+  const other = candidates.filter((c) => c.target.kind === 'unknown')
+  const pinnable = current.target && current.view.source !== 'pinned' ? current.target : null
+  return [
+    { label: now, enabled: false },
+    { type: 'separator' },
+    {
+      label: t('tray.target.auto'),
+      type: 'radio',
+      checked: !picked,
+      click: () => {
+        setPicked(null)
+        onChange()
+      }
+    },
+    ...(known.length ? known.map(item) : [{ label: t('tray.target.noAgents'), enabled: false }]),
+    ...(other.length ? [{ label: t('tray.target.otherWindows'), submenu: other.map(item) }] : []),
+    { type: 'separator' },
+    {
+      label: pinnable ? t('tray.target.pin', { label: pinnable.label }) : t('tray.target.pinNone'),
+      enabled: Boolean(pinnable),
+      click: () => {
+        if (!pinnable) return
+        const p = pinParts(pinnable)
+        void saveSettings({ pinnedTargetProcess: p.process, pinnedTargetTitle: p.title }).catch(() => undefined).then(onChange)
+      }
+    },
+    ...(s.pinnedTargetProcess
+      ? [
+          {
+            label: t('tray.unpinTarget', { process: s.pinnedTargetProcess }),
+            click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' }).catch(() => undefined).then(onChange)
+          }
+        ]
+      : [])
+  ]
+}
+
 function buildMenu(actions: TrayActions, onChange: () => void): Menu {
   const s = loadSettings()
   return Menu.buildFromTemplate([
@@ -106,14 +164,8 @@ function buildMenu(actions: TrayActions, onChange: () => void): Menu {
       checked: app.isPackaged && s.launchAtLogin,
       click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem).catch(() => undefined)
     },
-    ...(s.pinnedTargetProcess
-      ? [
-          {
-            label: t('tray.unpinTarget', { process: s.pinnedTargetProcess }),
-            click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' }).catch(() => undefined)
-          }
-        ]
-      : []),
+    { type: 'separator' },
+    { label: t('tray.target'), submenu: targetMenu(onChange) },
     { type: 'separator' },
     { label: languageLabel(), submenu: languageMenu(onChange) },
     {

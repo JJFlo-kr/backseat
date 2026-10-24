@@ -3,6 +3,7 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { FakeBrowserWindow, installFakeElectron } from './support/fake-electron.ts'
+import { fakeWin32 } from './support/fake-win32.ts'
 import type { AgentTarget, EditorInit, ExportPayload, SendResult } from '../src/shared/types.ts'
 
 const fake = installFakeElectron()
@@ -10,20 +11,15 @@ const fake = installFakeElectron()
 const alive = new Set<number>()
 const sends: { target: AgentTarget | null }[] = []
 mock.module('../src/main/native/win32.ts', {
-  exports: {
+  exports: fakeWin32({
     isWindow: (h: number) => alive.has(h),
-    win32Available: () => true,
-    getForegroundWindow: () => null,
-    listTopLevelWindows: () => [],
-    focusWindow: async () => true,
-    sendCtrlV: () => true,
-    sendEnter: () => true
-  }
+    liveWindow: (h: number) => (alive.has(h) ? { pid: h * 10, processStartMs: 1, title: 'x' } : null)
+  })
 })
 mock.module('../src/main/send.ts', {
   exports: {
-    sendToTarget: async (_win: unknown, _p: ExportPayload, target: AgentTarget | null): Promise<SendResult> => {
-      sends.push({ target })
+    sendToTarget: async (_win: unknown, _p: ExportPayload, ctx: { target: AgentTarget | null }): Promise<SendResult> => {
+      sends.push({ target: ctx.target })
       return { ok: true, delivered: 'pasted', message: 'ok' }
     }
   }

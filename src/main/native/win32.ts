@@ -54,6 +54,8 @@ interface Api {
   Process32FirstW: Fn
   Process32NextW: Fn
   CloseHandleI: Fn
+  IsWindow: Fn
+  GetProcessTimes: Fn
 }
 
 let api: Api | null | undefined
@@ -97,7 +99,11 @@ function load(): Api | null {
       CreateToolhelp32Snapshot: kernel32.func('intptr_t CreateToolhelp32Snapshot(uint32_t flags, uint32_t pid)') as Fn,
       Process32FirstW: kernel32.func('bool Process32FirstW(intptr_t h, _Inout_ uint8_t *pe)') as Fn,
       Process32NextW: kernel32.func('bool Process32NextW(intptr_t h, _Inout_ uint8_t *pe)') as Fn,
-      CloseHandleI: kernel32.func('bool CloseHandle(intptr_t h)') as Fn
+      CloseHandleI: kernel32.func('bool CloseHandle(intptr_t h)') as Fn,
+      IsWindow: user32.func('bool IsWindow(uintptr_t hwnd)') as Fn,
+      GetProcessTimes: kernel32.func(
+        'bool GetProcessTimes(uintptr_t h, _Out_ uint8_t *creation, _Out_ uint8_t *exit, _Out_ uint8_t *kernel, _Out_ uint8_t *user)'
+      ) as Fn
     }
   } catch (err) {
     console.error('[backseat] win32 layer unavailable:', err)
@@ -126,21 +132,98 @@ function className(a: Api, hwnd: number): string {
   return utf16(buf, n)
 }
 
-const processNames = new Map<number, string>()
+/** Executable name per pid, valid only for the process instance started at `startMs` (pids are reused). */
+const processNames = new Map<number, { name: string; startMs: number }>()
+
+/** FILETIME (100 ns since 1601) -> ms since 1970. */
+function filetimeMs(raw: Uint8Array): number {
+  const v = new DataView(raw.buffer, raw.byteOffset, 8)
+  const ticks = v.getUint32(4, true) * 2 ** 32 + v.getUint32(0, true)
+  return Math.round(ticks / 10000 - 11644473600000)
+}
+
+function startOf(a: Api, h: number): number {
+  const created = new Uint8Array(8)
+  const scratch = [new Uint8Array(8), new Uint8Array(8), new Uint8Array(8)]
+  return a.GetProcessTimes(h, created, scratch[0], scratch[1], scratch[2]) ? filetimeMs(created) : 0
+}
 
 function processName(a: Api, pid: number): string {
-  const cached = processNames.get(pid)
-  if (cached) return cached
-  let name = ''
   const h = a.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) as number
-  if (h) {
+  if (!h) return processNames.get(pid)?.name ?? ''
+  try {
+    const startMs = startOf(a, h)
+    const cached = processNames.get(pid)
+    if (cached && cached.startMs === startMs) return cached.name
+    let name = ''
     const buf = new Uint16Array(1024)
     const size = new Uint32Array([buf.length])
     if (a.QueryFullProcessImageNameW(h, 0, buf, size)) name = basename(utf16(buf, size[0]))
+    processNames.set(pid, { name, startMs })
+    return name
+  } finally {
     a.CloseHandle(h)
   }
-  processNames.set(pid, name)
-  return name
+}
+
+/** Creation time of a process (ms since 1970), 0 when it cannot be read. With the pid it names one process instance. */
+export function processStartMs(pid: number): number {
+  const a = load()
+  if (!a || !pid) return 0
+  const h = a.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) as number
+  if (!h) return 0
+  try {
+    return startOf(a, h)
+  } finally {
+    a.CloseHandle(h)
+  }
+}
+
+/**
+ * What the handle names right now — owner pid, that process's start time and the title — or null when it
+ * is no longer a window. For TargetIdentity checks (src/main/delivery.ts compareIdentity).
+ */
+export function liveWindow(hwnd: number): { pid: number; processStartMs: number; title: string } | null {
+  const a = load()
+  if (!a || !hwnd) return null
+  try {
+    if (!a.IsWindow(hwnd)) return null
+    const pidOut = new Uint32Array(1)
+    a.GetWindowThreadProcessId(hwnd, pidOut)
+    if (!pidOut[0]) return null
+    return { pid: pidOut[0], processStartMs: processStartMs(pidOut[0]), title: windowText(a, hwnd) }
+  } catch {
+    return null
+  }
+}
+
+/** The foreground window handle (0 when none). Cheap: for the foreground tracker. */
+export function foregroundHwnd(): number {
+  const a = load()
+  if (!a) return 0
+  return Number(a.GetForegroundWindow())
+}
+
+/** Title only, cheap (0 = none). */
+export function windowTitle(hwnd: number): string {
+  const a = load()
+  if (!a || !hwnd) return ''
+  try {
+    return windowText(a, hwnd)
+  } catch {
+    return ''
+  }
+}
+
+/** Full description of one window (title, pid, process, bounds, class), or null. */
+export function describeWindow(hwnd: number): WindowInfo | null {
+  const a = load()
+  if (!a || !hwnd) return null
+  try {
+    return describe(a, hwnd)
+  } catch {
+    return null
+  }
 }
 
 function physicalBounds(a: Api, hwnd: number): Rect | null {

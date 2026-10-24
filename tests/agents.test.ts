@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { asFallback, buildCandidates, classifyTarget, instructionLine, matchPinned, pinParts, rememberTarget, getLastTarget } from '../src/main/agents.ts'
+import { classifyTarget, instructionLine, matchPinned, pinParts } from '../src/main/agents.ts'
 import { setMessages } from '../src/shared/i18n.ts'
 import type { WindowInfo } from '../src/shared/types.ts'
 import ko from '../src/locales/ko.json' with { type: 'json' }
@@ -71,34 +71,6 @@ test('desktop, taskbar, untitled and own windows are not targets', () => {
   assert.equal(classifyTarget(win('explorer.exe', 'Downloads', { className: 'CabinetWClass' }))?.kind, 'unknown')
 })
 
-test('asFallback adds exactly one suffix to the original label', () => {
-  const orig = classifyTarget(win('claude.exe', 'Claude'))!
-  const fb = asFallback(orig)
-  assert.equal(fb.label, 'Claude 앱 (직전 대상)')
-  assert.equal(orig.label, 'Claude 앱')
-  assert.equal(fb.confidence, 0.5)
-})
-
-test('buildCandidates: known apps first, front-most order, excludes detected/own/shell, max 12', () => {
-  const detected = win('ChatGPT.exe', 'ChatGPT')
-  const list = [
-    win('notepad.exe', 'a'),
-    detected,
-    win('Backseat.exe', 'self', { pid: 7 }),
-    win('explorer.exe', 'Program Manager', { className: 'Progman' }),
-    win('claude.exe', 'Claude'),
-    win('calc.exe', 'Calculator'),
-    win('WindowsTerminal.exe', 'pwsh')
-  ]
-  const c = buildCandidates(list, { selfPid: 7, excludeHwnd: detected.hwnd })
-  assert.deepEqual(
-    c.map((t) => t.process),
-    ['claude.exe', 'WindowsTerminal.exe', 'notepad.exe', 'calc.exe']
-  )
-  const many = Array.from({ length: 30 }, (_, i) => win('app.exe', `w${i}`))
-  assert.equal(buildCandidates(many).length, 12)
-})
-
 test('matchPinned: process case-insensitive, title substring, front-most wins, none -> null', () => {
   const list = [win('chrome.exe', 'Docs'), win('CHATGPT.exe', 'ChatGPT - project A'), win('ChatGPT.exe', 'ChatGPT - project B')]
   assert.equal(matchPinned(list, 'chatgpt.exe', '')?.hwnd, list[1].hwnd)
@@ -109,29 +81,25 @@ test('matchPinned: process case-insensitive, title substring, front-most wins, n
   assert.deepEqual(pinParts({ process: 'a.exe', title: 'x'.repeat(40) }), { process: 'a.exe', title: 'x'.repeat(20) })
 })
 
-test('labels follow the current language; rememberTarget strips the suffix of that language', () => {
+test('labels follow the current language', () => {
   setMessages('en', en)
   try {
     assert.equal(classifyTarget(win('ChatGPT.exe', 'ChatGPT'))?.label, 'Codex · ChatGPT app')
     assert.equal(classifyTarget(win('notepad.exe', 'Memo'))?.label, 'Window: Memo (notepad.exe)')
-    const orig = classifyTarget(win('claude.exe', 'Claude'))!
-    const fb = asFallback(orig)
-    assert.equal(fb.label, 'Claude app (previous target)')
-    rememberTarget(fb)
-    assert.equal(getLastTarget()?.label, 'Claude app')
   } finally {
     setMessages('ko', ko)
   }
 })
 
-test('instructionLine: Korean by default, a given translator wins, memo is prefixed', () => {
+test('instructionLine: Korean by default, a given translator wins, memo is prefixed; MCP asks for backseat_get with the send id', () => {
   assert.equal(
     instructionLine('C:/s/brief.md', 'C:/s/annotated.png', ''),
     'Backseat 브리프 C:/s/brief.md 와 이미지 C:/s/annotated.png 를 읽고, 주석과 메모가 가리키는 대로 수정해줘.'
   )
-  const mcp = instructionLine('C:/s/brief.md', 'C:/s/annotated.png', 'fix this', true)
-  assert.ok(mcp.startsWith('fix this — Backseat로 방금 캡처를 보냈어. backseat_latest'))
+  const mcp = instructionLine('C:/s/brief.md', 'C:/s/annotated.png', 'fix this', '20261025-100000-123-ab12')
+  assert.ok(mcp.startsWith('fix this — Backseat로 방금 캡처를 보냈어. backseat_get 툴에 id "20261025-100000-123-ab12"'), mcp)
   assert.ok(mcp.endsWith('(파일: C:/s/brief.md)'))
-  const tr = (key: string, p?: Record<string, string | number>): string => `<${key}:${p?.brief}>`
-  assert.equal(instructionLine('b', 'p', '', false, tr), '<agents.instruction.paths:b>')
+  const tr = (key: string, p?: Record<string, string | number>): string => `<${key}:${p?.brief}:${p?.id ?? ''}>`
+  assert.equal(instructionLine('b', 'p', '', undefined, tr), '<agents.instruction.paths:b:>')
+  assert.equal(instructionLine('b', 'p', '', 'X1', tr), '<agents.instruction.mcp:b:X1>')
 })

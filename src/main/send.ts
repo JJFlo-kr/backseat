@@ -1,16 +1,24 @@
-// "전송": write the session package, then deliver it to the agent the user was
-// working with. Delivery never presses Enter unless asked, and always falls back
-// to the clipboard with an honest message.
+// "보내기": write the session package, then deliver it — step by step, recording only what was confirmed
+// (plan 2026-10-25 §3 phase 2–3, request (1) items 2–4):
+//   saved → clipboard → targetVerified (same window instance, in front) → inputVerified (UIA: an editable,
+//   non-password field of that process, or a terminal) → pasted (Ctrl+V after one more check).
+// Any doubt stops before Ctrl+V with the reason in DeliveryStatus.stoppedAt; the clipboard stays ready and
+// the editor (never hidden, only put behind the target) comes back. Another window is never substituted,
+// and Enter is pressed only after a fully verified paste.
 import { BrowserWindow, clipboard, ClipboardItem } from 'electron'
 import { readFile } from 'fs/promises'
-import type { AgentTarget, ExportPayload, SendOptions, SendResult } from '../shared/types'
+import type { DeliveryStopReason, ExportPayload, SendOptions, SendResult } from '../shared/types'
 import { t } from '../shared/i18n'
 import { instructionLine } from './agents'
 import { loadSettings } from './config'
+import { compareIdentity, DeliveryTracker, elementForLog, judgeInput, mayFocusSoleInput, mayPressEnter, type DeliveryLogEntry } from './delivery'
+import { logDelivery } from './diaglog'
 import { briefTranslator } from './locales'
-import { focusWindow, getForegroundWindow, sendCtrlV, sendEnter, win32Available } from './native/win32'
+import { focusWindow, foregroundHwnd, liveWindow, sendEnter, win32Available } from './native/win32'
+import { uiaClear, uiaFocusSoleInput, uiaInputCheck, uiaPasteIfUnchanged, type FocusInfo } from './native/uia'
 import { markAnswered } from './requests'
 import { sessionsRoot, writeSessionPackage } from './sessions'
+import type { Resolved } from './targets'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -25,72 +33,146 @@ async function clipboardImageAndText(pngPath: string, text: string): Promise<voi
   ])
 }
 
+/** Status-bar text for a stop (UI language). The editor shows its own wording from DeliveryStatus. */
+function stopMessage(reason: DeliveryStopReason, label: string): string {
+  return t(`send.stopped.${reason}`, { target: label || '?' })
+}
+
 export async function sendToTarget(
   editorWin: BrowserWindow | null,
   payload: ExportPayload,
-  target: AgentTarget | null,
+  ctx: Resolved,
   opts: SendOptions = {}
 ): Promise<SendResult> {
-  let sessionDir: string | undefined
+  const target = opts.clipboardOnly ? null : ctx.target
+  const identity = opts.clipboardOnly ? null : ctx.identity
+  const tracker = new DeliveryTracker(opts.clipboardOnly ? { source: 'none', label: '', estimated: false, method: 'clipboard' } : ctx.view)
+  const status = tracker.status
+  const label = target?.label ?? ''
+  const log = (event: string, extra: Partial<DeliveryLogEntry> = {}): void =>
+    void logDelivery({
+      sendId: status.sendId,
+      source: status.target?.source ?? 'none',
+      kind: target?.kind,
+      process: target?.process,
+      method: status.target?.method,
+      event,
+      reached: [...status.reached],
+      ...(status.stoppedAt ? { stoppedAt: status.stoppedAt } : {}),
+      ...extra
+    })
+  // After the target was brought forward, a stop brings the editor back so the user sees why.
+  let movedFocus = false
+  const stopped = (step: Parameters<DeliveryTracker['stop']>[0], reason: DeliveryStopReason, extra: Partial<SendResult> = {}): SendResult => {
+    tracker.stop(step, reason)
+    uiaClear()
+    if (movedFocus && editorWin && !editorWin.isDestroyed()) {
+      editorWin.show()
+      editorWin.focus()
+    }
+    log('stopped')
+    return {
+      ok: true,
+      delivered: status.reached.includes('clipboard') ? 'clipboard' : 'file-only',
+      sessionDir: status.sessionDir,
+      message: reason === 'noTarget' ? noTargetMessage() : stopMessage(reason, label),
+      status,
+      ...extra
+    }
+  }
+  const noTargetMessage = (): string =>
+    opts.clipboardOnly ? t('send.clipboard.chosen') : target ? t('send.clipboard.target', { target: label }) : t('send.clipboard.noTarget')
+
   try {
     const pkg = await writeSessionPackage(payload, target)
-    sessionDir = pkg.dir
+    status.sendId = pkg.id
+    status.sessionDir = pkg.dir
+    tracker.reach('saved')
     if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
-    // The line and the image prefix are read by the agent: brief language. Status messages below: UI language.
-    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, Boolean(target?.mcp), briefTranslator())
+    // The line and the image prefix are read by the agent: brief language. Status messages: UI language.
+    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, target?.mcp ? pkg.id : undefined, briefTranslator())
     // Chat UIs get the image itself: say up front that the drawn marks are the user's Backseat annotations.
     const imageLine = `${briefTranslator()('send.imageNotice')} ${line}`
 
-    if (!target || target.method === 'clipboard' || !target.hwnd || !win32Available()) {
+    if (!target || !identity || target.method === 'clipboard' || !target.hwnd) {
       await clipboardImageAndText(pkg.annotatedPng, imageLine)
-      return {
-        ok: true,
-        delivered: 'clipboard',
-        sessionDir,
-        message: opts.clipboardOnly
-          ? t('send.clipboard.chosen')
-          : target
-            ? t(target.mcp ? 'send.clipboard.targetMcp' : 'send.clipboard.target', { target: target.label })
-            : t('send.clipboard.noTarget')
-      }
+      tracker.reach('clipboard')
+      return stopped('targetVerified', 'noTarget')
     }
-
     if (target.method === 'paste-path') await clipboardText(line)
     else await clipboardImageAndText(pkg.annotatedPng, imageLine)
+    tracker.reach('clipboard')
+    if (!win32Available()) return stopped('targetVerified', 'uiaUnavailable')
 
-    // Get out of the way, then hand focus to the agent window and paste.
-    editorWin?.hide()
-    await sleep(120)
+    // 1. Same window instance as chosen (a closed window or a reused handle is never "close enough").
+    const before = compareIdentity(identity, liveWindow(target.hwnd), target.kind)
+    if (before === 'expired') return stopped('targetVerified', 'targetExpired', { targetExpired: true })
+    if (before === 'titleChanged' && !opts.confirmTarget) return stopped('targetVerified', 'targetChanged')
+
+    // 2. Bring it forward. The editor is not hidden (the user keeps their work in view); the target simply goes on top.
+    movedFocus = true
     const focused = await focusWindow(target.hwnd)
-    const fg = getForegroundWindow()
-    if (!focused || !fg || fg.hwnd !== target.hwnd) {
-      editorWin?.show()
-      return {
-        ok: true,
-        delivered: 'clipboard',
-        sessionDir,
-        message: t('send.focusFailed', { target: target.label })
+    if (!focused || foregroundHwnd() !== target.hwnd) return stopped('targetVerified', 'focusLost')
+    // What is in front now: for a browser the visible tab's title.
+    const after = compareIdentity(opts.confirmTarget ? { ...identity, title: liveWindow(target.hwnd)?.title ?? identity.title } : identity, liveWindow(target.hwnd), target.kind)
+    if (after === 'expired') return stopped('targetVerified', 'targetExpired', { targetExpired: true })
+    if (after === 'titleChanged') return stopped('targetVerified', 'targetChanged')
+    tracker.reach('targetVerified')
+
+    // 3. The focused element must be a field we may paste into — never a password field.
+    let focus: FocusInfo | null
+    try {
+      await sleep(80) // let the app restore its own focus after activation
+      focus = await uiaInputCheck()
+      let verdict = judgeInput(focus, { pid: identity.pid, method: target.method, kind: target.kind })
+      if (!verdict.ok && verdict.reason === 'notEditable' && mayFocusSoleInput(target.kind)) {
+        const sole = await uiaFocusSoleInput(target.hwnd)
+        log('soleInput', { detail: `candidates=${sole.candidates} focused=${sole.focused}` })
+        if (sole.focused) {
+          await sleep(120)
+          focus = await uiaInputCheck()
+          verdict = judgeInput(focus, { pid: identity.pid, method: target.method, kind: target.kind })
+        }
+      }
+      log('inputCheck', { element: elementForLog(focus, identity.pid), detail: verdict.ok ? `ok:${verdict.via}` : verdict.reason })
+      if (!verdict.ok) return stopped('inputVerified', verdict.reason)
+    } catch (err) {
+      log('inputCheck', { detail: `uia:${err instanceof Error ? err.message.slice(0, 80) : 'error'}` })
+      return stopped('inputVerified', 'uiaUnavailable')
+    }
+    tracker.reach('inputVerified')
+
+    // 4. Ctrl+V only if the same window is in front and the same element still has the focus.
+    let pasted
+    try {
+      pasted = await uiaPasteIfUnchanged(target.hwnd)
+    } catch {
+      return stopped('pasted', 'uiaUnavailable')
+    }
+    if (!pasted.pasted) return stopped('pasted', pasted.reason === 'password' ? 'passwordField' : pasted.reason === 'none' ? 'error' : 'focusLost')
+    tracker.reach('pasted')
+
+    // 5. Enter only after a fully verified paste, and only while the target is still in front.
+    const wantEnter = opts.pressEnter ?? loadSettings().pressEnter
+    if (mayPressEnter(status, wantEnter)) {
+      await sleep(150)
+      if (foregroundHwnd() === target.hwnd) {
+        sendEnter()
+        status.enterPressed = true
       }
     }
-    await sleep(80)
-    sendCtrlV()
-    const pressEnter = opts.pressEnter ?? loadSettings().pressEnter
-    if (pressEnter) {
-      await sleep(150)
-      sendEnter()
-    }
-    // The editor comes back after the paste without taking the focus from the agent window: it stays open
-    // for a resend, another destination or a copy (Codex review F05; user decision 2026-10-25).
-    editorWin?.showInactive()
+    log('pasted')
     return {
       ok: true,
       delivered: 'pasted',
-      sessionDir,
-      message: t(pressEnter ? 'send.pasted' : 'send.pastedPressEnter', { target: target.label })
+      sessionDir: status.sessionDir,
+      message: t(status.enterPressed ? 'send.pasted' : 'send.pastedPressEnter', { target: label }),
+      status
     }
   } catch (err) {
-    editorWin?.show()
     const error = err instanceof Error ? err.message : String(err)
-    return { ok: false, delivered: 'file-only', sessionDir, message: t('send.failed', { error }), error }
+    const next = (['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'] as const).find((s) => !status.reached.includes(s)) ?? 'pasted'
+    const r = stopped(next, 'error')
+    return { ...r, ok: false, delivered: status.reached.includes('saved') ? r.delivered : 'file-only', message: t('send.failed', { error }), error }
   }
 }

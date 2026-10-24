@@ -1,41 +1,22 @@
 import { app, globalShortcut, session } from 'electron'
-import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult, WindowInfo } from '../shared/types'
-import { buildCandidates, detectTarget, getLastTarget, matchPinned, rememberTarget, withMcpAgent } from './agents'
+import type { AskRequest, CaptureMode, EditorInit, SelectionResult } from '../shared/types'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
 import { applyLoginItem, ensureConfig, loadSettings, sessionsRoot } from './config'
+import { resolveForCapture } from './destination'
 import { createEditorWindow, installEditorIpc } from './editor'
-import { pruneRegistry } from './mcp/registry'
-import { getForegroundWindow, isWindow, listTopLevelWindows, processParents } from './native/win32'
+import { getForegroundWindow, listTopLevelWindows } from './native/win32'
 import { requestForCapture, startRequestWatcher } from './requests'
 import { scrollCapture } from './scroll'
 import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
 import { latestCompareSource } from './sessions'
+import { startForegroundTracker } from './tracker'
 import { createTray } from './tray'
 import { applyLocale } from './locales'
 
 let capturing = false
 /** Last confirmed selection, for "마지막 영역 다시 캡처" (before/after comparisons). */
 let lastSelection: SelectionResult | null = null
-
-/**
- * Bind the window-based guess to an agent registered through backseat-mcp, but only when that agent
- * provably runs in the guessed window (process tree; Codex review F03). Otherwise the guess is unchanged
- * and the pasted line carries file paths, which any agent can read.
- */
-async function pickTarget(guess: AgentTarget | null, windows: readonly WindowInfo[]): Promise<AgentTarget | null> {
-  if (!guess?.hwnd) return guess
-  let registered: Awaited<ReturnType<typeof pruneRegistry>> = []
-  try {
-    registered = await pruneRegistry(sessionsRoot())
-  } catch {
-    registered = []
-  }
-  if (registered.length === 0) return guess
-  const win = windows.find((w) => w.hwnd === guess.hwnd) ?? null
-  const parents = processParents()
-  return withMcpAgent(guess, registered, win, (pid) => parents.get(pid))
-}
 
 /**
  * Full flow: remember the active window -> freeze screens -> pick a region/window -> open the editor.
@@ -51,16 +32,12 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
   try {
     const settings = loadSettings()
     const active = getForegroundWindow() // before any of our windows show up
-    // One enumeration, in z-order, before any of our windows show up: pinned match, candidates and the selector use it.
+    // One enumeration, in z-order, before any of our windows show up: target model, candidates and the selector use it.
     const windows = listTopLevelWindows()
-    // A pinned default target wins over automatic detection while its window is open.
-    const pinWin = matchPinned(windows, settings.pinnedTargetProcess ?? '', settings.pinnedTargetTitle ?? '')
-    // Phase 0 safety: an unknown front window (the captured web page, a messenger) is never the automatic target.
-    const { target: guess, pinned, detected } = detectTarget({ pinned: pinWin, front: active, prev: getLastTarget(), selfPid: process.pid }, isWindow)
-    // lastTarget keeps the original (undecorated) target; only the object handed to the editor is decorated.
-    if (detected) rememberTarget(detected)
-    const target = await pickTarget(guess, windows)
-    const candidates = buildCandidates(windows, { selfPid: process.pid, excludeHwnd: target?.hwnd })
+    // Where 보내기 goes is decided apart from what is captured: pick → pin → MCP agent → last AI window →
+    // AI app in front → none. The captured page / a messenger is never chosen automatically (src/main/targets.ts).
+    const targets = await resolveForCapture(active, windows)
+    const target = targets.current.target
     const ask = requestForCapture(request)
     const caps = await captureAllDisplays()
     let sel: SelectionResult | null
@@ -111,13 +88,14 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
         scroll
       },
       target,
-      targetPinned: pinned ? true : undefined,
-      candidates,
+      targetPinned: targets.current.view.source === 'pinned' ? true : undefined,
+      candidates: [...targets.candidates.values()].map((c) => c.target),
+      sendTarget: targets.current.view,
       autoRecord: settings.autoRecord,
       request: ask,
       compare
     }
-    createEditorWindow(init)
+    createEditorWindow(init, undefined, targets)
   } catch (err) {
     console.error('[backseat] capture failed:', err)
   } finally {
@@ -153,6 +131,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     }
     const settings = await ensureConfig()
     applyLoginItem(settings)
+    startForegroundTracker()
     createTray({
       capture: () => void startCapture('rect'),
       captureWindow: () => void startCapture('window'),

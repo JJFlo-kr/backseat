@@ -14,6 +14,7 @@ import {
   unregisterAgentSync,
   type RegistryEntry
 } from './registry'
+import { writeReceipt } from './receipts'
 import { BUNDLES } from '../../shared/bundles'
 import { createTranslator, mergeBundles, resolveLocale, type Locale, type Messages, type Translate } from '../../shared/i18n'
 
@@ -223,6 +224,26 @@ async function waitForPackage(
   }
 }
 
+/**
+ * Leave a fetch receipt for the package handed to the agent (src/main/mcp/receipts.ts), before replying.
+ * A failed write is reported on stderr but never keeps the package from the agent.
+ */
+async function recordFetch(root: string, p: Loaded, me: RegistryEntry | null, tool: string): Promise<void> {
+  try {
+    await writeReceipt(root, {
+      sendId: p.id,
+      agentId: me?.id ?? '',
+      name: me?.name ?? '',
+      cwd: me?.cwd ?? '',
+      tool,
+      at: new Date().toISOString(),
+      mcpPid: process.pid
+    })
+  } catch (err) {
+    process.stderr.write(`backseat-mcp: receipt not written: ${String(err)}\n`)
+  }
+}
+
 // ---------- server ----------
 
 export async function createServer(): Promise<McpServer> {
@@ -268,6 +289,7 @@ export async function createServer(): Promise<McpServer> {
         if (cand && visibleTo(cand.meta, me)) p = cand
       }
       if (!p) return { content: [{ type: 'text', text: tr('mcp.noSession', { root }) }] }
+      await recordFetch(root, p, me, 'backseat_latest')
       return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
     }
   )
@@ -310,6 +332,7 @@ export async function createServer(): Promise<McpServer> {
       const tr = await agentTranslator()
       const p = await loadPackage(root, basename(id))
       if (!p) return { content: [{ type: 'text', text: tr('mcp.notFound', { id }) }], isError: true }
+      await recordFetch(root, p, me, 'backseat_get')
       return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
     }
   )
@@ -329,6 +352,7 @@ export async function createServer(): Promise<McpServer> {
       const p = await waitForPackage(root, (timeoutSec ?? 300) * 1000, undefined, (pkg) => visibleTo(pkg.meta, me))
       const tr = await agentTranslator()
       if (!p) return { content: [{ type: 'text', text: tr('mcp.waitTimeout') }] }
+      await recordFetch(root, p, me, 'backseat_wait')
       return { content: packageContent(p, tr, true, includeOriginal ?? false) }
     }
   )
@@ -357,6 +381,7 @@ export async function createServer(): Promise<McpServer> {
       const p = await waitForPackage(root, (timeoutSec ?? 600) * 1000, requestId)
       const tr = await agentTranslator()
       if (!p) return { content: [{ type: 'text', text: tr('mcp.askTimeout', { seconds: timeoutSec ?? 600, requestId }) }] }
+      await recordFetch(root, p, me, 'backseat_ask')
       return { content: packageContent(p, tr, true, includeOriginal ?? false) }
     }
   )
