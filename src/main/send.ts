@@ -97,6 +97,8 @@ export async function sendToTarget(
     if (!target || !identity || target.method === 'clipboard' || !target.hwnd) {
       await clipboardImageAndText(pkg.annotatedPng, imageLine)
       tracker.reach('clipboard')
+      // A window that was already gone when its identity was read is a closed target, not "no target".
+      if (target?.hwnd && target.method !== 'clipboard' && !identity) return stopped('targetVerified', 'targetExpired', { targetExpired: true })
       return stopped('targetVerified', 'noTarget')
     }
     if (target.method === 'paste-path') await clipboardText(line)
