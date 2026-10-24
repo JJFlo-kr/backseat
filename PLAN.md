@@ -393,3 +393,10 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - 설치판: `dist\win-unpacked\Backseat.exe --selftest --selftest-no-stt --selftest-no-scroll` ok, node_modules가 없는 폴더로 복사한 설치판 mcp-server.js로 mcp-check `MCP_OK`
 - 사람이 확인할 것: 설치 파일 실행 후 시작 메뉴·바탕화면 아이콘, 재부팅 뒤 자동 시작, ChatGPT(Codex) 앱 앞에서 캡처 → 전송, Ctrl+T 대상 메뉴로 다른 창에 보내기·고정, 스포이트(EyeDropper)로 화면 밖 색 집기, 실제 AI가 screenshot.png/B 표시를 구분하는지
 - 테스트용 한국어 WAV: Windows TTS(Heami) 기본 속도로 "이 로그인 버튼…"을 만들면 Whisper가 "1호구인"으로 들을 때가 있다 → Rate -2, "화면 위쪽에 있는 로그인 버튼이 너무 작아요. 로그인 버튼을 한 1.5배 키워 주세요."
+
+## 20. 배포 준비: 라이선스·후원 (2026-10-24)
+- 방침: 완전 무료 + MIT, 자발적 후원(Buy Me a Coffee 또는 Ko-fi, GitHub Sponsors). 실행 때마다 뜨는 후원 팝업은 만들지 않는다.
+- `LICENSE`(MIT, wowls2162, 2026), `THIRD_PARTY_NOTICES.md`(Electron, transformers.js, onnxruntime, sharp, koffi, MCP SDK, zod, 내장 폰트 6종 OFL). 설치 프로그램은 `nsis.license`로 라이선스를 보여 주고, LICENSE.txt·THIRD_PARTY_NOTICES.md를 설치 폴더 resources에 넣는다.
+- 링크·앱 이름은 `src/shared/links.ts` 한 곳(`REPO_URL`, `ISSUES_URL`, `SUPPORT_URL`, `KOFI_URL`). 트레이 "후원하기 ☕"·"정보…"와 정보 창이 여기서 읽는다. README의 배지·후원 링크는 같은 값을 직접 적어 두었으므로 링크를 바꿀 때 README의 `REPLACE_ME`도 함께 바꾼다.
+- 정보 창(`src/main/about.ts`, `src/renderer/about/`): 420×360, 항상 하나. 버전·설명·GitHub/후원/문제 신고 버튼·라이선스 전문·서드파티 고지. 외부 열기는 main에서 http(s)만 허용. 자가 테스트가 창을 열어 버전·버튼 3개를 확인하고 `about.png`를 남긴다.
+- 사람이 할 일: 후원 계정(Buy Me a Coffee/Ko-fi) 만들기 → `SUPPORT_URL`·README 링크 교체, GitHub 저장소 만들기 → `REPO_URL`·`ISSUES_URL`·README 교체.
