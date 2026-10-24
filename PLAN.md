@@ -400,3 +400,47 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - 링크·앱 이름은 `src/shared/links.ts` 한 곳(`REPO_URL`, `ISSUES_URL`, `SUPPORT_URL`, `KOFI_URL`). 트레이 "후원하기 ☕"·"정보…"와 정보 창이 여기서 읽는다. README의 배지·후원 링크는 같은 값을 직접 적어 두었으므로 링크를 바꿀 때 README의 `REPLACE_ME`도 함께 바꾼다.
 - 정보 창(`src/main/about.ts`, `src/renderer/about/`): 420×360, 항상 하나. 버전·설명·GitHub/후원/문제 신고 버튼·라이선스 전문·서드파티 고지. 외부 열기는 main에서 http(s)만 허용. 자가 테스트가 창을 열어 버전·버튼 3개를 확인하고 `about.png`를 남긴다.
 - 사람이 할 일: 후원 계정(Buy Me a Coffee/Ko-fi) 만들기 → `SUPPORT_URL`·README 링크 교체, GitHub 저장소 만들기 → `REPO_URL`·`ISSUES_URL`·README 교체.
+
+## 21. 언어팩 1차 (2026-10-25, v0.4.0)
+1차 언어 9개: ko(원본), en(대체 언어), ja, zh-CN, zh-TW, es, pt-BR, de, fr. 2차(vi, id, tr, pl, it, ru, uk, hi)와 RTL(ar, he)은 범위 밖.
+
+### 구조
+- `src/shared/i18n.ts`(의존성 없음): `Locale`·`LOCALES`·`LOCALE_NAMES`, `t(key, params)`(`{name}` 치환), 복수형은 필요한 키만 `<key>.one/.other`(CLDR, `t(key, { n })`), 누락 키는 en → ko 순서로 대체하고 개발 실행에서만 콘솔 경고(키당 1회), 렌더러용 `applyDom()`(`data-i18n`, `data-i18n-title`, `-placeholder`, `-aria-label`, `<html lang>`).
+- 문구: `src/locales/<locale>.json`(평면 키 약 330개, 접두사 `tray. editor. timeline. colorpicker. palette. selector. about. brief. agents. send. mcp. requests. scroll. dialog. stt. app.`), `_context.json`(키마다 나오는 곳·길이 제한·자리표시자 뜻 — 번역자용), `GLOSSARY.md`.
+- 메인: `src/shared/bundles.ts`가 9개 JSON을 import(import attributes라 Node 테스트도 읽음), `src/main/locales.ts`가 화면 언어·브리프 언어·음성 언어를 정한다. 렌더러는 파일을 읽지 않고 `EditorInit/SelectorInit/AboutInfo`의 `locale`·`messages`(대체까지 합친 묶음)를 받는다 — main이 보낼 때 채우므로 언어를 바꾸면 다음 캡처부터 적용. 렌더러 모듈 최상위는 init보다 먼저 돌므로 `t()`는 init 뒤에만(라벨은 함수로 지연).
+- MCP 서버(plain Node)는 electron 없이 같은 bundles를 묶고, 호출마다 config.json의 `locale`·`briefLocale`을 읽는다('auto'면 `Intl`의 시스템 로캘).
+
+### 언어 결정 규칙
+- `config.locale`: 'auto'(기본) = `app.getLocale()`을 1차 언어로 매핑 — ko/en/ja/es/de/fr 그대로, zh-TW/zh-HK/zh-MO/zh-Hant → zh-TW, 그 밖의 zh → zh-CN, pt-*(pt-PT 포함) → pt-BR, 나머지 → en. 트레이 "언어 / Language"(자동 + 9개, 이름은 각 언어로)에서 바꾸면 트레이는 즉시 갱신.
+- `config.briefLocale`: 'follow'(기본, 화면 언어) | 'en'(트레이 "브리프는 영어로"). brief.md·붙여넣는 지시문·이미지 붙여넣기 앞 표시·MCP 응답이 이 언어. brief.md 구조·섹션은 언어와 무관하게 같고, 언어 표시 줄은 없다.
+- `config.sttLanguage`: 'auto'(기본, 화면 언어의 Whisper 언어명) | 'detect'(Whisper 자동 감지) | 'korean' 등. 편집기는 언어를 보내지 않고 main이 정한다. config v1의 'korean'(옛 기본값)은 v2에서 'auto'로 바뀐다.
+- 지시어(`align.ts`): 8개 언어 목록(`DEICTIC_WORDS`), 기본 정규식은 전부 합친 것(말하는 언어가 화면 언어와 다를 수 있음). 띄어쓰기 언어는 유니코드 글자 경계(`\b`는 aquí·là를 못 다룸), ko/ja/zh는 경계 없이.
+- 글꼴: Noto Sans JP/SC/TC 400/700을 `@fontsource`로 넣되 CSS를 동적 import(해당 글꼴을 쓸 때만 @font-face 추가). 텍스트 도구 기본 글꼴 ja → JP, zh-CN → SC, zh-TW → TC, 나머지 Noto Sans KR(라틴 확장 포함). 빌드 플러그인 `woff2Only`가 @fontsource CSS의 `.woff` 대체본을 빼서(Chromium은 woff2만 씀) 기존 한글 글꼴분 약 10 MB도 줄였다.
+- 설치 파일 크기: 0.3.2 306,734,694 B → 0.4.0 243,300,948 B (−63.4 MB, −21%). 원인 둘: (1) `@fontsource/*`가 `dependencies`에 있어서 electron-builder가 날 글꼴 패키지(node_modules, 수천 개 파일)를 app.asar에 통째로 넣고 있었다 — 렌더러 번들(out/renderer)이 이미 필요한 woff2를 갖고 있으므로 `devDependencies`로 옮김(일본어·중국어를 dependencies로 넣었을 땐 535 MB까지 커졌음). (2) .woff 대체본 제거. 렌더러 번들 자체는 21 MB → 28 MB(CJK woff2 +약 22 MB, .woff −약 10 MB).
+- 툴바: 820 px에서 넘치면 `#toolbar.tight`(버튼 여백·글자 조금 줄임)로 바뀐다. es/pt-BR/de/fr이 해당.
+
+### 용어집 (요약, 전체는 `src/locales/GLOSSARY.md`)
+| ko | en | ja | zh-CN | zh-TW | es | pt-BR | de | fr |
+|---|---|---|---|---|---|---|---|---|
+| 캡처 | capture | キャプチャ | 截图 | 擷取 | captura | captura | Screenshot / erfassen | capture |
+| 주석 | annotation | 注釈 | 标注 | 標註 | anotación | anotação | Annotation | annotation |
+| 브리프 | brief | ブリーフ | 简报 | brief | brief | brief | Briefing | brief |
+| 세션 패키지 | session package | セッション | 会话 | 工作階段 | sesión | sessão | Sitzung | session |
+| 전송 / 대상 | Send / target | 送信 / 送信先 | 发送 / 目标 | 傳送 / 目標 | Enviar / destino | Enviar / destino | Senden / Ziel | Envoyer / cible |
+| 에이전트 | agent | エージェント | 智能体 | 代理 | agente | agente | Agent | agent |
+| 메모 | note | メモ | 备注 | 備註 | nota | nota | Notiz | note |
+| 녹음 / 녹화 | record / video | 録音 / 動画 | 录音 / 视频 | 錄音 / 影片 | grabar / video | gravar / vídeo | Aufnahme / Video | enregistrement vocal / vidéo |
+| 고정 | pin | 固定 | 置顶·固定 | 釘選 | fijar | fixar | anheften | épingler |
+| 전/후 비교 | before/after | 前後比較 | 前后对比 | 前後比較 | antes/después | antes/depois | Vergleich | avant/après |
+
+### 검증
+- `npm test` 61개(언어팩: 9개 파일이 en과 같은 키·같은 자리표시자·빈 문자열 없음·복수형 짝·_context 존재, 로캘 매핑, 대체 순서, 지시어 8개 언어).
+- `npm run selftest -- --selftest-locale=all --selftest-shots=<dir>`: 언어마다 선택 화면·편집기(타임라인 포함)·정보 창 스크린샷, `<html lang>`, 화면에 원시 키가 보이지 않는지, 툴바 3줄·대상 바·비교 바가 820 px에서 넘치지 않는지, Noto Sans KR/JP/SC/TC가 실제로 로드됐는지, 그 언어의 brief.md 생성. 기본 자가 테스트는 한국어로 고정(한국어 문구 검사).
+
+### 2차 언어 추가 방법
+1. `src/shared/i18n.ts`의 `LOCALES`·`LOCALE_NAMES`에 코드 추가, `matchSystemLocale`에 매핑(예: 'vi'), `src/shared/bundles.ts`에 import.
+2. `src/locales/<code>.json`: `en.json` + `_context.json` + `GLOSSARY.md`를 주고 번역(버튼은 영어 길이 이내). `npm test`가 키·자리표시자를 검사.
+3. `src/main/locales.ts`의 `WHISPER_LANG`(그리고 필요하면 `STT_LANGUAGES`, `stt.lang.*` 키), `align.ts`의 `DEICTIC_WORDS`.
+4. 글리프: 내장 글꼴에 없는 문자(예: 힌디 데바나가리)는 `@fontsource/noto-sans-<script>`를 `LAZY_FONT_CSS`·`LOCALE_FONT`에 추가.
+5. RTL(ar, he)은 따로: `<html dir="rtl">`, 툴바·대상 메뉴·타임라인 배치 반전, 브리프 좌표 설명 검토가 필요하다.
+6. `--selftest-locale=<code>`로 스크린샷·넘침 확인.

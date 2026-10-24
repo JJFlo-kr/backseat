@@ -21,6 +21,9 @@ authoritative.
 | @fontsource/nanum-gothic (Nanum Gothic) | 5.3.0 | OFL-1.1 | https://fontsource.org/fonts/nanum-gothic |
 | @fontsource/nanum-pen-script (Nanum Pen Script) | 5.3.0 | OFL-1.1 | https://fontsource.org/fonts/nanum-pen-script |
 | @fontsource/noto-sans-kr (Noto Sans KR) | 5.3.1 | OFL-1.1 | https://fontsource.org/fonts/noto-sans-kr |
+| @fontsource/noto-sans-jp (Noto Sans JP) | 5.3.1 | OFL-1.1 | https://fontsource.org/fonts/noto-sans-jp |
+| @fontsource/noto-sans-sc (Noto Sans SC) | 5.3.1 | OFL-1.1 | https://fontsource.org/fonts/noto-sans-sc |
+| @fontsource/noto-sans-tc (Noto Sans TC) | 5.3.1 | OFL-1.1 | https://fontsource.org/fonts/noto-sans-tc |
 
 The Electron runtime shipped in the installer also carries Chromium's and Node.js's own
 third-party licenses (`LICENSES.chromium.html` next to the executable).
@@ -68,7 +71,7 @@ https://github.com/lovell/sharp-libvips and https://www.gnu.org/licenses/lgpl-3.
 
 ## SIL Open Font License 1.1 (bundled fonts)
 
-The six fonts the editor can burn into screenshots are bundled through Fontsource under the
+The nine fonts the editor can burn into screenshots are bundled through Fontsource under the
 SIL Open Font License, Version 1.1 (https://openfontlicense.org). The fonts are used
 unmodified and are not sold on their own.
 
@@ -76,4 +79,4 @@ unmodified and are not sold on their own.
 - Do Hyeon: Copyright 2018 The Do Hyeon Project Authors
 - Jua: Copyright 2018 The BM JUA Project Authors
 - Nanum Gothic and Nanum Pen Script: Copyright © 2010 NHN Corporation. All rights reserved. Font designed by Sandoll Communications Inc.
-- Noto Sans KR: Copyright Google Inc.; licensed under the SIL OFL 1.1
+- Noto Sans KR, Noto Sans JP, Noto Sans SC, Noto Sans TC: Copyright Google Inc.; licensed under the SIL OFL 1.1
