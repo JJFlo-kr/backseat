@@ -5,6 +5,8 @@ import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
+import { ColorPicker, colorButton, setColorButton } from './colorpicker'
+import { normalizeHex } from '../../shared/palette'
 import '@fontsource/noto-sans-kr/500.css'
 import '@fontsource/noto-sans-kr/700.css'
 import '@fontsource/nanum-gothic/700.css'
@@ -95,7 +97,6 @@ const player = byId<HTMLAudioElement>('player')
 const baseCtx = ctxOf(base, true) // blur and the compare diff read it back
 const inkCtx = ctxOf(ink)
 const toolBtns = document.querySelectorAll<HTMLButtonElement>('[data-tool]')
-const colorBtns = document.querySelectorAll<HTMLButtonElement>('[data-color]')
 const widthInput = byId<HTMLInputElement>('width')
 const widthDot = byId<HTMLElement>('width-dot')
 const fontSelect = byId<HTMLSelectElement>('font')
@@ -104,18 +105,32 @@ const styleBtns = Array.from(byId('text-style').querySelectorAll<HTMLButtonEleme
 const textBar = byId<HTMLElement>('textbar')
 const boldBtn = byId<HTMLButtonElement>('text-bold')
 const italicBtn = byId<HTMLButtonElement>('text-italic')
-const bgInput = byId<HTMLInputElement>('text-bg')
+const colorBtn = colorButton({ id: 'color', label: '', title: '색 (펜·도형·번호·글자)' })
+byId('color-group').append(colorBtn)
+const bgBtn = colorButton({ id: 'text-bg', label: '', title: '배경 상자 색' })
 const bgAutoBtn = byId<HTMLButtonElement>('text-bg-auto')
+bgAutoBtn.before(bgBtn)
 const bgOpacityInput = byId<HTMLInputElement>('text-bg-opacity')
 const invertBtn = byId<HTMLButtonElement>('text-invert')
-const outlineInput = byId<HTMLInputElement>('text-outline')
+const outlineBtn = colorButton({ id: 'text-outline', label: '', title: '윤곽선 색' })
+byId('outline-group').append(outlineBtn)
 const shadowBtn = byId<HTMLButtonElement>('text-shadow')
 
 let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
 let t0 = 0
 let tool: Tool = 'pen'
-let color = '#E5484D'
+const DEFAULT_COLOR = '#E5484D'
+const LS_COLOR = 'backseat.color'
+/** The last pen colour the user picked (localStorage; storage may be unavailable). */
+function loadColor(): string {
+  try {
+    return normalizeHex(localStorage.getItem(LS_COLOR) ?? '') ?? DEFAULT_COLOR
+  } catch {
+    return DEFAULT_COLOR
+  }
+}
+let color = loadColor()
 let widthCss = 3
 let fontFamily: string | undefined = DEFAULT_FONT // undefined = system UI font
 let fontSizeCss = 24
@@ -814,14 +829,19 @@ function setCompareMode(m: CompareMode): void {
 
 const CMP_LABELS: Record<CompareMode, string> = { overlay: '겹치기', wipe: '와이프', diff: '차이' }
 
-function flatten(): string {
+/** Base image + every annotation on one canvas (image px). */
+function flattenCanvas(): HTMLCanvasElement {
   const out = document.createElement('canvas')
   out.width = base.width
   out.height = base.height
-  const ctx = ctxOf(out)
+  const ctx = ctxOf(out, true)
   ctx.drawImage(base, 0, 0)
   drawAll(ctx, null) // always the full picture, even while scrubbed
-  return out.toDataURL('image/png')
+  return out
+}
+
+function flatten(): string {
+  return flattenCanvas().toDataURL('image/png')
 }
 
 /** The original capture with only the blur (privacy) annotations applied: no other annotations, no tags. */
@@ -999,11 +1019,12 @@ function commitPendingText(): void {
 
 const isToolbarControl = (n: EventTarget | null): boolean =>
   n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range') ||
-  (n instanceof HTMLElement && n.closest('#toolbar2, #textbar') !== null)
+  (n instanceof HTMLElement && n.closest('#toolbar2, #textbar') !== null) ||
+  (n instanceof Node && picker.root.contains(n)) // the colour popover works on the open text box
 
-/** Controls that need the real mouse-down (focus / drag): selects, sliders and colour inputs. */
+/** Controls that need the real mouse-down (focus / drag): selects and sliders (the colour popover has its own handling). */
 const isNativeToolbarControl = (n: EventTarget | null): boolean =>
-  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && (n.type === 'range' || n.type === 'color'))
+  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range')
 
 /** Shift+Enter: insert a line break at the caret (execCommand keeps the box's own undo history). */
 function insertNewline(box: HTMLTextAreaElement): void {
@@ -1038,6 +1059,7 @@ function openTextBox(left: number, top: number, at: Point, index: number, orig: 
   })
   box.addEventListener('blur', (ev) => {
     if (isToolbarControl(ev.relatedTarget)) return // picking a font / size / style keeps the box open
+    if (picker.isOpen()) return // the colour popover (or its eyedropper) took the focus: the box stays open
     finishText(sess, true)
   })
   textSession = sess
@@ -1796,23 +1818,25 @@ function syncTextBar(): void {
   boldBtn.setAttribute('aria-pressed', String(textBold ?? defaultBold(fontFamily)))
   italicBtn.setAttribute('aria-pressed', String(textItalic))
   shadowBtn.setAttribute('aria-pressed', String(textShadow))
-  bgInput.value = (textBg ?? auto.hex).toLowerCase()
+  setColorButton(bgBtn, textBg ?? auto.hex)
+  bgBtn.classList.toggle('auto', textBg === undefined)
+  bgBtn.title = textBg === undefined ? '배경 상자 색 (지금은 자동)' : '배경 상자 색'
   bgAutoBtn.setAttribute('aria-pressed', String(textBg === undefined))
   bgOpacityInput.value = String(Math.round((textBgOpacity ?? auto.alpha) * 100))
-  outlineInput.value = (textOutline ?? '#000000').toLowerCase()
+  setColorButton(outlineBtn, textOutline ?? '#000000')
   const dimGroup = (el: HTMLElement, off: boolean): void => {
     const g = el.closest<HTMLElement>('.group')
     if (!g) return
     g.classList.toggle('dim', off)
     g.inert = off // not clickable, not focusable: a click falls through to the bar, which keeps the box focused
   }
-  dimGroup(bgInput, !plate)
-  dimGroup(outlineInput, textStyle !== 'outline')
+  dimGroup(bgBtn, !plate)
+  dimGroup(outlineBtn, textStyle !== 'outline')
 }
 
 function syncToolbar(): void {
   toolBtns.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool))
-  colorBtns.forEach((b) => b.classList.toggle('active', b.dataset.color === color))
+  setColorButton(colorBtn, color)
   widthInput.value = String(widthCss)
   widthDot.style.width = widthDot.style.height = `${widthCss}px`
   widthDot.style.background = color
@@ -1852,7 +1876,6 @@ function setColor(c: string, refocus = false): void {
   color = c
   refreshTextSession(refocus)
 }
-colorBtns.forEach((b) => b.addEventListener('click', () => setColor(b.dataset.color ?? color)))
 function setWidth(v: number): void {
   widthCss = Math.min(24, Math.max(1, Math.round(v)))
   syncToolbar()
@@ -1941,20 +1964,16 @@ italicBtn.addEventListener('click', () => setTextItalic(!textItalic))
 shadowBtn.addEventListener('click', () => setTextShadow(!textShadow))
 invertBtn.addEventListener('click', invertTextColors)
 bgAutoBtn.addEventListener('click', () => setTextBg(textBg === undefined ? autoPlate(color).hex : undefined))
-bgInput.addEventListener('input', () => setTextBg(bgInput.value, false))
-outlineInput.addEventListener('input', () => setTextOutline(outlineInput.value, false))
 bgOpacityInput.addEventListener('input', () => setTextBgOpacity(Number(bgOpacityInput.value) / 100, false))
-// native controls took the focus: give it back to the open box once they are done
-for (const el of [bgInput, outlineInput, bgOpacityInput]) {
-  el.addEventListener('change', () => textSession?.box.focus())
-  el.addEventListener('blur', (ev) => {
-    const sess = textSession
-    if (!sess || ev.relatedTarget === sess.box || isToolbarControl(ev.relatedTarget)) return
-    if (!document.hasFocus()) return // the colour dialog took the window focus: the box stays open
-    finishText(sess, true)
-  })
-}
-window.addEventListener('focus', () => { // back from the colour dialog
+// the slider is a native control: give the focus back to the open box once it is done
+bgOpacityInput.addEventListener('change', () => textSession?.box.focus())
+bgOpacityInput.addEventListener('blur', (ev) => {
+  const sess = textSession
+  if (!sess || ev.relatedTarget === sess.box || isToolbarControl(ev.relatedTarget)) return
+  if (!document.hasFocus()) return
+  finishText(sess, true)
+})
+window.addEventListener('focus', () => { // back from the popover's native colour dialog
   const ae = document.activeElement
   if (textSession && ae instanceof HTMLInputElement && ae.type === 'color') textSession.box.focus()
 })
@@ -1962,6 +1981,74 @@ window.addEventListener('focus', () => { // back from the colour dialog
 for (const bar of [byId('toolbar'), byId('toolbar2'), textBar]) {
   bar.addEventListener('mousedown', (e) => { if (!isNativeToolbarControl(e.target)) e.preventDefault() })
 }
+
+// ---------- colour popover ----------
+
+const picker = new ColorPicker()
+
+/** One-shot "pick a colour from the capture" mode (the popover's eyedropper when window.EyeDropper is missing). */
+function sampleFromCanvas(): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!init) { resolve(null); return }
+    setStatus('캡처 화면을 클릭해 색을 집으세요 (Esc 취소)')
+    stage.classList.add('sampling')
+    let done = false
+    const finish = (c: string | null): void => {
+      if (done) return
+      done = true
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('mousedown', onMouse, true)
+      window.removeEventListener('keydown', onKey, true)
+      stage.classList.remove('sampling')
+      setStatus(c ? `색 ${c}` : '색 집기 취소')
+      resolve(c)
+    }
+    const swallowClick = (ev: MouseEvent): void => ev.stopPropagation() // the click that ends sampling must not hit a button
+    const onMouse = (ev: MouseEvent): void => ev.preventDefault() // keep the focus (an open text box stays open)
+    const onDown = (ev: PointerEvent): void => {
+      ev.preventDefault()
+      ev.stopImmediatePropagation() // never reaches the ink handler: no stroke, no move-drag
+      document.addEventListener('click', swallowClick, { capture: true, once: true })
+      setTimeout(() => document.removeEventListener('click', swallowClick, true), 400)
+      if (ev.target !== ink || ev.button !== 0) { finish(null); return }
+      const p = toImg(ev)
+      const x = Math.floor(p.x)
+      const y = Math.floor(p.y)
+      if (x < 0 || y < 0 || x >= ink.width || y >= ink.height) { finish(null); return }
+      const d = ctxOf(flattenCanvas(), true).getImageData(x, y, 1, 1).data
+      finish(normalizeHex(`rgb(${d[0]},${d[1]},${d[2]})`))
+    }
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== 'Escape') return
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      finish(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('mousedown', onMouse, true)
+    window.addEventListener('keydown', onKey, true)
+  })
+}
+
+/** Open the popover under `anchor`; `onPick` receives every live pick. The open text box keeps its focus and gets it back on close. */
+function openPicker(anchor: HTMLButtonElement, title: string, value: string, onPick: (c: string) => void): void {
+  anchor.setAttribute('aria-expanded', 'true')
+  picker.open({
+    anchor, value, title, onPick,
+    sampleFallback: sampleFromCanvas,
+    onClose: () => {
+      anchor.setAttribute('aria-expanded', 'false')
+      if (textSession && document.activeElement !== textSession.box) textSession.box.focus()
+    }
+  })
+}
+
+colorBtn.addEventListener('click', () => openPicker(colorBtn, '색', color, (c) => {
+  setColor(c, false)
+  try { localStorage.setItem(LS_COLOR, c) } catch { /* storage unavailable */ }
+}))
+bgBtn.addEventListener('click', () => openPicker(bgBtn, '배경 상자 색', textBg ?? autoPlate(color).hex, (c) => setTextBg(c, false)))
+outlineBtn.addEventListener('click', () => openPicker(outlineBtn, '윤곽선 색', textOutline ?? '#000000', (c) => setTextOutline(c, false)))
 
 const hotkeys = new Hotkeys([
   {
@@ -2062,6 +2149,10 @@ window.backseat.editor.onInit((data) => {
         crop: { ...crop },
         meta: init ? exportMeta() : null,
         tool,
+        color,
+        textBg: textBg ?? null,
+        textOutline: textOutline ?? null,
+        pickerOpen: picker.isOpen(),
         cropDrag: cropDrag !== null,
         pointer: { ...pointerCounts },
         compare: { available: compareImg !== null, on: cmpOn, mode: cmpMode, diffPercent: compareImg ? diffPercent() : null }
@@ -2070,6 +2161,8 @@ window.backseat.editor.onInit((data) => {
       crop: (x: number, y: number, w: number, h: number) => applyCropSelection({ x, y, width: w, height: h }),
       /** Commit annotations (image px of the current canvas) as ONE history step; undo removes them together. */
       addAnnotations: (list: Annotation[]) => { commit('주석 추가 (디버그)', [...annotations, ...list]) },
+      /** Restore the pen colour without the popover (self-test cleanup). */
+      setColor: (c: string) => setColor(c, false),
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
       payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
     }

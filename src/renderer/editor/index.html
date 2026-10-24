@@ -20,10 +20,8 @@
         <button type="button" class="btn" data-tool="crop" title="자르기">자르기</button>
         <button type="button" class="btn" data-tool="eraser" title="지우개 (E)">지우개</button>
       </div>
-      <div class="group" role="group" aria-label="색상">
-        <button type="button" class="swatch active" data-color="#E5484D" style="--c: #E5484D" title="빨강" aria-label="빨강"></button>
-        <button type="button" class="swatch" data-color="#F5A623" style="--c: #F5A623" title="노랑" aria-label="노랑"></button>
-        <button type="button" class="swatch" data-color="#2F80ED" style="--c: #2F80ED" title="파랑" aria-label="파랑"></button>
+      <div class="group" id="color-group" role="group" aria-label="색상">
+        <!-- #color: colorButton() is mounted here by editor.ts -->
       </div>
       <div class="group" role="group" aria-label="히스토리">
         <button type="button" class="btn" id="undo" data-command="undo" aria-label="되돌리기">↶</button>
@@ -76,16 +74,16 @@
           <button type="button" role="radio" aria-checked="false" data-text-style="plain" title="글자만 그립니다"><span class="fx fx-plain">가</span>효과 없음</button>
         </div>
       </div>
-      <div class="group" role="group" aria-label="배경">
+      <div class="group" id="bg-group" role="group" aria-label="배경">
         <span class="lbl">배경</span>
-        <input type="color" id="text-bg" class="chip" value="#ffffff" title="배경 상자 색" aria-label="배경 상자 색" />
+        <!-- #text-bg: colorButton() mounted by editor.ts -->
         <button type="button" class="tgl tgl-auto" id="text-bg-auto" aria-pressed="true" title="자동: 글자색에 맞춰 어두운/흰 상자를 고릅니다">자동</button>
         <input type="range" id="text-bg-opacity" min="10" max="100" step="1" value="85" title="배경 불투명도" aria-label="배경 불투명도" />
       </div>
       <button type="button" class="btn tgl-btn" id="text-invert" title="글자색과 배경색 맞바꾸기">⇄ 반전</button>
-      <div class="group" role="group" aria-label="윤곽선">
+      <div class="group" id="outline-group" role="group" aria-label="윤곽선">
         <span class="lbl">윤곽선</span>
-        <input type="color" id="text-outline" class="chip" value="#000000" title="윤곽선 색" aria-label="윤곽선 색" />
+        <!-- #text-outline: colorButton() mounted by editor.ts -->
       </div>
       <button type="button" class="tgl tgl-shadow" id="text-shadow" aria-pressed="false" title="그림자">그림자</button>
     </div>
