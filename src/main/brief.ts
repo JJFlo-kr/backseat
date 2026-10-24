@@ -79,7 +79,7 @@ export function buildBrief(
   const lines: string[] = []
   lines.push(`# Backseat brief ${meta.capturedAt}`)
   lines.push(
-    `> 주의: annotated.png = 원래 화면 + 사용자가 Backseat로 그린 주석. 빨간(또는 선택한 색) 선·화살표·사각형, 보라 테두리 번호 원, 왼쪽 위에 보라 "B" 표시가 붙은 글자는 모두 사용자가 추가한 것이며 원래 화면에는 없다.${shot ? ` 원래 화면은 ${shot}.` : ''}`
+    `> 주의: 선·화살표·사각형, 보라 테두리 번호 원, 왼쪽 위 보라 "B" 표시 글자는 사용자가 Backseat로 그린 주석이다(원래 화면에 없음).${shot ? ` 원래 화면은 ${shot}.` : ''}`
   )
   const modeLabel =
     meta.mode === 'window' ? '창 캡처' : meta.mode === 'full' ? '전체 화면' : meta.mode === 'scroll' ? '스크롤 캡처' : '영역 캡처'
