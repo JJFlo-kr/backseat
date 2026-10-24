@@ -1,16 +1,16 @@
 import { app, globalShortcut, session } from 'electron'
-import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult } from '../shared/types'
-import { asFallback, buildCandidates, classifyTarget, getLastTarget, matchPinned, rememberTarget } from './agents'
+import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult, WindowInfo } from '../shared/types'
+import { asFallback, buildCandidates, classifyTarget, getLastTarget, matchPinned, rememberTarget, withMcpAgent } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
-import { applyLoginItem, ensureConfig, loadSettings } from './config'
+import { applyLoginItem, ensureConfig, loadSettings, sessionsRoot } from './config'
 import { createEditorWindow, installEditorIpc } from './editor'
 import { pruneRegistry } from './mcp/registry'
-import { getForegroundWindow, isWindow, listTopLevelWindows } from './native/win32'
-import { startRequestWatcher, takePendingRequest } from './requests'
+import { getForegroundWindow, isWindow, listTopLevelWindows, processParents } from './native/win32'
+import { requestForCapture, startRequestWatcher } from './requests'
 import { scrollCapture } from './scroll'
 import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
-import { latestCompareSource, sessionsRoot } from './sessions'
+import { latestCompareSource } from './sessions'
 import { createTray } from './tray'
 import { applyLocale } from './locales'
 
@@ -18,8 +18,13 @@ let capturing = false
 /** Last confirmed selection, for "마지막 영역 다시 캡처" (before/after comparisons). */
 let lastSelection: SelectionResult | null = null
 
-/** Merge the window-based guess with agents registered through backseat-mcp. */
-async function pickTarget(guess: AgentTarget | null): Promise<AgentTarget | null> {
+/**
+ * Bind the window-based guess to an agent registered through backseat-mcp, but only when that agent
+ * provably runs in the guessed window (process tree; Codex review F03). Otherwise the guess is unchanged
+ * and the pasted line carries file paths, which any agent can read.
+ */
+async function pickTarget(guess: AgentTarget | null, windows: readonly WindowInfo[]): Promise<AgentTarget | null> {
+  if (!guess?.hwnd) return guess
   let registered: Awaited<ReturnType<typeof pruneRegistry>> = []
   try {
     registered = await pruneRegistry(sessionsRoot())
@@ -27,22 +32,9 @@ async function pickTarget(guess: AgentTarget | null): Promise<AgentTarget | null
     registered = []
   }
   if (registered.length === 0) return guess
-  const agent = registered[registered.length - 1]
-  const mcp = { id: agent.id, name: agent.name, cwd: agent.cwd }
-  if (guess && guess.method !== 'clipboard') {
-    // Terminal/editor in front AND an MCP agent listening: paste a short MCP instruction there.
-    return { ...guess, mcp, label: `${guess.label} · MCP ${agent.name}`, confidence: Math.max(guess.confidence, 0.9) }
-  }
-  return {
-    kind: 'claude-code',
-    label: `${agent.name} (MCP) · ${agent.cwd}`,
-    hwnd: 0,
-    title: '',
-    process: '',
-    method: 'clipboard',
-    confidence: 0.6,
-    mcp
-  }
+  const win = windows.find((w) => w.hwnd === guess.hwnd) ?? null
+  const parents = processParents()
+  return withMcpAgent(guess, registered, win, (pid) => parents.get(pid))
 }
 
 /**
@@ -71,9 +63,9 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
     if (!guess && prev && isWindow(prev.hwnd)) guess = asFallback(prev)
     // lastTarget keeps the original (undecorated) target; only the object handed to the editor is decorated.
     if (detected) rememberTarget(detected)
-    const target = await pickTarget(guess)
+    const target = await pickTarget(guess, windows)
     const candidates = buildCandidates(windows, { selfPid: process.pid, excludeHwnd: target?.hwnd })
-    const ask = request ?? takePendingRequest() ?? undefined
+    const ask = requestForCapture(request)
     const caps = await captureAllDisplays()
     let sel: SelectionResult | null
     if (mode === 'last') {
@@ -179,7 +171,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
         console.error(`[backseat] could not register hotkey ${accel}`)
       }
     }
-    void startRequestWatcher(settings.sessionsRoot, (r) => void startCapture('rect', r))
+    void startRequestWatcher(sessionsRoot(), (r) => void startCapture('rect', r))
     if (process.argv.includes('--capture')) void startCapture()
   })
 }

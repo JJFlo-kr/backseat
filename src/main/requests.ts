@@ -22,6 +22,18 @@ export function takePendingRequest(): AskRequest | null {
   return r
 }
 
+/**
+ * The request a new capture answers: the one it was started for (notification click), else the pending one.
+ * Either way it is consumed by id, so the next ordinary capture does not carry it again (Codex review F07).
+ * Policy: a capture that is then cancelled has used the request up; the agent's backseat_ask times out and
+ * the agent can ask again.
+ */
+export function requestForCapture(explicit?: AskRequest): AskRequest | undefined {
+  const r = explicit ?? pendingRequest ?? undefined
+  if (r && pendingRequest?.requestId === r.requestId) pendingRequest = null
+  return r
+}
+
 export function peekPendingRequest(): AskRequest | null {
   return pendingRequest
 }

@@ -11,7 +11,7 @@ const realReadFile = realFs.readFile
 import { existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { installFakeElectron } from './support/fake-electron.ts'
-import type { ExportPayload } from '../src/shared/types.ts'
+import type { AgentTarget, ExportPayload } from '../src/shared/types.ts'
 
 const fake = installFakeElectron()
 const custom = join(fake.base, 'custom-sessions')
@@ -115,4 +115,25 @@ test('F04: a failed write leaves no half package behind', async () => {
   } finally {
     slow.delete('strokes.json')
   }
+})
+
+test('F08: the writer uses the sessions root from config.json', async () => {
+  const { loadSettings } = await import('../src/main/config.ts')
+  assert.equal(loadSettings().sessionsRoot, custom)
+  assert.equal(sessionsRoot(), custom)
+  const pkg = await writeSessionPackage(payload('custom root'), null)
+  assert.ok(pkg.dir.startsWith(custom), pkg.dir)
+})
+
+test('F03: the MCP agent a package was handed to is recorded as its recipient', async () => {
+  const root = freshRoot()
+  const target: AgentTarget = {
+    kind: 'claude-code', label: 'T', hwnd: 5, title: 'T', process: 'WindowsTerminal.exe', method: 'paste-path', confidence: 0.9,
+    mcp: { id: '900', name: 'Claude Code', cwd: 'D:/work/backseat' }
+  }
+  const pkg = await writeSessionPackage(payload('to mcp'), target, root)
+  const meta = JSON.parse(await realReadFile(pkg.metaJson, 'utf8')) as { recipient?: unknown }
+  assert.deepEqual(meta.recipient, { agentId: '900', name: 'Claude Code', cwd: 'D:/work/backseat' })
+  const plain = await writeSessionPackage(payload('to anyone'), null, root)
+  assert.equal((JSON.parse(await realReadFile(plain.metaJson, 'utf8')) as { recipient?: unknown }).recipient, undefined)
 })

@@ -5,7 +5,6 @@
 // directory rename once every file is complete, so readers (backseat-mcp, latest.txt users) only
 // ever see whole packages. Ids are unique per send (time + milliseconds + random) and a published
 // folder is never written again.
-import { app } from 'electron'
 import { randomBytes } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, readFile, rm, writeFile } from 'fs/promises'
@@ -15,6 +14,9 @@ import { alignSegments } from '../shared/align'
 import { buildBrief } from './brief'
 import { renameRetry, writeFileAtomic } from './fsutil'
 import { briefTranslator } from './locales'
+import { sessionsRoot } from './config'
+
+export { sessionsRoot }
 
 
 export interface SessionPackage {
@@ -28,10 +30,6 @@ export interface SessionPackage {
   screenshotPng?: string
   audioFile?: string
   transcriptJson?: string
-}
-
-export function sessionsRoot(): string {
-  return join(app.getPath('pictures'), 'Backseat', 'sessions')
 }
 
 function audioExt(mime: string): string {
@@ -96,7 +94,20 @@ async function writeFiles(
   const files = [...out.map(([name]) => name), 'meta.json']
   out.push([
     'meta.json',
-    JSON.stringify({ id, memo: payload.memo, requestId: payload.meta.request?.requestId, meta: payload.meta, target, files }, null, 2)
+    JSON.stringify(
+      {
+        id,
+        memo: payload.memo,
+        requestId: payload.meta.request?.requestId,
+        // The MCP agent this package was handed to (backseat-mcp shows it to that agent only); absent = anyone.
+        recipient: target?.mcp ? { agentId: target.mcp.id, name: target.mcp.name, cwd: target.mcp.cwd } : undefined,
+        meta: payload.meta,
+        target,
+        files
+      },
+      null,
+      2
+    )
   ])
   await Promise.all(out.map(([name, data]) => (typeof data === 'string' ? writeFile(join(staging, name), data, 'utf8') : writeFile(join(staging, name), data))))
   return pkg

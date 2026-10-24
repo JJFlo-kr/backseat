@@ -19,6 +19,9 @@ const VK_CONTROL = 0x11
 const VK_RETURN = 0x0d
 const VK_V = 0x56
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+const TH32CS_SNAPPROCESS = 0x2
+/** sizeof(PROCESSENTRY32W) on x64; th32ProcessID at 8, th32ParentProcessID at 32. */
+const PROCESSENTRY32W_SIZE = 568
 const SKIP_CLASSES = new Set(['Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'Windows.UI.Core.CoreWindow'])
 
 type Fn = (...args: unknown[]) => unknown
@@ -47,6 +50,10 @@ interface Api {
   SendInput: Fn
   PostMessageW: Fn
   WindowFromPoint: Fn
+  CreateToolhelp32Snapshot: Fn
+  Process32FirstW: Fn
+  Process32NextW: Fn
+  CloseHandleI: Fn
 }
 
 let api: Api | null | undefined
@@ -85,7 +92,12 @@ function load(): Api | null {
       GetCursorPos: user32.func('bool GetCursorPos(_Out_ uint8_t *pt)') as Fn,
       SendInput: user32.func('uint32_t SendInput(uint32_t n, _In_ uint8_t *inputs, int cb)') as Fn,
       PostMessageW: user32.func('bool PostMessageW(uintptr_t hwnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)') as Fn,
-      WindowFromPoint: user32.func('uintptr_t WindowFromPoint(int64_t pt)') as Fn
+      WindowFromPoint: user32.func('uintptr_t WindowFromPoint(int64_t pt)') as Fn,
+      // intptr_t: INVALID_HANDLE_VALUE is -1
+      CreateToolhelp32Snapshot: kernel32.func('intptr_t CreateToolhelp32Snapshot(uint32_t flags, uint32_t pid)') as Fn,
+      Process32FirstW: kernel32.func('bool Process32FirstW(intptr_t h, _Inout_ uint8_t *pe)') as Fn,
+      Process32NextW: kernel32.func('bool Process32NextW(intptr_t h, _Inout_ uint8_t *pe)') as Fn,
+      CloseHandleI: kernel32.func('bool CloseHandle(intptr_t h)') as Fn
     }
   } catch (err) {
     console.error('[backseat] win32 layer unavailable:', err)
@@ -182,6 +194,33 @@ export function listTopLevelWindows(): WindowInfo[] {
       /* skip broken window */
     }
     hwnd = a.GetWindow(hwnd, GW_HWNDNEXT) as number
+  }
+  return out
+}
+
+/**
+ * pid -> parent pid for every running process (one Toolhelp snapshot). Used to prove that an MCP agent runs
+ * inside a given window (src/main/agents.ts agentForWindow). Empty off Windows or on failure.
+ */
+export function processParents(): Map<number, number> {
+  const out = new Map<number, number>()
+  const a = load()
+  if (!a) return out
+  const snap = a.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) as number
+  if (snap === -1 || !snap) return out
+  try {
+    const pe = new Uint8Array(PROCESSENTRY32W_SIZE)
+    const view = new DataView(pe.buffer)
+    view.setUint32(0, PROCESSENTRY32W_SIZE, true)
+    let ok = Boolean(a.Process32FirstW(snap, pe))
+    while (ok) {
+      out.set(view.getUint32(8, true), view.getUint32(32, true))
+      ok = Boolean(a.Process32NextW(snap, pe))
+    }
+  } catch (err) {
+    console.error('[backseat] process snapshot failed:', err)
+  } finally {
+    a.CloseHandleI(snap)
   }
   return out
 }

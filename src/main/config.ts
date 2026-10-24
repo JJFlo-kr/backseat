@@ -4,7 +4,6 @@ import { app } from 'electron'
 import { existsSync, readFileSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { sessionsRoot } from './sessions'
 
 export interface Settings {
   version: number
@@ -68,6 +67,20 @@ const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
   hotkeyWindow: 'CommandOrControl+Shift+W'
 }
 
+/** PicturesBackseatsessions: where packages go unless config.json says otherwise. */
+export function defaultSessionsRoot(): string {
+  return join(app.getPath('pictures'), 'Backseat', 'sessions')
+}
+
+/**
+ * THE sessions root: config.json's sessionsRoot (default PicturesBackseatsessions). The package writer,
+ * the backseat_ask watcher, markAnswered and the registry all use this; backseat-mcp reads the same key from
+ * the same file (src/main/mcp/server.ts sessionsRoot) — Codex review F08.
+ */
+export function sessionsRoot(): string {
+  return loadSettings().sessionsRoot || defaultSessionsRoot()
+}
+
 export function configPath(): string {
   return join(app.getPath('userData'), 'config.json')
 }
@@ -84,7 +97,7 @@ export function loadSettings(): Settings {
   }
   // v1 files stored the then-default 'korean' hint; v2 follows the UI language instead.
   if ((stored.version ?? 1) < 2 && stored.sttLanguage === 'korean') delete stored.sttLanguage
-  cached = { ...DEFAULTS, sessionsRoot: sessionsRoot(), ...stored, version: DEFAULTS.version }
+  cached = { ...DEFAULTS, sessionsRoot: defaultSessionsRoot(), ...stored, version: DEFAULTS.version }
   if (cached.sttBackend !== 'openai') cached.sttBackend = 'local'
   if (cached.briefLocale !== 'en') cached.briefLocale = 'follow'
   return cached

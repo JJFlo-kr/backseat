@@ -72,6 +72,14 @@ interface PackageMeta {
   target?: { label?: string } | null
   files?: string[]
   requestId?: string
+  /** The MCP agent the package was handed to (src/main/sessions.ts); absent = anyone. */
+  recipient?: { agentId?: string; name?: string; cwd?: string }
+}
+
+/** A package handed to another registered agent is not shown to this one (Codex review F03). */
+function visibleTo(meta: PackageMeta, me: RegistryEntry | null): boolean {
+  const to = meta.recipient?.agentId
+  return !to || to === me?.id
 }
 
 interface Loaded {
@@ -136,8 +144,16 @@ function packageContent(p: Loaded, tr: Translate, includeImage = true, includeOr
   return out
 }
 
-/** Resolve when a new session dir (optionally matching requestId) appears, or null on timeout. */
-async function waitForPackage(root: string, timeoutMs: number, requestId?: string): Promise<Loaded | null> {
+/**
+ * Resolve when a new session dir appears that matches requestId (when given) and passes accept(), or null
+ * on timeout. Packages that do not match are skipped for good.
+ */
+async function waitForPackage(
+  root: string,
+  timeoutMs: number,
+  requestId?: string,
+  accept: (p: Loaded) => boolean = () => true
+): Promise<Loaded | null> {
   await mkdir(root, { recursive: true })
   const seen = new Set(await listSessionDirs(root))
   const deadline = Date.now() + timeoutMs
@@ -164,7 +180,7 @@ async function waitForPackage(root: string, timeoutMs: number, requestId?: strin
             continue
           }
           if (!p) continue
-          if (requestId && p.meta.requestId !== requestId) {
+          if ((requestId && p.meta.requestId !== requestId) || !accept(p)) {
             seen.add(id)
             continue
           }
@@ -246,8 +262,11 @@ export async function createServer(): Promise<McpServer> {
     async ({ includeImage, includeOriginal }) => {
       const tr = await agentTranslator()
       const ids = await listSessionDirs(root)
-      const id = ids[ids.length - 1]
-      const p = id ? await loadPackage(root, id) : null
+      let p: Loaded | null = null
+      for (let i = ids.length - 1; i >= 0 && !p; i--) {
+        const cand = await loadPackage(root, ids[i]).catch(() => null)
+        if (cand && visibleTo(cand.meta, me)) p = cand
+      }
       if (!p) return { content: [{ type: 'text', text: tr('mcp.noSession', { root }) }] }
       return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
     }
@@ -262,14 +281,16 @@ export async function createServer(): Promise<McpServer> {
     },
     async ({ limit }) => {
       const tr = await agentTranslator()
-      const ids = (await listSessionDirs(root)).slice(-(limit ?? 10))
+      const ids = await listSessionDirs(root)
       const lines: string[] = []
-      for (const id of ids) {
-        const p = await loadPackage(root, id)
-        if (!p) continue
+      for (let i = ids.length - 1; i >= 0 && lines.length < (limit ?? 10); i--) {
+        const id = ids[i]
+        const p = await loadPackage(root, id).catch(() => null)
+        if (!p || !visibleTo(p.meta, me)) continue
         const memo = p.meta.memo ? ` · ${p.meta.memo}` : ''
         lines.push(`${id} · ${p.meta.meta?.mode ?? ''} ${p.meta.meta?.window?.title ?? ''}${memo} · → ${p.meta.target?.label ?? '-'}`)
       }
+      lines.reverse() // newest last
       return { content: [{ type: 'text', text: lines.length ? lines.join('\n') : tr('mcp.listEmpty') }] }
     }
   )
@@ -305,7 +326,7 @@ export async function createServer(): Promise<McpServer> {
       }
     },
     async ({ timeoutSec, includeOriginal }) => {
-      const p = await waitForPackage(root, (timeoutSec ?? 300) * 1000)
+      const p = await waitForPackage(root, (timeoutSec ?? 300) * 1000, undefined, (pkg) => visibleTo(pkg.meta, me))
       const tr = await agentTranslator()
       if (!p) return { content: [{ type: 'text', text: tr('mcp.waitTimeout') }] }
       return { content: packageContent(p, tr, true, includeOriginal ?? false) }

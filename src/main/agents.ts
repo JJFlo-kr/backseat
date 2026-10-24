@@ -206,3 +206,79 @@ export function resolveSendTarget(
   if (!isWindow(pick.hwnd)) return { kind: 'expired', label: pick.label }
   return { kind: 'target', target: pick }
 }
+
+// ---------- MCP agents (backseat_register) ----------
+/** An agent registered through backseat-mcp (see src/main/mcp/registry.ts). */
+export interface RegisteredAgent {
+  id: string
+  name: string
+  cwd: string
+  /** pid of the backseat-mcp process the agent started. */
+  pid: number
+  registeredAt?: string
+}
+
+/** Processes that are ancestors of almost everything: owning a window proves nothing. */
+const SESSION_ROOTS = new Set(['explorer.exe', 'svchost.exe', 'services.exe', 'wininit.exe', 'winlogon.exe', 'userinit.exe', 'sihost.exe', 'csrss.exe'])
+/** Console hosts: the window belongs to conhost/OpenConsole, which is a child of the shell, not its parent. */
+const CONSOLE_HOSTS = new Set(['conhost.exe', 'openconsole.exe'])
+
+function ancestors(pid: number, parentOf: (pid: number) => number | undefined): Set<number> {
+  const seen = new Set<number>()
+  let p: number | undefined = pid
+  for (let i = 0; i < 64 && p && !seen.has(p); i++) {
+    seen.add(p)
+    p = parentOf(p)
+  }
+  return seen
+}
+
+function folderName(cwd: string): string {
+  return (cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '').toLowerCase()
+}
+
+/**
+ * The registered agent that runs inside `win`, or null when nothing proves it. Evidence: the window's
+ * process is an ancestor of the agent's backseat-mcp process (terminal → shell → agent → mcp), or the
+ * window is a console host whose parent is. Several agents in one window (terminal tabs, the Claude app)
+ * are told apart only by their project folder in the window title; otherwise none is chosen.
+ */
+export function agentForWindow(
+  agents: readonly RegisteredAgent[],
+  win: Pick<WindowInfo, 'pid' | 'process' | 'title'> | null,
+  parentOf: (pid: number) => number | undefined
+): RegisteredAgent | null {
+  if (!win || !win.pid) return null
+  const proc = (win.process ?? '').toLowerCase()
+  if (SESSION_ROOTS.has(proc)) return null
+  const hostParent = CONSOLE_HOSTS.has(proc) ? parentOf(win.pid) : undefined
+  const inside = agents.filter((a) => {
+    const chain = ancestors(a.pid, parentOf)
+    return chain.has(win.pid) || (hostParent !== undefined && chain.has(hostParent))
+  })
+  if (inside.length <= 1) return inside[0] ?? null
+  const title = (win.title ?? '').toLowerCase()
+  const named = inside.filter((a) => {
+    const f = folderName(a.cwd)
+    return f.length > 0 && title.includes(f)
+  })
+  return named.length === 1 ? named[0] : null
+}
+
+/**
+ * Bind the detected target to a registered MCP agent only when that agent provably runs in the target's
+ * window (Codex review F03). Without that proof the target is returned unchanged: the pasted line then
+ * carries file paths, which work for any agent.
+ */
+export function withMcpAgent(
+  target: AgentTarget | null,
+  agents: readonly RegisteredAgent[],
+  win: Pick<WindowInfo, 'pid' | 'process' | 'title'> | null,
+  parentOf: (pid: number) => number | undefined
+): AgentTarget | null {
+  if (!target || target.method === 'clipboard' || !target.hwnd) return target
+  const agent = agentForWindow(agents, win, parentOf)
+  if (!agent) return target
+  const mcp = { id: agent.id, name: agent.name, cwd: agent.cwd }
+  return { ...target, mcp, label: `${target.label} · MCP ${agent.name}`, confidence: Math.max(target.confidence, 0.9) }
+}
