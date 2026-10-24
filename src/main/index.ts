@@ -1,6 +1,6 @@
 import { app, globalShortcut, session } from 'electron'
 import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult, WindowInfo } from '../shared/types'
-import { asFallback, buildCandidates, classifyTarget, getLastTarget, matchPinned, rememberTarget, withMcpAgent } from './agents'
+import { buildCandidates, detectTarget, getLastTarget, matchPinned, rememberTarget, withMcpAgent } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
 import { applyLoginItem, ensureConfig, loadSettings, sessionsRoot } from './config'
 import { createEditorWindow, installEditorIpc } from './editor'
@@ -55,12 +55,8 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
     const windows = listTopLevelWindows()
     // A pinned default target wins over automatic detection while its window is open.
     const pinWin = matchPinned(windows, settings.pinnedTargetProcess ?? '', settings.pinnedTargetTitle ?? '')
-    const pinnedGuess = pinWin ? classifyTarget(pinWin, { selfPid: process.pid }) : null
-    const detected = pinnedGuess ?? classifyTarget(active, { selfPid: process.pid })
-    let guess = detected
-    // Fall back to the previous target ONLY when nothing real was in front (null / desktop / taskbar).
-    const prev = getLastTarget()
-    if (!guess && prev && isWindow(prev.hwnd)) guess = asFallback(prev)
+    // Phase 0 safety: an unknown front window (the captured web page, a messenger) is never the automatic target.
+    const { target: guess, pinned, detected } = detectTarget({ pinned: pinWin, front: active, prev: getLastTarget(), selfPid: process.pid }, isWindow)
     // lastTarget keeps the original (undecorated) target; only the object handed to the editor is decorated.
     if (detected) rememberTarget(detected)
     const target = await pickTarget(guess, windows)
@@ -115,7 +111,7 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
         scroll
       },
       target,
-      targetPinned: pinnedGuess ? true : undefined,
+      targetPinned: pinned ? true : undefined,
       candidates,
       autoRecord: settings.autoRecord,
       request: ask,

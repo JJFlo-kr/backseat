@@ -39,7 +39,8 @@ const SHELL_CLASSES = new Set(['Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_Sec
 /**
  * Classify a window as a delivery target. Returns null only when it is not a real app window
  * (null, untitled, desktop/taskbar, our own window); every other window gets a target, with
- * kind 'unknown' for apps we do not recognise.
+ * kind 'unknown' for apps we do not recognise (messengers included). Whether a target may be used
+ * WITHOUT the user choosing it is isAutoTarget()'s decision, not this function's.
  */
 export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {}): AgentTarget | null {
   if (!win) return null
@@ -80,15 +81,13 @@ export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {
       confidence: agent ? 0.85 : 0.7
     }
   }
-  if (proc === 'slack.exe') return { ...base, kind: 'chat', label: 'Slack', method: 'paste-image', confidence: 0.6 }
-  if (proc === 'discord.exe') return { ...base, kind: 'chat', label: 'Discord', method: 'paste-image', confidence: 0.6 }
   if (BROWSERS.has(proc)) {
     const lower = title.toLowerCase()
     if (lower.includes('claude') || lower.includes('chatgpt') || lower.includes('gemini') || lower.includes('copilot')) {
       return { ...base, kind: 'chat', label: t('agents.webChat', { title: title.slice(0, 30) }), method: 'paste-image', confidence: 0.7 }
     }
   }
-  // Any other real window: the user may well have been talking to it, so deliver there by pasting the image.
+  // Any other real window (a web page, a messenger, …): offered in the target menu, never chosen automatically.
   return {
     ...base,
     kind: 'unknown',
@@ -96,6 +95,39 @@ export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {
     method: 'paste-image',
     confidence: 0.4
   }
+}
+
+/**
+ * Phase 0 safety: may 전송 paste into this target although the user did not choose it? Only known AI tools
+ * (terminal / editor agents, the Claude and ChatGPT·Codex apps, AI chat tabs in a browser). Any other window
+ * — the web page that was just captured (a sign-in or payment form), KakaoTalk, Slack, Discord, Teams … —
+ * only when the user picked or pinned it: pasting the instruction there could fill a form field or reach a person.
+ */
+export function isAutoTarget(t: AgentTarget | null): t is AgentTarget {
+  return t !== null && t.kind !== 'unknown' && t.hwnd !== 0
+}
+
+/**
+ * The target a new capture starts with. pinned: the window of the user's pinned default (explicit, used as
+ * it is). front: the window that was in front before the hotkey. prev: the last target used.
+ * - the pinned window wins while it is open;
+ * - the front window is used only when isAutoTarget() allows it; an unknown front window gives NO target
+ *   (package + clipboard, the editor asks where to send);
+ * - the previous target is a fallback only when nothing real was in front (desktop, taskbar, our own
+ *   window), and only when it would be allowed automatically itself.
+ */
+export function detectTarget(
+  args: { pinned: WindowInfo | null; front: WindowInfo | null; prev: AgentTarget | null; selfPid?: number },
+  isWindow: (hwnd: number) => boolean
+): { target: AgentTarget | null; pinned: boolean; detected: AgentTarget | null } {
+  const opts = { selfPid: args.selfPid }
+  const pinnedTarget = args.pinned ? classifyTarget(args.pinned, opts) : null
+  if (pinnedTarget) return { target: pinnedTarget, pinned: true, detected: pinnedTarget }
+  const front = classifyTarget(args.front, opts)
+  if (front) return { target: isAutoTarget(front) ? front : null, pinned: false, detected: isAutoTarget(front) ? front : null }
+  const prev = args.prev
+  if (prev && isAutoTarget(prev) && isWindow(prev.hwnd)) return { target: asFallback(prev), pinned: false, detected: null }
+  return { target: null, pinned: false, detected: null }
 }
 
 /** Max alternative windows offered in the editor's target menu. */

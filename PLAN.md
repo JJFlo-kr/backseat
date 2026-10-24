@@ -468,7 +468,7 @@ Codex가 930b9b4(v0.3.2) 기준으로 낸 리뷰 15건(F01–F15)을 v0.4.0(언�
 | F03 높음 | 수정 | 마지막 등록 에이전트를 앞의 창에 무조건 결합 → 에이전트의 backseat-mcp 프로세스가 그 창 프로세스 안에서 돈다는 근거(프로세스 트리, 콘솔 호스트는 부모)가 있을 때만 결합. explorer.exe 등은 근거가 안 됨, 한 창에 여럿이면 제목의 프로젝트 폴더 이름으로만 구분. meta.json에 `recipient`, MCP latest/list/wait는 다른 에이전트 앞 패키지를 건너뜀 | `tests/agents-mcp.test.ts`(옛 규칙을 그대로 옮긴 코드에서 6개 중 4개 실패), `tests/win32.test.ts`, mcp-check의 수신자 검사 |
 | F07 중간 | 수정 | 알림으로 답한 질문이 pending에 남아 다음 캡처에 붙음 → `requestForCapture()`가 클릭이든 pending이든 ID로 소비. 정책: 캡처를 시작하면 소비, 편집기를 취소하면 에이전트의 ask는 시간 초과(다시 물으면 됨) | `tests/requests.test.ts`(실제 watcher + 가짜 알림 클릭) |
 | F08 중간 | 수정 | writer·markAnswered는 기본 경로, watcher·MCP는 설정 경로 → `config.ts sessionsRoot()` 하나를 모두가 사용(MCP는 같은 config 키를 읽음) | `tests/sessions.test.ts` F08 |
-| F05 중간 | 수정 | 고정 창이 붙여넣기 뒤 숨은 채로 남고 busy 유지 → 고정 창은 포커스를 뺏지 않고 다시 표시, 닫힐 창만 busy 유지 | `tests/send.test.ts`, `tests/sendflow.test.ts` |
+| F05 중간 | 수정 | 고정 창이 붙여넣기 뒤 숨은 채로 남고 busy 유지 → 사용자 결정(2026-10-25)에 따라 전송 뒤 편집기는 고정 여부와 상관없이 열어 둔다: 붙여넣은 뒤 포커스를 뺏지 않고 다시 표시, 자동 닫기와 busy 유지 제거(재전송·대상 변경·직접 복사 가능). 상태 표시 UI는 5단계 | `tests/send.test.ts`, `tests/sendflow.test.ts` |
 | F10 중간 | 수정 | undo 이력에 링크는 있지만 어느 녹음의 링크인지 없음 → `Doc.linksRev`, 현재 녹음 것만 표시(`doc.ts linksAt`) | `tests/doc-links.test.ts`(실제 History), 자가 테스트 `recording-replace` |
 | F11 중간 | 수정 | worker exit·stopStt가 대기 작업을 끝내지 않음, 새 worker 오류가 옛 작업을 끝냄 → 작업이 자기 worker를 기억, error/exit/terminate에서 한 번만 실패 처리 | `tests/stt-worker.test.ts`(가짜 Worker) |
 | F12 중간 | 수정 | 음성 인식 실패에도 전송 성공 표시 → 전송 전에 "다시 시도 / 이미지만 보내기 / 취소"(Enter=다시 시도, Esc=취소). 이미지만 보내도 음성 파일은 패키지에 남음 | `tests/sendflow.test.ts`, 자가 테스트 `stt-failure`(대상을 클립보드로 바꾼 뒤 전송 → 질문 → 다시 시도 실패 → 질문 → 취소) |
@@ -476,10 +476,16 @@ Codex가 930b9b4(v0.3.2) 기준으로 낸 리뷰 15건(F01–F15)을 v0.4.0(언�
 | F14 중간 | 수정 | mcp-check가 출력만 하고 항상 MCP_OK → 자체 패키지를 만들어 도구 목록·등록·이미지 MIME과 바이트·includeOriginal·list/get·wait 시간 초과와 수신자 건너뛰기·ask requestId를 검사, 하나라도 어기면 exit 1 | `tests/mcp-check.test.ts` + `tests/fixtures/wrong-mcp-server.mjs`(옛 검사기는 통과시킴, 새 검사기는 12건 실패), 실제 서버 `npm run mcp-check` MCP_OK |
 | F15 낮음 | 수정 | 분을 먼저 내리고 초만 반올림 → `00:60.0`. 0.1초 정수로 반올림한 뒤 분·초 분리, brief도 같은 `fmtClock` | `tests/clock.test.ts`(59949/59950/59999/60000 + seed 0xBACC5EA7 2000개) |
 
+### 0단계 긴급 안전 수정 (실제 사고)
+- 관찰: 사용자 세션 기록(meta.json)에서 10/24 21:01·23:15·23:16 전송은 캡처하던 Chrome의 Buy Me a Coffee 가입·결제 설정 페이지를, 20:45 전송은 카카오톡 창을 대상(`unknown`, `paste-image`)으로 잡고 Ctrl+V를 보냈다. 원인은 §19.7에서 넣은 "모르는 앱도 실제 창이면 그 창으로 보낸다" 규칙: 웹페이지를 캡처하면 캡처 직전 앞 창이 그 페이지다.
+- 수정: `isAutoTarget()` — 자동으로 붙여넣는 곳은 알려진 AI 도구(터미널·편집기 에이전트, Claude 앱, ChatGPT·Codex 앱, Cursor, VS Code·Windsurf·Zed, 브라우저의 Claude·ChatGPT·Gemini·Copilot 탭)뿐. 모르는 창과 메신저(카카오톡·Slack·Discord·Teams·Telegram·LINE …; Slack·Discord 자동 인식 규칙 삭제)는 대상 메뉴에서 고르거나 고정했을 때만. `detectTarget()` — 고정 창 → 앞 창(허용될 때만, 아니면 대상 없음: 패키지 저장 + 클립보드 + "보낼 곳을 선택하세요") → 직전 대상(앞에 진짜 창이 없을 때만, 그것도 자동 허용 대상일 때만). 대상 메뉴에는 모든 창이 그대로 나온다.
+- 확인: 수정 전 코드에서 가입 페이지·카카오톡·Slack이 `paste-image` 대상이 되는 것을 확인. `tests/agents-safety.test.ts`(가입·결제 페이지, 메신저 6종 → 대상 없음, ChatGPT.exe → codex, 브라우저 ChatGPT 탭 → chat, 모르는 창 앞에서는 직전 대상으로도 안 감, 고정·명시 선택한 모르는 창은 그 창).
+- 사용자가 확인할 것: 그 카카오톡 대화방과 Buy Me a Coffee 가입·결제 화면의 입력칸에 지시문이나 이미지가 남거나 보내지지 않았는지.
+
 ### 그 밖에
 - CI: `.github/workflows/ci.yml`(windows-latest, Node 24: npm ci → typecheck → test → build → mcp-check). 자가 테스트는 데스크톱 세션이 필요해 CI에서 돌리지 않는다. 아직 push하지 않았다.
-- 새 문구 15개는 §21 문구 원칙대로 ko/en을 쓰고 나머지 7개 언어를 번역했다.
-- 작업 중 사고: 언어팩 세션과 같은 폴더(HEAD 하나)를 써서 첫 세 커밋이 fix 브랜치가 아니라 로컬 main에 올라갔다. 이후 작업은 별도 worktree(`D:\backseat-codex`, node_modules는 접합)에서 했다. 같은 폴더에서 여러 세션이 브랜치를 바꾸지 않는다.
+- 새 문구 15개와 0단계에서 바꾼 4개는 §21 문구 원칙대로 ko/en을 쓰고 나머지 7개 언어를 번역했다. 버전 0.4.2(0.4.1 설치판은 0단계 전 빌드라 쓰지 않는다).
+- 작업 중 사고: 언어팩 세션과 같은 폴더(HEAD 하나)를 써서 첫 세 커밋이 fix 브랜치가 아니라 로컬 main에 올라갔다. 이후 작업은 별도 worktree(`D:\backseat-codex`, node_modules는 접합)에서 했다. 같은 폴더에서 여러 세션이 브랜치를 바꾸지 않는다. 실제 화면을 움직이는 자가 테스트는 D 드라이브의 backseat-ui-test.lock 파일이 없을 때만 그 파일을 만들고 돌린 뒤 지운다.
 
 ### 검증하지 못한 것
 - 실제 OS에서 다른 창에 붙여넣기가 성공하는지(F05·F09는 창 숨김/표시와 전송 대상까지), 실제 ONNX 충돌(F11은 가짜 Worker), 실제 디스크 가득 참(F13은 쓰기 함수 대체), 여러 AI 앱을 동시에 띄운 실제 MCP 결합(F03은 프로세스 트리 모형 + 이 PC의 실제 스냅샷), 개발 환경 없는 PC에서 설치판 설치.
