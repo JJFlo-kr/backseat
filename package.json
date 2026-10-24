@@ -1,6 +1,6 @@
 {
   "name": "backseat",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "description": "AI 소통기 Backseat - point, talk, let the AI drive",
   "main": "./out/main/index.js",
