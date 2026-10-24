@@ -2,13 +2,13 @@
 
 # Backseat (AI 소통기)
 
+[English](README.md) · **한국어**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-jjflo-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/jjflo)
 
 화면을 캡처하고, 그 위에 그리면서 말하고, 그대로 AI 코딩 에이전트에게 보내는 Windows 도구.
 "backseat driver"에서 이름을 땄다. AI가 운전(코딩)하고, 사용자는 뒷좌석에서 화면을 가리키며 지시한다.
-
-*Backseat is a free Windows tray app: capture your screen, draw and talk over it, and send the result straight to an AI coding agent (Claude Code, Codex, Cursor and others). It also ships an MCP server so an agent can ask you to point at something. MIT-licensed; donations are voluntary.*
 
 ## 설치와 실행 (기본)
 
@@ -69,6 +69,16 @@ Node.js(`node`)가 있어야 한다.
 툴: `backseat_register`, `backseat_latest`(브리프 + 이미지), `backseat_list`, `backseat_get`, `backseat_wait`(다음 전송까지 대기),
 `backseat_ask`(질문을 띄우고 사용자가 그려서 답할 때까지 대기). `integrations/claude-code/SKILL.md` 를 `.claude/skills/backseat/` 에 복사하면 `/backseat` 스킬이 된다.
 
+## 언어
+
+화면 언어는 한국어, English, 日本語, 简体中文, 繁體中文, Español, Português (Brasil), Deutsch, Français 중에서 고른다.
+기본은 **자동**(Windows 표시 언어를 따름, 지원하지 않는 언어면 영어). 트레이 우클릭 → "언어 / Language"에서 바꾸면 트레이는
+바로 바뀌고, 이미 열린 편집기는 다음 캡처부터 적용된다.
+
+- **브리프는 영어로**(트레이 체크): 화면은 한국어로 쓰면서 brief.md와 붙여넣는 지시문만 영어로 쓴다.
+- **음성 인식 언어**(트레이 하위 메뉴): 기본은 화면 언어에 맞춤, "자동 감지"를 고르면 Whisper가 언어를 알아낸다.
+- 일본어·중국어 텍스트 주석용 글꼴(Noto Sans JP/SC/TC)이 들어 있고, 해당 언어일 때 텍스트 도구 기본 글꼴이 된다.
+
 ## 음성 인식
 
 transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-community/whisper-small_timestamped`(한국어 단어 타임스탬프)는
@@ -81,7 +91,7 @@ transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-
 
 ## 검증
 
-- `npm test` — 정렬·전사 그룹화·스크롤 스티칭·클라우드 STT 어댑터(모의 서버)·팔레트·전송 대상 판별 단위 테스트
+- `npm test` — i18n 언어팩(키·자리표시자 일치)·지시어·정렬·전사 그룹화·스크롤 스티칭·클라우드 STT 어댑터(모의 서버)·팔레트·전송 대상 판별 단위 테스트
 - `npm run selftest` — 캡처, 창 열거, 선택창·편집기 렌더링, 타임라인 스크럽, undo/redo, 자르기(좌표·meta), 전/후 비교, 스크롤 캡처(자체 긴 페이지 창), 클라우드 STT(로컬 모의 서버), 텍스트 꾸미기(여러 줄·배경색·윤곽선·그림자·굵게/기울임), 색 팝오버·스포이트, 전송 대상 메뉴, 클립보드, 세션 패키지(screenshot.png 포함), 브리프 검증.
   `--selftest-wav=<wav>` 를 주면 STT와 음성 레인까지 확인한다.
 - `node scripts/mcp-check.mjs <sessionsRoot>` — MCP 서버를 공식 클라이언트로 검증(ask 왕복 포함)
@@ -93,7 +103,7 @@ transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-
 
 ## 후원
 
-Backseat은 **무료**이며 모든 기능을 제한 없이 쓸 수 있습니다. 도움이 되었다면 [Buy Me a Coffee](https://buymeacoffee.com/jjflo)로 커피 한 잔 후원해 주시면 큰 힘이 됩니다(트레이 메뉴 "후원하기 ☕"와 "정보…" 창도 같은 링크). 후원은 어디까지나 선택입니다(트레이 메뉴 "후원하기 ☕"와 "정보…" 창에서도 같은 링크로 연결됩니다). 링크는 [`src/shared/links.ts`](src/shared/links.ts)의 `SUPPORT_URL`과 이 README에 있습니다.
+Backseat은 **무료**이며 모든 기능을 제한 없이 쓸 수 있습니다. 도움이 되었다면 [Buy Me a Coffee](https://buymeacoffee.com/jjflo)로 커피 한 잔 후원해 주시면 큰 힘이 됩니다. 후원은 어디까지나 선택입니다(트레이 메뉴 "후원하기 ☕"와 "정보…" 창에서도 같은 링크로 연결됩니다). 링크는 [`src/shared/links.ts`](src/shared/links.ts)의 `SUPPORT_URL`과 이 README에 있습니다.
 
 ## 라이선스
 
