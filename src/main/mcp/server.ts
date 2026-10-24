@@ -53,6 +53,8 @@ interface Loaded {
   meta: PackageMeta
   brief: string
   png: Buffer | null
+  /** screenshot.png (capture without annotations), when the package has one. */
+  screenshot: Buffer | null
   transcript: unknown | null
 }
 
@@ -78,15 +80,19 @@ async function loadPackage(root: string, id: string): Promise<Loaded | null> {
   const meta = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8')) as PackageMeta
   const brief = existsSync(join(dir, 'brief.md')) ? await readFile(join(dir, 'brief.md'), 'utf8') : ''
   const png = existsSync(join(dir, 'annotated.png')) ? await readFile(join(dir, 'annotated.png')) : null
+  const screenshot = existsSync(join(dir, 'screenshot.png')) ? await readFile(join(dir, 'screenshot.png')) : null
   const transcript = existsSync(join(dir, 'transcript.json'))
     ? (JSON.parse(await readFile(join(dir, 'transcript.json'), 'utf8')) as unknown)
     : null
-  return { id, dir, meta, brief, png, transcript }
+  return { id, dir, meta, brief, png, screenshot, transcript }
 }
 
 type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
-function packageContent(p: Loaded, includeImage = true): Content[] {
+const ANNOTATION_NOTICE =
+  '이 이미지의 주석(선·화살표·사각형·번호 원·보라 B 표시 글자)은 사용자가 Backseat로 그린 것이며 원래 화면에는 없습니다.'
+
+function packageContent(p: Loaded, includeImage = true, includeOriginal = false): Content[] {
   const out: Content[] = []
   const header = [
     `# Backseat session ${p.id}`,
@@ -95,7 +101,14 @@ function packageContent(p: Loaded, includeImage = true): Content[] {
     ''
   ].join('\n')
   out.push({ type: 'text', text: header + p.brief })
-  if (includeImage && p.png) out.push({ type: 'image', data: p.png.toString('base64'), mimeType: 'image/png' })
+  if (includeImage && p.png) {
+    out.push({ type: 'text', text: ANNOTATION_NOTICE })
+    out.push({ type: 'image', data: p.png.toString('base64'), mimeType: 'image/png' })
+  }
+  if (includeOriginal && p.screenshot) {
+    out.push({ type: 'text', text: '원본 화면(주석 없음):' })
+    out.push({ type: 'image', data: p.screenshot.toString('base64'), mimeType: 'image/png' })
+  }
   return out
 }
 
@@ -175,15 +188,19 @@ export async function createServer(): Promise<McpServer> {
     'backseat_latest',
     {
       title: 'Latest Backseat capture',
-      description: 'Return the most recent session package: the brief (markdown) and the annotated image.',
-      inputSchema: { includeImage: z.boolean().optional().describe('Attach the PNG (default true)') }
+      description:
+        'Return the most recent session package: the brief (markdown) and annotated.png (original screen + the user-drawn Backseat annotations). screenshot.png, the capture without annotations, is attached only with includeOriginal.',
+      inputSchema: {
+        includeImage: z.boolean().optional().describe('Attach annotated.png (default true)'),
+        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)')
+      }
     },
-    async ({ includeImage }) => {
+    async ({ includeImage, includeOriginal }) => {
       const ids = await listSessionDirs(root)
       const id = ids[ids.length - 1]
       const p = id ? await loadPackage(root, id) : null
       if (!p) return { content: [{ type: 'text', text: `아직 세션이 없습니다 (${root}). 사용자가 Ctrl+Shift+A로 캡처해 전송하면 생깁니다.` }] }
-      return { content: packageContent(p, includeImage ?? true) }
+      return { content: packageContent(p, includeImage ?? true, includeOriginal ?? false) }
     }
   )
 
@@ -211,13 +228,17 @@ export async function createServer(): Promise<McpServer> {
     'backseat_get',
     {
       title: 'Get a Backseat capture by id',
-      description: 'Return one session package by id (from backseat_list).',
-      inputSchema: { id: z.string(), includeImage: z.boolean().optional() }
+      description: 'Return one session package by id (from backseat_list): brief + annotated.png; screenshot.png (no annotations) with includeOriginal.',
+      inputSchema: {
+        id: z.string(),
+        includeImage: z.boolean().optional().describe('Attach annotated.png (default true)'),
+        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)')
+      }
     },
-    async ({ id, includeImage }) => {
+    async ({ id, includeImage, includeOriginal }) => {
       const p = await loadPackage(root, basename(id))
       if (!p) return { content: [{ type: 'text', text: `세션 ${id} 없음` }], isError: true }
-      return { content: packageContent(p, includeImage ?? true) }
+      return { content: packageContent(p, includeImage ?? true, includeOriginal ?? false) }
     }
   )
 
@@ -226,13 +247,16 @@ export async function createServer(): Promise<McpServer> {
     {
       title: 'Wait for the next Backseat capture',
       description:
-        'Block until the user sends a new capture from Backseat (or the timeout passes), then return it. Use when you asked the user to show or draw something.',
-      inputSchema: { timeoutSec: z.number().min(1).max(1800).optional().describe('Default 300') }
+        'Block until the user sends a new capture from Backseat (or the timeout passes), then return it (brief + annotated.png; screenshot.png with includeOriginal). Use when you asked the user to show or draw something.',
+      inputSchema: {
+        timeoutSec: z.number().min(1).max(1800).optional().describe('Default 300'),
+        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)')
+      }
     },
-    async ({ timeoutSec }) => {
+    async ({ timeoutSec, includeOriginal }) => {
       const p = await waitForPackage(root, (timeoutSec ?? 300) * 1000)
       if (!p) return { content: [{ type: 'text', text: '시간 안에 새 캡처가 오지 않았습니다.' }] }
-      return { content: packageContent(p) }
+      return { content: packageContent(p, true, includeOriginal ?? false) }
     }
   )
 
@@ -241,13 +265,14 @@ export async function createServer(): Promise<McpServer> {
     {
       title: 'Ask the user to show something in Backseat',
       description:
-        'Post a question to the Backseat tray app; the user answers by capturing, drawing and speaking. Blocks until that package arrives or the timeout passes.',
+        'Post a question to the Backseat tray app; the user answers by capturing, drawing and speaking. Blocks until that package arrives or the timeout passes. Returns brief + annotated.png (screenshot.png with includeOriginal).',
       inputSchema: {
         question: z.string().describe('What you want the user to show or mark, in their language'),
-        timeoutSec: z.number().min(5).max(1800).optional().describe('Default 600')
+        timeoutSec: z.number().min(5).max(1800).optional().describe('Default 600'),
+        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)')
       }
     },
-    async ({ question, timeoutSec }) => {
+    async ({ question, timeoutSec, includeOriginal }) => {
       const requestsDir = join(root, 'requests')
       await mkdir(requestsDir, { recursive: true })
       const requestId = `${Date.now()}-${process.pid}`
@@ -258,7 +283,7 @@ export async function createServer(): Promise<McpServer> {
       )
       const p = await waitForPackage(root, (timeoutSec ?? 600) * 1000, requestId)
       if (!p) return { content: [{ type: 'text', text: `사용자가 ${timeoutSec ?? 600}초 안에 답하지 않았습니다 (요청 ${requestId}).` }] }
-      return { content: packageContent(p) }
+      return { content: packageContent(p, true, includeOriginal ?? false) }
     }
   )
 

@@ -1,8 +1,8 @@
 import { app, globalShortcut, session } from 'electron'
 import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult } from '../shared/types'
-import { classifyTarget } from './agents'
+import { asFallback, buildCandidates, classifyTarget, getLastTarget, matchPinned, rememberTarget } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
-import { ensureConfig, loadSettings } from './config'
+import { applyLoginItem, ensureConfig, loadSettings } from './config'
 import { createEditorWindow, installEditorIpc } from './editor'
 import { pruneRegistry } from './mcp/registry'
 import { getForegroundWindow, isWindow, listTopLevelWindows } from './native/win32'
@@ -16,12 +16,9 @@ import { createTray } from './tray'
 let capturing = false
 /** Last confirmed selection, for "마지막 영역 다시 캡처" (before/after comparisons). */
 let lastSelection: SelectionResult | null = null
-/** Last target that had a real window, reused when the hotkey is pressed from the desktop/tray. */
-let lastTarget: AgentTarget | null = null
 
 /** Merge the window-based guess with agents registered through backseat-mcp. */
-async function pickTarget(active: ReturnType<typeof getForegroundWindow>): Promise<AgentTarget | null> {
-  const guess = classifyTarget(active)
+async function pickTarget(guess: AgentTarget | null): Promise<AgentTarget | null> {
   let registered: Awaited<ReturnType<typeof pruneRegistry>> = []
   try {
     registered = await pruneRegistry(sessionsRoot())
@@ -61,11 +58,20 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
   try {
     const settings = loadSettings()
     const active = getForegroundWindow() // before any of our windows show up
-    let target = await pickTarget(active)
-    if (!target && lastTarget && isWindow(lastTarget.hwnd)) {
-      target = { ...lastTarget, confidence: Math.min(lastTarget.confidence, 0.5), label: `${lastTarget.label} (직전 대상)` }
-    }
-    if (target && target.hwnd) lastTarget = target
+    // One enumeration, in z-order, before any of our windows show up: pinned match, candidates and the selector use it.
+    const windows = listTopLevelWindows()
+    // A pinned default target wins over automatic detection while its window is open.
+    const pinWin = matchPinned(windows, settings.pinnedTargetProcess ?? '', settings.pinnedTargetTitle ?? '')
+    const pinnedGuess = pinWin ? classifyTarget(pinWin, { selfPid: process.pid }) : null
+    const detected = pinnedGuess ?? classifyTarget(active, { selfPid: process.pid })
+    let guess = detected
+    // Fall back to the previous target ONLY when nothing real was in front (null / desktop / taskbar).
+    const prev = getLastTarget()
+    if (!guess && prev && isWindow(prev.hwnd)) guess = asFallback(prev)
+    // lastTarget keeps the original (undecorated) target; only the object handed to the editor is decorated.
+    if (detected) rememberTarget(detected)
+    const target = await pickTarget(guess)
+    const candidates = buildCandidates(windows, { selfPid: process.pid, excludeHwnd: target?.hwnd })
     const ask = request ?? takePendingRequest() ?? undefined
     const caps = await captureAllDisplays()
     let sel: SelectionResult | null
@@ -73,7 +79,6 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
       sel = lastSelection
       if (!sel) return
     } else {
-      const windows = listTopLevelWindows()
       sel = await runSelector(caps, windows, mode)
     }
     if (!sel) return
@@ -117,6 +122,8 @@ export async function startCapture(mode: CaptureMode | 'last' = 'rect', request?
         scroll
       },
       target,
+      targetPinned: pinnedGuess ? true : undefined,
+      candidates,
       autoRecord: settings.autoRecord,
       request: ask,
       compare
@@ -155,6 +162,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       return
     }
     const settings = await ensureConfig()
+    applyLoginItem(settings)
     createTray({
       capture: () => void startCapture('rect'),
       captureWindow: () => void startCapture('window'),

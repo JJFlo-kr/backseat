@@ -27,6 +27,8 @@ export interface WindowInfo {
   process: string
   /** DIP bounds. In SelectorInit they are relative to that display's window; elsewhere virtual-desktop. */
   bounds: Rect
+  /** Win32 window class (e.g. "Progman", "Shell_TrayWnd"), when known: tells the desktop / taskbar apart from apps. */
+  className?: string
 }
 
 /** main -> selector renderer, once per selector window. */
@@ -146,6 +148,13 @@ export interface EditorInit {
   autoRecord?: boolean
   /** The agent's question this capture is answering, if any. */
   request?: AskRequest
+  /**
+   * Other open top-level windows the user may pick as this capture's target instead (front-most first,
+   * our own windows excluded, at most 12). Each is already classified; unknown apps are kind 'unknown'.
+   */
+  candidates?: AgentTarget[]
+  /** The detected target came from the user's pinned default (config pinnedTargetProcess/Title). */
+  targetPinned?: boolean
   /** Previous capture of the same region (tray "마지막 영역 다시 캡처"): enables the compare view (O). */
   compare?: CompareSource
   /** Self-test only: lets the harness inject a transcript via a DOM event. */
@@ -180,6 +189,19 @@ export type Annotation =
       font?: string
       /** How the text is made legible over the screenshot: dark outline, a translucent plate, or nothing. */
       style?: 'outline' | 'plate' | 'plain'
+      // Optional styling (round 2). Absent = the round-1 look, so older packages render unchanged.
+      // `text` may contain '\n' (Shift+Enter): lines are left-aligned, y is the middle of the first line.
+      /** Plate colour '#RRGGBB' for style 'plate'; undefined = automatic (dark or white by text brightness). */
+      bg?: string
+      /** Plate opacity 0..1; undefined = the automatic plate's own alpha. */
+      bgOpacity?: number
+      /** Outline colour '#RRGGBB' for style 'outline'; undefined = translucent black. */
+      outline?: string
+      /** Soft drop shadow (behind the plate for 'plate', behind the glyphs otherwise). */
+      shadow?: boolean
+      /** undefined = the font's default weight (gothic faces bold, display faces regular). */
+      bold?: boolean
+      italic?: boolean
       tStart: number
       tEnd: number
     }
@@ -291,6 +313,12 @@ export interface ManualLink {
 export interface ExportPayload {
   /** Flattened image (base + annotations) as PNG data URL, device pixels. */
   pngDataUrl: string
+  /**
+   * The capture WITHOUT Backseat's annotations (same size and crop as pngDataUrl), saved as
+   * screenshot.png so an agent can tell the original screen apart from what the user drew.
+   * Blur (privacy) boxes are still applied. Optional: older callers / tests may omit it.
+   */
+  basePngDataUrl?: string
   /** One-line memo for the whole image, may be empty. */
   memo: string
   annotations: Annotation[]
@@ -318,6 +346,10 @@ export interface CopyResult {
 export interface SendOptions {
   /** Press Enter after pasting (default false: the user reviews the line first). */
   pressEnter?: boolean
+  /** Deliver to this window (one of EditorInit.candidates / the detected target) instead of the detected target. */
+  targetHwnd?: number
+  /** Also make that window the default target from now on (config pinnedTargetProcess/Title); false = unpin. */
+  pinTarget?: boolean
 }
 
 export interface SendResult {

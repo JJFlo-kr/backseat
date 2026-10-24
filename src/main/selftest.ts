@@ -115,6 +115,13 @@ async function shot(win: BrowserWindow, file: string, warnings: string[]): Promi
   }
 }
 
+const FAKE_CANDIDATES: AgentTarget[] = [
+  { kind: 'claude-desktop', label: 'Claude 앱', hwnd: 900001, title: 'Claude', process: 'claude.exe', method: 'paste-image', confidence: 0.8 },
+  { kind: 'codex', label: 'Codex · ChatGPT 앱', hwnd: 900002, title: 'Codex - 로그인 버튼 수정', process: 'codex.exe', method: 'paste-image', confidence: 0.8 },
+  { kind: 'terminal', label: '터미널 (WindowsTerminal.exe)', hwnd: 900004, title: 'PowerShell', process: 'WindowsTerminal.exe', method: 'paste-path', confidence: 0.6 },
+  { kind: 'unknown', label: '창: 제목 없음 - 메모장 (notepad.exe)', hwnd: 900003, title: '제목 없음 - 메모장', process: 'notepad.exe', method: 'paste-image', confidence: 0.4 }
+]
+
 export async function runSelfTest(): Promise<void> {
   const errors: string[] = []
   const warnings: string[] = []
@@ -244,6 +251,8 @@ export async function runSelfTest(): Promise<void> {
         request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest' }
       },
       target,
+      // Fake alternatives for the target menu (the harness never sends for real): two known apps, one plain window.
+      candidates: FAKE_CANDIDATES,
       request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest', cwd: '', createdAt: new Date().toISOString() },
       // "Previous capture" for the compare view: the same image with its left half inverted, so it
       // differs whatever happens to be on screen (the diff share must come out near 50%).
@@ -448,6 +457,446 @@ export async function runSelfTest(): Promise<void> {
         if (ed.isDestroyed()) errors.push('Esc closed the editor instead of the comparison')
       }
 
+      // Text styling (round 2): multi-line plate with custom colour / opacity / shadow / bold, outline colour + italic,
+      // plain text and badges are added as ONE history step, must round-trip through the payload, then shot and undone.
+      step = 'text-style'
+      {
+        const sz = (await state()).size
+        const sf = cap.display.scaleFactor
+        const count = async (): Promise<number> => (await state()).annotations.length
+        const base0 = await count()
+        const T = { tStart: 100, tEnd: 200 }
+        // the timeline panel eats the stage height; close it so the shot shows the image at a readable size
+        const tlWasOpen = (await ed.webContents.executeJavaScript(`!document.getElementById('timeline').hidden`)) as boolean
+        if (tlWasOpen) { await ed.webContents.executeJavaScript(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+        const styled: Annotation[] = [
+          { kind: 'text', text: '첫 줄\n둘째 줄', x: Math.round(sz[0] * 0.06), y: Math.round(sz[1] * 0.12), color: '#FFFFFF', fontSize: 30 * sf, font: 'Jua', style: 'plate', bg: '#1E5EFF', bgOpacity: 0.7, shadow: true, bold: true, ...T },
+          { kind: 'text', text: '윤곽선 이탤릭\nOutline two', x: Math.round(sz[0] * 0.06), y: Math.round(sz[1] * 0.45), color: '#FFE066', fontSize: 30 * sf, font: 'Noto Sans KR', style: 'outline', outline: '#1A1AFF', italic: true, ...T },
+          { kind: 'text', text: '효과 없음', x: Math.round(sz[0] * 0.06), y: Math.round(sz[1] * 0.8), color: '#E5484D', fontSize: 30 * sf, font: 'Nanum Pen Script', style: 'plain', shadow: true, ...T },
+          { kind: 'badge', x: Math.round(sz[0] * 0.5), y: Math.round(sz[1] * 0.3), n: 1, color: '#E5484D', size: 22 * sf, ...T },
+          { kind: 'badge', x: Math.round(sz[0] * 0.6), y: Math.round(sz[1] * 0.3), n: 2, color: '#2F80ED', size: 22 * sf, ...T }
+        ]
+        await ed.webContents.executeJavaScript(`window.__backseat.addAnnotations(${JSON.stringify(styled)}); document.querySelector('[data-tool="text"]').click(); true`)
+        await sleep(500) // fonts load lazily, then the canvas repaints
+        if ((await count()) !== base0 + styled.length) errors.push(`styled annotations were not added: ${base0} -> ${await count()}`)
+        const stPayload = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }
+        const texts = stPayload.annotations.filter((a): a is Extract<Annotation, { kind: 'text' }> => a.kind === 'text').slice(-3)
+        const [pl, ou, pn] = texts
+        if (!pl || !ou || !pn) errors.push('styled texts missing from the payload')
+        else {
+          if (!pl.text.includes('\n') || pl.bg !== '#1E5EFF' || pl.bgOpacity !== 0.7 || pl.shadow !== true || pl.bold !== true || pl.style !== 'plate') errors.push(`plate text did not round-trip: ${JSON.stringify(pl)}`)
+          if (!ou.text.includes('\n') || ou.outline !== '#1A1AFF' || ou.italic !== true || ou.style !== 'outline') errors.push(`outline text did not round-trip: ${JSON.stringify(ou)}`)
+          if (pn.style !== 'plain' || pn.shadow !== true || pn.bg !== undefined) errors.push(`plain text did not round-trip: ${JSON.stringify(pn)}`)
+          const stBrief = buildBrief({ pngDataUrl: '', memo: '', annotations: stPayload.annotations, meta: (await state()).meta as CaptureMeta }, 'annotated.png')
+          if (!stBrief.includes('텍스트(굵게·그림자) "첫 줄 / 둘째 줄"') || !stBrief.includes('텍스트(기울임) "윤곽선 이탤릭 / Outline two"')) errors.push('brief lacks the text style note / one-line multi-line text')
+        }
+        const bar = (await ed.webContents.executeJavaScript(
+          `(() => { const fit = (id) => { const e = document.getElementById(id); return { hidden: e.hidden, fits: e.scrollWidth <= e.clientWidth, w: e.clientWidth, sw: e.scrollWidth, h: e.clientHeight }; };
+             return { textbar: fit('textbar'), toolbar2: fit('toolbar2'), win: window.innerWidth }; })()`
+        )) as { textbar: { hidden: boolean; fits: boolean; w: number; sw: number; h: number }; toolbar2: { fits: boolean; w: number; sw: number; h: number }; win: number }
+        report.textbar = bar
+        if (bar.textbar.hidden) errors.push('#textbar is hidden while the text tool is active')
+        if (!bar.textbar.fits || !bar.toolbar2.fits) errors.push(`toolbar rows overflow at ${bar.win}px: ${JSON.stringify(bar)}`)
+        await shot(ed, join(shotsDir, 'editor-text.png'), warnings)
+
+        // Re-editing: double-click a styled text -> the toolbar adopts its props and the box mirrors them.
+        const at = (x: number, y: number): Promise<{ x: number; y: number }> => ed.webContents.executeJavaScript(
+          `(() => { const i = document.getElementById('ink'), r = i.getBoundingClientRect(); return { x: Math.round(r.left + ${x} * r.width / i.width), y: Math.round(r.top + ${y} * r.height / i.height) }; })()`
+        ) as Promise<{ x: number; y: number }>
+        const boxOpen = (): Promise<boolean> => ed.webContents.executeJavaScript(`document.querySelector('textarea.textbox') !== null`) as Promise<boolean>
+        const dbl = async (p: { x: number; y: number }): Promise<void> => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            for (const clickCount of [1, 2]) {
+              ed.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount })
+              ed.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount })
+              await sleep(40)
+            }
+            await sleep(300)
+            if (await boxOpen()) return
+          }
+        }
+        // Enter with no box open would be the editor's "send" hotkey: only press it while a box exists.
+        const enterInBox = async (): Promise<void> => {
+          if (!(await boxOpen())) { errors.push('expected an open text box before pressing Enter'); return }
+          ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+          ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+        }
+        const editInfo = (): Promise<{ value: string; bgChip: string; bold: string; italic: string; shadow: string; auto: string; outline: string; barHidden: boolean } | null> =>
+          ed.webContents.executeJavaScript(
+            `(() => { const b = document.querySelector('textarea.textbox'); if (!b) return null; const g = (id) => document.getElementById(id);
+               return { value: b.value, bgChip: g('text-bg').dataset.color, bold: g('text-bold').getAttribute('aria-pressed'), italic: g('text-italic').getAttribute('aria-pressed'),
+                        shadow: g('text-shadow').getAttribute('aria-pressed'), auto: g('text-bg-auto').getAttribute('aria-pressed'), outline: g('text-outline').dataset.color, barHidden: g('textbar').hidden }; })()`
+          ) as Promise<{ value: string; bgChip: string; bold: string; italic: string; shadow: string; auto: string; outline: string; barHidden: boolean } | null>
+        await dbl(await at(sz[0] * 0.06 + 30, sz[1] * 0.12))
+        const e1 = await editInfo()
+        if (!e1 || e1.value !== '첫 줄\n둘째 줄' || e1.bgChip !== '#1E5EFF' || e1.bold !== 'true' || e1.shadow !== 'true' || e1.auto !== 'false') errors.push(`editing the plate text did not adopt its props: ${JSON.stringify(e1)}`)
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }) // collapse the selection so the styled text is visible
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' })
+        await sleep(100)
+        await shot(ed, join(shotsDir, 'editor-text-edit.png'), warnings)
+        await enterInBox() // unchanged -> no history step
+        await sleep(200)
+        await dbl(await at(sz[0] * 0.06 + 30, sz[1] * 0.45))
+        const e2 = await editInfo()
+        if (!e2 || !e2.value.includes('\n') || e2.outline !== '#1A1AFF' || e2.italic !== 'true' || e2.shadow !== 'false') errors.push(`editing the outline text did not adopt its props: ${JSON.stringify(e2)}`)
+        await ed.webContents.executeJavaScript(`document.getElementById('text-shadow').click(); document.getElementById('text-bold').click(); true`)
+        await sleep(150)
+        const e3 = await editInfo()
+        if (!e3 || e3.value !== e2?.value || e3.shadow !== 'true') errors.push(`toggling an effect lost the text box content: ${JSON.stringify(e3)}`)
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }) // collapse the selection so the styled text is visible
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' })
+        await sleep(100)
+        await shot(ed, join(shotsDir, 'editor-text-edit2.png'), warnings)
+        await enterInBox()
+        await sleep(250)
+        const edited = ((await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }).annotations.filter((a): a is Extract<Annotation, { kind: 'text' }> => a.kind === 'text')[1]
+        if (!edited || edited.shadow !== true || edited.italic !== true || edited.bold !== false || edited.outline !== '#1A1AFF') errors.push(`edited text fields wrong: ${JSON.stringify(edited)}`)
+        await ed.webContents.executeJavaScript(`document.getElementById('undo').click(); true`) // back to the styled batch
+        await sleep(150)
+
+        // Real input path: type two lines with Shift+Enter, commit with Enter, expect one text containing a newline.
+        const ib = (await ed.webContents.executeJavaScript(
+          `(() => { const r = document.getElementById('ink').getBoundingClientRect(); return { x: r.left + r.width * 0.55, y: r.top + r.height * 0.75 }; })()`
+        )) as { x: number; y: number }
+        const px = Math.round(ib.x)
+        const py = Math.round(ib.y)
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 })
+        await sleep(250)
+        for (const ch of 'ab') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return', modifiers: ['shift'] })
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return', modifiers: ['shift'] })
+        for (const ch of 'cd') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
+        await sleep(100)
+        const boxState = (await ed.webContents.executeJavaScript(
+          `(() => { const b = document.querySelector('textarea.textbox'); return b ? { value: b.value, h: b.getBoundingClientRect().height } : null; })()`
+        )) as { value: string; h: number } | null
+        if (!boxState || boxState.value !== 'ab\ncd') errors.push(`Shift+Enter did not insert a newline: ${JSON.stringify(boxState)}`)
+        await shot(ed, join(shotsDir, 'editor-text-live.png'), warnings)
+        await enterInBox()
+        await sleep(300)
+        const multi = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }
+        const last = multi.annotations[multi.annotations.length - 1]
+        if (multi.annotations.length !== base0 + styled.length + 1 || last.kind !== 'text' || last.text !== 'ab\ncd') errors.push(`typed multi-line text wrong: ${JSON.stringify(last)}`)
+        report.textStyle = { typed: last.kind === 'text' ? last.text : null, boxHeight: boxState?.h }
+
+        // Undo the typed text and the styled batch so later steps see the original document.
+        await ed.webContents.executeJavaScript(`document.getElementById('undo').click(); document.getElementById('undo').click(); document.querySelector('[data-tool="pen"]').click(); true`)
+        await sleep(200)
+        if ((await count()) !== base0) errors.push(`undo did not remove the styled annotations: ${await count()} vs ${base0}`)
+        if (tlWasOpen) { await ed.webContents.executeJavaScript(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+      }
+
+      // Colour popover: one colour button per colour (pen, text background, outline) opening the shared picker. Real mouse / key
+      // input; checks palette pick, recents, Esc handling (the editor must not see it), anchoring, the open text box, the
+      // eyedropper fallback (sample mode) and that the toolbar rows still fit on one line at 820 px.
+      step = 'colors'
+      {
+        type ColorState = { color: string; textBg: string | null; textOutline: string | null; pickerOpen: boolean; annotations: unknown[]; compare: { on: boolean }; pointer: { down: number } }
+        const cs = (): Promise<ColorState> => state() as unknown as Promise<ColorState>
+        const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
+        const LS_KEYS = ['backseat.color', 'backseat.recentColors', 'backseat.palette']
+        const savedLs = await js<(string | null)[]>(`${JSON.stringify(LS_KEYS)}.map((k) => { try { return localStorage.getItem(k) } catch { return null } })`)
+        const origColor = (await cs()).color
+        const tlWasOpen = await js<boolean>(`!document.getElementById('timeline').hidden`)
+        if (tlWasOpen) { await js(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+        const rectOf = (sel: string): Promise<{ x: number; y: number; l: number; t: number; r: number; b: number } | null> => js(
+          `(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const r = e.getBoundingClientRect();
+             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), l: r.left, t: r.top, r: r.right, b: r.bottom }; })()`
+        )
+        const click = async (sel: string): Promise<boolean> => {
+          const p = await rectOf(sel)
+          if (!p) { errors.push(`colors: ${sel} not found`); return false }
+          ed.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y })
+          ed.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+          ed.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+          await sleep(160)
+          return true
+        }
+        const pressEsc = async (): Promise<void> => {
+          ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+          ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+          await sleep(150)
+        }
+        const popInfo = (): Promise<{ hidden: boolean; l: number; t: number; r: number; b: number; w: number; h: number; tab: string | null; title: string }> => js(
+          `(() => { const p = document.getElementById('color-pop'), r = p.getBoundingClientRect(), t = p.querySelector('.cp-tab.on');
+             return { hidden: p.hidden, l: r.left, t: r.top, r: r.right, b: r.bottom, w: window.innerWidth, h: window.innerHeight, tab: t ? t.dataset.id : null, title: p.querySelector('.cp-title').textContent }; })()`
+        )
+        const fits = (): Promise<Record<string, { fits: boolean; w: number; sw: number; h: number; hidden: boolean }> & { win: number }> => js(
+          `(() => { const fit = (id) => { const e = document.getElementById(id); return { hidden: e.hidden, fits: e.scrollWidth <= e.clientWidth, w: e.clientWidth, sw: e.scrollWidth, h: e.clientHeight }; };
+             return { toolbar: fit('toolbar'), toolbar2: fit('toolbar2'), textbar: fit('textbar'), win: window.innerWidth }; })()`
+        )
+        const inside = (p: { l: number; t: number; r: number; b: number; w: number; h: number }): boolean => p.l >= 0 && p.t >= 0 && p.r <= p.w && p.b <= p.h
+        const boxOpen = (): Promise<boolean> => js<boolean>(`document.querySelector('textarea.textbox') !== null`)
+        const annCount = async (): Promise<number> => (await cs()).annotations.length
+        const ann0 = await annCount()
+        const origBg = (await cs()).textBg
+        const origStyle = await js<string>(`document.querySelector('#text-style .active').dataset.textStyle`)
+
+        await js(`document.querySelector('[data-tool="pen"]').click(); true`)
+        await sleep(100)
+
+        // 1. pen colour button: open, screenshot, pick from 차분, recents, Escape
+        if (await click('#color')) {
+          const open = await cs()
+          const pop = await popInfo()
+          const anchor = await rectOf('#color')
+          if (!open.pickerOpen || pop.hidden) errors.push(`colour popover did not open: ${JSON.stringify({ open: open.pickerOpen, hidden: pop.hidden })}`)
+          if (!inside(pop)) errors.push(`colour popover is not inside the window: ${JSON.stringify(pop)}`)
+          if (anchor && (pop.t < anchor.b || Math.abs(pop.l - anchor.l) > 2)) errors.push(`colour popover is not anchored under #color: ${JSON.stringify({ pop, anchor })}`)
+          report.colorPop = pop
+          await shot(ed, join(shotsDir, 'editor-colors.png'), warnings)
+          const picked = '#4465E9' // 차분 palette
+          await click('#color-pop .cp-tab[data-id="calm"]')
+          await click(`#color-pop .cp-grid .cp-sw[data-hex="${picked}"]`)
+          const after = await cs()
+          const dot = await js<string>(`document.getElementById('color').dataset.color`)
+          const dotCss = await js<string>(`getComputedStyle(document.querySelector('#color .color-btn-dot')).backgroundColor`)
+          const recents = await js<string[]>(`JSON.parse(localStorage.getItem('backseat.recentColors') || '[]')`)
+          const savedColor = await js<string | null>(`localStorage.getItem('backseat.color')`)
+          if (after.color !== picked) errors.push(`pen colour did not change to ${picked}: ${after.color}`)
+          if (dot !== picked || dotCss !== 'rgb(68, 101, 233)') errors.push(`colour button dot not updated: ${dot} / ${dotCss}`)
+          if (!recents.map((c) => c.toUpperCase()).includes(picked)) errors.push(`recents lack ${picked}: ${JSON.stringify(recents)}`)
+          if (savedColor !== picked) errors.push(`backseat.color not persisted: ${savedColor}`)
+          if ((await popInfo()).tab !== 'calm') errors.push('차분 tab not selected')
+          if (!after.pickerOpen) errors.push('popover closed after a swatch pick (should stay open)')
+          const before = await cs()
+          await pressEsc()
+          const afterEsc = await cs()
+          if (afterEsc.pickerOpen || !(await popInfo()).hidden) errors.push('Escape did not close the colour popover')
+          if (ed.isDestroyed()) errors.push('Escape in the colour popover closed the editor')
+          else if (afterEsc.annotations.length !== before.annotations.length || afterEsc.compare.on !== before.compare.on || afterEsc.color !== picked) {
+            errors.push(`Escape in the colour popover had side effects: ${JSON.stringify({ before, afterEsc })}`)
+          }
+        }
+
+        // 2. layout at 820 px content width: all three rows on one line (text bar shown with the text tool)
+        if (!ed.isDestroyed()) {
+          const prevSize = ed.getContentSize()
+          await js(`document.querySelector('[data-tool="text"]').click(); true`)
+          ed.setContentSize(820, prevSize[1])
+          await sleep(350)
+          const f = await fits()
+          report.colorRows = f
+          for (const id of ['toolbar', 'toolbar2', 'textbar'] as const) {
+            if (!f[id].fits || (id !== 'textbar' && f[id].hidden)) errors.push(`#${id} does not fit on one line at ${f.win}px: ${JSON.stringify(f[id])}`)
+          }
+          if (f.textbar.hidden) errors.push('#textbar hidden with the text tool')
+          ed.setContentSize(prevSize[0], prevSize[1])
+          await sleep(300)
+        }
+
+        // 3. text background colour button (text tool): anchored popover, pastel pick, 자동 off
+        if (!ed.isDestroyed()) await js(`document.querySelector('[data-text-style="plate"]').click(); true`) // earlier steps may have left another style
+        if (!ed.isDestroyed() && (await click('#text-bg'))) {
+          const pop = await popInfo()
+          const anchor = await rectOf('#text-bg')
+          if (!(await cs()).pickerOpen) errors.push('text background popover did not open')
+          if (!inside(pop)) errors.push(`text background popover is not inside the window: ${JSON.stringify(pop)}`)
+          if (anchor && (pop.t < anchor.b || Math.abs(pop.l - anchor.l) > 2 || pop.title !== '배경 상자 색')) errors.push(`text background popover is not anchored under #text-bg: ${JSON.stringify({ pop, anchor })}`)
+          await shot(ed, join(shotsDir, 'editor-colors-textbg.png'), warnings)
+          const pastel = '#B2F2BB'
+          await click('#color-pop .cp-tab[data-id="pastel"]')
+          await click(`#color-pop .cp-grid .cp-sw[data-hex="${pastel}"]`)
+          const st = await cs()
+          const autoPressed = await js<string | null>(`document.getElementById('text-bg-auto').getAttribute('aria-pressed')`)
+          const bgDot = await js<string>(`document.getElementById('text-bg').dataset.color`)
+          if (st.textBg !== pastel || autoPressed !== 'false' || bgDot !== pastel) errors.push(`text background pick failed: ${JSON.stringify({ textBg: st.textBg, autoPressed, bgDot })}`)
+          await pressEsc()
+          if ((await cs()).pickerOpen || ed.isDestroyed()) errors.push('Escape did not just close the text background popover')
+          // the plate must follow into a live text box, and the box must survive working in the popover
+          if (!ed.isDestroyed()) {
+            const ib = await rectOf('#ink')
+            if (ib) {
+              const px = Math.round(ib.l + (ib.r - ib.l) * 0.8)
+              const py = Math.round(ib.t + (ib.b - ib.t) * 0.12)
+              ed.webContents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 })
+              ed.webContents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 })
+              await sleep(250)
+              for (const ch of 'hi') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
+              await sleep(80)
+              const bgOf = (): Promise<string | null> => js(`(() => { const b = document.querySelector('textarea.textbox'); return b ? getComputedStyle(b).backgroundColor : null; })()`)
+              if (await click('#text-bg')) {
+                await click('#color-pop .cp-grid .cp-sw[data-hex="#FFC9C9"]')
+                const live = await bgOf()
+                if (!live || !live.startsWith('rgba(255, 201, 201') && !live.startsWith('rgb(255, 201, 201')) errors.push(`live text box plate did not follow the popover pick: ${live}`)
+                if (!(await boxOpen())) errors.push('the open text box was closed by working in the colour popover')
+                await click('#color-pop .cp-tab[data-id="mono"]')
+                if (!(await boxOpen())) errors.push('the open text box was closed by a click inside the popover')
+                await pressEsc()
+                const focused = await js<boolean>(`document.activeElement === document.querySelector('textarea.textbox')`)
+                if (!(await boxOpen()) || !focused) errors.push(`closing the popover did not hand the focus back to the text box (open=${await boxOpen()}, focused=${focused})`)
+                await pressEsc() // now the text box's own Escape: cancels without a history step
+                if (await boxOpen()) errors.push('Escape did not cancel the text box')
+                if (ed.isDestroyed()) errors.push('Escape closed the editor instead of the text box')
+              }
+            }
+          }
+          // back to automatic plate (UI path) so later steps see the original look
+          if (!ed.isDestroyed()) {
+            if (origBg === null) {
+              await js(`document.getElementById('text-bg-auto').click(); true`)
+              await sleep(100)
+              if ((await cs()).textBg !== null) errors.push('could not restore the automatic plate colour')
+            }
+          }
+        }
+
+        // 4. eyedropper fallback: sample mode (window.EyeDropper hidden for the test)
+        if (!ed.isDestroyed()) {
+          await js(`document.querySelector('[data-tool="pen"]').click(); window.__edBackup = window.EyeDropper; window.EyeDropper = undefined; true`)
+          const before = await cs()
+          if (await click('#color')) {
+            await click('#color-pop .cp-drop')
+            const status = await js<string>(`document.getElementById('status').textContent`)
+            const sampling = await js<boolean>(`document.getElementById('stage').classList.contains('sampling')`)
+            const cursor = await js<string>(`getComputedStyle(document.getElementById('ink')).cursor`)
+            if (!status.includes('캡처 화면을 클릭해 색을 집으세요') || !sampling || cursor !== 'crosshair') errors.push(`sample mode not shown: ${JSON.stringify({ status, sampling, cursor })}`)
+            await pressEsc() // cancel: popover stays, nothing changes
+            const cancelled = await cs()
+            if (!cancelled.pickerOpen || cancelled.color !== before.color || await js<boolean>(`document.getElementById('stage').classList.contains('sampling')`)) {
+              errors.push(`Escape in sample mode: ${JSON.stringify({ open: cancelled.pickerOpen, color: cancelled.color })}`)
+            }
+            await click('#color-pop .cp-drop')
+            const ink = await rectOf('#ink')
+            if (ink) {
+              const px = Math.round(ink.l + (ink.r - ink.l) * 0.04)
+              const py = Math.round(ink.t + (ink.b - ink.t) * 0.04)
+              const expected = await js<string>(
+                `(() => { const i = document.getElementById('ink'), r = i.getBoundingClientRect(), b = document.getElementById('base');
+                   const d = b.getContext('2d').getImageData(Math.floor((${px} - r.left) * i.width / r.width), Math.floor((${py} - r.top) * i.height / r.height), 1, 1).data;
+                   return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase(); })()`
+              )
+              ed.webContents.sendInputEvent({ type: 'mouseMove', x: px, y: py })
+              ed.webContents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 })
+              ed.webContents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 })
+              await sleep(200)
+              const sampled = await cs()
+              report.colorSample = { expected, got: sampled.color }
+              if (sampled.color !== expected) errors.push(`sampled colour ${sampled.color} != pixel ${expected}`)
+              if (sampled.annotations.length !== before.annotations.length || sampled.pointer.down !== before.pointer.down) {
+                errors.push(`sampling leaked into the editor (annotation / pointer): ${JSON.stringify({ before: before.pointer, sampled: sampled.pointer, n: sampled.annotations.length })}`)
+              }
+              if (!sampled.pickerOpen) errors.push('popover closed after sampling')
+            }
+            await pressEsc()
+          }
+          await js(`window.EyeDropper = window.__edBackup; delete window.__edBackup; true`)
+        }
+
+        // restore: pen colour, text style, storage, tool, timeline
+        if (!ed.isDestroyed()) {
+          await js(`document.querySelector('[data-text-style="${origStyle}"]').click(); true`)
+          await js(`window.__backseat.setColor(${JSON.stringify(origColor)}); document.querySelector('[data-tool="pen"]').click(); true`)
+          await js(
+            `${JSON.stringify(LS_KEYS)}.forEach((k, i) => { const v = ${JSON.stringify(savedLs)}[i]; try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch {} }); true`
+          )
+          await sleep(100)
+          const fin = await cs()
+          if (fin.color !== origColor || fin.pickerOpen || (await annCount()) !== ann0) errors.push(`colour step left the editor changed: ${JSON.stringify({ color: fin.color, origColor, open: fin.pickerOpen, ann: await annCount(), ann0 })}`)
+          if (tlWasOpen) { await js(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+        }
+      }
+
+      // Target menu (Ctrl+T): pick another window / back to automatic, pin checkbox, Esc. Only the SendOptions that WOULD be used are
+      // read (window.__backseat.sendOptions()); nothing is sent.
+      step = 'target-menu'
+      {
+        type TmState = { tool: string; targetMenuOpen: boolean }
+        type SendOpts = { pressEnter?: boolean; targetHwnd?: number; pinTarget?: boolean }
+        const ts = (): Promise<TmState> => state() as unknown as Promise<TmState>
+        const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
+        const opts = (): Promise<SendOpts> => js<SendOpts>(`window.__backseat.sendOptions()`)
+        const label = (): Promise<string> => js<string>(`document.querySelector('#target-btn .tb-label').textContent`)
+        const key = async (keyCode: string, modifiers: ('control' | 'shift')[] = []): Promise<void> => {
+          ed.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+          ed.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+          await sleep(120)
+        }
+        const rectOf = (sel: string): Promise<{ x: number; y: number; l: number; t: number; r: number; b: number } | null> => js(
+          `(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const r = e.getBoundingClientRect();
+             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), l: r.left, t: r.top, r: r.right, b: r.bottom }; })()`
+        )
+        const click = async (sel: string): Promise<void> => {
+          const p = await rectOf(sel)
+          if (!p) { errors.push(`target-menu: ${sel} not found`); return }
+          ed.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y })
+          ed.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+          ed.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+          await sleep(150)
+        }
+        await js(`document.querySelector('[data-tool="pen"]').click(); true`)
+        const label0 = await label()
+        const tool0 = (await ts()).tool
+        const o0 = await opts()
+        if (o0.targetHwnd !== undefined || o0.pinTarget !== undefined) errors.push(`initial send options should be plain: ${JSON.stringify(o0)}`)
+
+        // 1. Ctrl+T opens the menu under the target bar
+        await key('T', ['control'])
+        const open1 = await js<{ rows: number; l: number; t: number; r: number; b: number; w: number; h: number; barB: number; first: string; chips: string[]; pin: boolean } | null>(
+          `(() => { const m = document.getElementById('target-menu'); if (m.hidden) return null; const r = m.getBoundingClientRect();
+             return { rows: m.querySelectorAll('.tm-item').length, l: r.left, t: r.top, r: r.right, b: r.bottom, w: window.innerWidth, h: window.innerHeight,
+                      barB: document.getElementById('targetbar').getBoundingClientRect().bottom, first: m.querySelector('.tm-title').textContent,
+                      chips: [...m.querySelectorAll('.tm-chip')].map((c) => c.textContent), pin: m.querySelector('.tm-pin input').checked }; })()`
+        )
+        if (!open1) errors.push('Ctrl+T did not open the target menu')
+        else {
+          report.targetMenu = open1
+          if (open1.rows !== 1 + FAKE_CANDIDATES.length) errors.push(`target menu rows: ${open1.rows}`)
+          if (!open1.first.startsWith('자동: ')) errors.push(`first menu row should be the automatic target: ${open1.first}`)
+          if (open1.l < 0 || open1.r > open1.w || open1.b > open1.h || open1.t < open1.barB) errors.push(`target menu is not under the bar / inside the window: ${JSON.stringify(open1)}`)
+          if (open1.pin) errors.push('pin checkbox should start unchecked (init.targetPinned is unset)')
+          if ((await ts()).tool !== tool0) errors.push('Ctrl+T changed the tool')
+        }
+        await shot(ed, join(shotsDir, 'editor-target-menu.png'), warnings)
+
+        // 2. ↓ ↓ Enter -> the second candidate (Codex)
+        await key('Down')
+        await key('Down')
+        await key('Return')
+        const picked = FAKE_CANDIDATES[1]
+        const label1 = await label()
+        const o1 = await opts()
+        if ((await ts()).targetMenuOpen) errors.push('Enter did not close the target menu')
+        if (!label1.includes(picked.label) || !label1.includes('(선택)') || label1 === label0) errors.push(`target bar did not change to the pick: ${label1}`)
+        if (o1.targetHwnd !== picked.hwnd || o1.pinTarget !== undefined) errors.push(`send options after picking: ${JSON.stringify(o1)}`)
+        if (ed.isDestroyed()) errors.push('Enter in the target menu closed / sent the editor')
+
+        // 3. reopen (selection kept), tick the pin box with the mouse, back to automatic with the mouse
+        await key('T', ['control'])
+        const active = await js<string | null>(`(() => { const a = document.querySelector('#target-menu .tm-item.active .tm-title'); return a ? a.textContent : null })()`)
+        if (active !== picked.title.slice(0, 40)) errors.push(`reopened menu should start on the current pick: ${active}`)
+        await click('#target-menu .tm-pin input')
+        await click('#target-menu .tm-item')
+        const label2 = await label()
+        const o2 = await opts()
+        if (label2 !== label0) errors.push(`automatic did not restore the label: ${label2} vs ${label0}`)
+        if (o2.targetHwnd !== undefined || o2.pinTarget !== true) errors.push(`send options with pin + automatic: ${JSON.stringify(o2)}`)
+        if ((await ts()).targetMenuOpen) errors.push('clicking a menu row did not close the menu')
+
+        // 4. Esc closes only the menu; Ctrl+T again toggles it closed; a plain T still selects the text tool
+        await key('T', ['control'])
+        if (!(await ts()).targetMenuOpen) errors.push('target menu did not reopen')
+        await key('Escape')
+        if ((await ts()).targetMenuOpen) errors.push('Escape did not close the target menu')
+        if (ed.isDestroyed()) errors.push('Escape closed the editor instead of the target menu')
+        else {
+          await key('T', ['control'])
+          await key('T', ['control'])
+          if ((await ts()).targetMenuOpen) errors.push('Ctrl+T did not toggle the menu closed')
+          await key('T')
+          if ((await ts()).tool !== 'text') errors.push('plain T no longer selects the text tool')
+          await js(`document.querySelector('[data-tool="pen"]').click(); true`)
+
+          // 5. reset: untick the pin, automatic
+          await key('T', ['control'])
+          await click('#target-menu .tm-pin input')
+          await click('#target-menu .tm-item')
+          const o3 = await opts()
+          if (o3.targetHwnd !== undefined || o3.pinTarget !== undefined) errors.push(`send options not reset: ${JSON.stringify(o3)}`)
+        }
+      }
+
       // Microphone path: start/stop a real recording (silence is fine) and let it run through STT.
       step = 'mic'
       const statusText = (): Promise<string> =>
@@ -497,8 +946,14 @@ export async function runSelfTest(): Promise<void> {
           ed.webContents.executeJavaScript(`window.__backseat.state().annotations.length`) as Promise<number>
         const before = await countAnn()
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="text"]').click(); true`)
-        ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 80, y: cy - 90, button: 'left', clickCount: 1 })
-        ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx - 80, y: cy - 90, button: 'left', clickCount: 1 })
+        await sleep(150) // the text tool shows #textbar, which moves the canvas down: click relative to the canvas
+        const inkAt = (fx: number, fy: number): Promise<{ x: number; y: number }> =>
+          ed.webContents.executeJavaScript(
+            `(() => { const r = document.getElementById('ink').getBoundingClientRect(); return { x: Math.round(r.left + r.width * ${fx}), y: Math.round(r.top + r.height * ${fy}) } })()`
+          ) as Promise<{ x: number; y: number }>
+        const tp = await inkAt(0.12, 0.15)
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: tp.x, y: tp.y, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: tp.x, y: tp.y, button: 'left', clickCount: 1 })
         await sleep(250)
         for (const ch of '가독성 OK') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
         await sleep(100)
@@ -511,18 +966,24 @@ export async function runSelfTest(): Promise<void> {
         )) as string
         report.textTool = { before, afterText, lastKind }
         if (afterText !== before + 1 || lastKind !== 'text') errors.push(`text tool did not add a text: ${JSON.stringify(report.textTool)}`)
-        await shot(ed, join(shotsDir, 'editor-text.png'), warnings)
+        await shot(ed, join(shotsDir, 'editor-text-typed.png'), warnings)
 
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="eraser"]').click(); true`)
-        ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 90, y: cy - 90, button: 'left', clickCount: 1 })
+        await sleep(150) // #textbar hides again: the text moved back up with the canvas
+        const ep = await inkAt(0.12, 0.15)
+        // Short sweep over the first glyphs only: with the timeline open the canvas is small and the pen stroke is close.
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: ep.x + 2, y: ep.y, button: 'left', clickCount: 1 })
         for (let i = 1; i <= 6; i++) {
-          ed.webContents.sendInputEvent({ type: 'mouseMove', x: cx - 90 + i * 15, y: cy - 90, button: 'left' })
+          ed.webContents.sendInputEvent({ type: 'mouseMove', x: ep.x + 2 + i * 5, y: ep.y, button: 'left' })
           await sleep(16)
         }
-        ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx, y: cy - 90, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: ep.x + 32, y: ep.y, button: 'left', clickCount: 1 })
         await sleep(300)
         const afterErase = await countAnn()
-        report.eraser = { afterErase, status: await statusText() }
+        report.eraser = {
+          afterErase, status: await statusText(), ep,
+          layout: await ed.webContents.executeJavaScript(`(() => { const c = document.getElementById('ink'); const r = c.getBoundingClientRect(); return { r: [r.left, r.top, r.width, r.height], px: [c.width, c.height] } })()`)
+        }
         if (afterErase !== before) errors.push(`eraser did not remove exactly the text: ${afterText} -> ${afterErase}`)
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="pen"]').click(); true`)
       }
@@ -607,6 +1068,7 @@ export async function runSelfTest(): Promise<void> {
     step = 'clipboard'
     const payload: ExportPayload = {
       pngDataUrl: init.imageDataUrl,
+      basePngDataUrl: init.imageDataUrl,
       memo: '자가 테스트 메모',
       annotations: [
         {
@@ -643,19 +1105,30 @@ export async function runSelfTest(): Promise<void> {
     for (const needle of ['③ 화살표', '④ 사각형', '⑤ 번호 1', '⑥ 블러']) {
       if (!brief.includes(needle)) errors.push(`brief missing ${needle}`)
     }
+    if (!brief.includes('Backseat 주석(사용자 추가)')) errors.push('brief lacks the Backseat annotation heading')
+    if (!brief.split('\n').some((l) => l.startsWith('> 주의:'))) errors.push('brief lacks the 주의 line')
+    if (brief.includes('screenshot.png')) errors.push('brief mentions screenshot.png without a screenshot')
+    if (brief.includes('## 전체 전사')) errors.push('brief still has the 전체 전사 section')
+    const shotBrief = buildBrief(payload, 'crop.png', null, { screenshotFileName: 'screenshot.png' })
+    if (!shotBrief.includes('원본(주석 없음): screenshot.png')) errors.push('brief lacks the screenshot reference line')
     report.briefLines = brief.split('\n').length
 
     // Session package (what "전송" writes before delivering).
     step = 'package'
     const pkg = await writeSessionPackage(payload, target, join(dirname(out), 'sessions'))
-    for (const f of [pkg.annotatedPng, pkg.briefMd, pkg.strokesJson, pkg.metaJson]) {
+    if (!pkg.screenshotPng) errors.push('package has no screenshot.png despite basePngDataUrl')
+    for (const f of [pkg.annotatedPng, pkg.briefMd, pkg.strokesJson, pkg.metaJson, ...(pkg.screenshotPng ? [pkg.screenshotPng] : [])]) {
       try {
         await access(f)
       } catch {
         errors.push(`package file missing: ${f}`)
       }
     }
-    const metaBack = JSON.parse(await readFile(pkg.metaJson, 'utf8')) as { target?: { label?: string } }
+    const pkgBrief = await readFile(pkg.briefMd, 'utf8')
+    if (!pkgBrief.includes('원본(주석 없음): screenshot.png') || !pkgBrief.includes('원래 화면은 screenshot.png')) errors.push('package brief does not reference screenshot.png')
+    if (pkgBrief.includes('## 전체 전사')) errors.push('package brief still has the 전체 전사 section')
+    const metaBack = JSON.parse(await readFile(pkg.metaJson, 'utf8')) as { target?: { label?: string }; files?: string[] }
+    if (!metaBack.files?.includes('screenshot.png')) errors.push('meta.json files lacks screenshot.png')
     if (metaBack.target?.label !== target.label) errors.push('meta.json target mismatch')
     report.sessionDir = pkg.dir
     report.instruction = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo)
@@ -672,6 +1145,8 @@ export async function runSelfTest(): Promise<void> {
       const pkg2 = await writeSessionPackage(voicePayload, target, join(dirname(out), 'sessions'))
       const brief2 = await readFile(pkg2.briefMd, 'utf8')
       if (!brief2.includes('🗣')) errors.push('brief has no speech lines')
+      if (!brief2.includes('음성:') || !brief2.includes('transcript.json')) errors.push('brief lacks the 음성 line')
+      if (brief2.includes('## 전체 전사')) errors.push('voice brief still has the 전체 전사 section')
       if (!brief2.includes('수동 연결')) errors.push('brief missing the manual link')
       if (!brief2.includes('selftest의 질문')) errors.push('brief missing the agent question')
       if (!pkg2.transcriptJson || !pkg2.audioFile) errors.push('package missing transcript/audio')

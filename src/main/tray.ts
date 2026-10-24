@@ -1,7 +1,7 @@
-import { app, Menu, nativeImage, shell, Tray } from 'electron'
+import { app, clipboard, Menu, nativeImage, shell, Tray } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { loadSettings, saveSettings, configPath } from './config'
+import { applyLoginItem, loadSettings, saveSettings, configPath, mcpServerPath } from './config'
 import { sessionsRoot } from './sessions'
 
 let tray: Tray | null = null
@@ -28,6 +28,12 @@ function trayIcon(): Electron.NativeImage {
   return nativeImage.createEmpty()
 }
 
+/** Put a ready-to-paste .mcp.json snippet pointing at this install's MCP server on the clipboard. */
+function copyMcpConfig(): void {
+  const snippet = { mcpServers: { backseat: { command: 'node', args: [mcpServerPath().replaceAll('\\', '/')] } } }
+  clipboard.writeText(JSON.stringify(snippet, null, 2))
+}
+
 function buildMenu(actions: TrayActions): Menu {
   const s = loadSettings()
   return Menu.buildFromTemplate([
@@ -47,7 +53,23 @@ function buildMenu(actions: TrayActions): Menu {
       checked: s.pressEnter,
       click: (item) => void saveSettings({ pressEnter: item.checked })
     },
+    {
+      label: app.isPackaged ? '로그인 시 자동 시작' : '로그인 시 자동 시작 (설치판에서만)',
+      type: 'checkbox',
+      enabled: app.isPackaged,
+      checked: app.isPackaged && s.launchAtLogin,
+      click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem)
+    },
+    ...(s.pinnedTargetProcess
+      ? [
+          {
+            label: `기본 대상 고정 해제 (${s.pinnedTargetProcess})`,
+            click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' })
+          }
+        ]
+      : []),
     { type: 'separator' },
+    { label: '에이전트 연결 설정(MCP) 복사', click: copyMcpConfig },
     { label: '세션 폴더 열기', click: () => void shell.openPath(sessionsRoot()) },
     { label: '설정 파일 열기', click: () => void shell.openPath(configPath()) },
     { type: 'separator' },

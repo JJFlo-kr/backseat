@@ -12,7 +12,9 @@ const root = process.cwd()
 export default defineConfig({
   main: {
     // koffi is a native (N-API) module: it must stay external, loaded from node_modules at runtime.
-    plugins: [externalizeDepsPlugin()],
+    // The MCP SDK and zod are bundled instead: the installed app runs out/main/mcp-server.js with plain
+    // Node from app.asar.unpacked, where there is no node_modules to resolve them from.
+    plugins: [externalizeDepsPlugin({ exclude: ['@modelcontextprotocol/sdk', 'zod'] })],
     build: {
       rollupOptions: {
         input: {
