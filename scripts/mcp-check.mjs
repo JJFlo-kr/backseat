@@ -1,63 +1,150 @@
-// End-to-end check of the built backseat-mcp server with the official MCP client.
-// usage: node scripts/mcp-check.mjs <sessionsRoot> [path/to/mcp-server.js]
+// Contract check of the built backseat-mcp server with the official MCP client.
+// usage: node scripts/mcp-check.mjs [sessionsRoot] [path/to/mcp-server.js]
+// Seeds its own session packages into sessionsRoot (a fresh temp folder when omitted), asserts every
+// answer and exits 1 on the first broken contract. MCP_OK is printed only when everything held.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = process.argv[2]
-if (!root) throw new Error('usage: mcp-check.mjs <sessionsRoot>')
+const root = process.argv[2] ?? (await mkdtemp(join(tmpdir(), 'backseat-mcp-check-')))
+const serverPath = process.argv[3] ?? join(here, '..', 'out', 'main', 'mcp-server.js')
+
+const failures = []
+function check(cond, what, detail = '') {
+  if (cond) return true
+  failures.push(detail ? `${what}: ${detail}` : what)
+  console.log(`FAIL ${what}${detail ? ` (${detail})` : ''}`)
+  return false
+}
+function finish() {
+  if (failures.length > 0) {
+    console.log(`MCP_FAILED ${failures.length} contract(s) broken`)
+    process.exit(1)
+  }
+  console.log('MCP_OK')
+  process.exit(0)
+}
+// A hanging server is a failure too.
+setTimeout(() => {
+  check(false, 'overall timeout (60 s)')
+  finish()
+}, 60_000).unref()
+
+// ---------- fixtures: packages published the way the app does it (staging folder, then rename) ----------
+
+// 1x1 PNGs that differ, so the check can tell annotated.png from screenshot.png.
+const PNG_ANNOTATED = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64')
+const PNG_ORIGINAL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+
+let seq = 0
+async function publish(marker, meta = {}) {
+  const now = new Date()
+  const p = (n, w = 2) => String(n).padStart(w, '0')
+  const id = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}-${p(now.getMilliseconds(), 3)}-c${p(seq++, 3)}`
+  const staging = join(root, `.writing-${id}`)
+  await mkdir(staging, { recursive: true })
+  const files = ['annotated.png', 'screenshot.png', 'brief.md', 'meta.json']
+  await writeFile(join(staging, 'annotated.png'), PNG_ANNOTATED)
+  await writeFile(join(staging, 'screenshot.png'), PNG_ORIGINAL)
+  await writeFile(join(staging, 'brief.md'), `# Backseat brief\n\n${marker}\n\n① 번호 1 (10,10)\n🗣 "여기"\n`, 'utf8')
+  await writeFile(join(staging, 'meta.json'), JSON.stringify({ id, memo: marker, files, ...meta }), 'utf8')
+  await rename(staging, join(root, id))
+  return id
+}
+
+const texts = (r) => (r?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n')
+const images = (r) => (r?.content ?? []).filter((c) => c.type === 'image')
+const sameBytes = (img, buf) => img?.mimeType === 'image/png' && Buffer.from(img.data ?? '', 'base64').equals(buf)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+await mkdir(root, { recursive: true })
+const seedId = await publish('SEED-PACKAGE')
+
+// ---------- the server ----------
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [process.argv[3] ?? join(here, '..', 'out', 'main', 'mcp-server.js')],
+  args: [serverPath],
   env: { ...process.env, BACKSEAT_SESSIONS: root }
 })
-const client = new Client({ name: 'mcp-check', version: '0.0.1' })
+const client = new Client({ name: 'mcp-check', version: '0.0.2' })
 await client.connect(transport)
 
-const tools = await client.listTools()
-console.log('TOOLS', tools.tools.map((t) => t.name).join(','))
+const EXPECTED_TOOLS = ['backseat_register', 'backseat_latest', 'backseat_list', 'backseat_get', 'backseat_wait', 'backseat_ask', 'backseat_agents']
+const tools = (await client.listTools()).tools.map((t) => t.name)
+console.log('TOOLS', tools.join(','))
+for (const name of EXPECTED_TOOLS) check(tools.includes(name), `tool ${name} listed`)
 
-const reg = await client.callTool({ name: 'backseat_register', arguments: { name: 'mcp-check', cwd: 'D:/backseat', kind: 'test' } })
-console.log('REGISTER', reg.content[0].text)
-
-const list = await client.callTool({ name: 'backseat_list', arguments: { limit: 5 } })
-console.log('LIST', list.content[0].text.split('\n').length, 'lines')
+const cwd = join(root, 'project-under-check')
+await client.callTool({ name: 'backseat_register', arguments: { name: 'mcp-check', cwd, kind: 'test' } })
+const agents = JSON.parse(texts(await client.callTool({ name: 'backseat_agents', arguments: {} })) || '[]')
+const me = Array.isArray(agents) ? agents.find((a) => a.name === 'mcp-check' && a.cwd === cwd) : undefined
+check(Boolean(me), 'backseat_register is visible in backseat_agents', JSON.stringify(agents).slice(0, 120))
+console.log('AGENTS', Array.isArray(agents) ? agents.length : 'invalid')
 
 const latest = await client.callTool({ name: 'backseat_latest', arguments: {} })
-const kinds = latest.content.map((c) => c.type).join('+')
-const text = latest.content.find((c) => c.type === 'text')?.text ?? ''
-console.log('LATEST', kinds, 'brief chars', text.length, 'has🗣', text.includes('🗣'))
-
+check(texts(latest).includes('SEED-PACKAGE'), 'backseat_latest returns the latest brief')
+check(images(latest).length === 1 && sameBytes(images(latest)[0], PNG_ANNOTATED), 'backseat_latest attaches annotated.png (image/png, exact bytes)', `${images(latest).length} image(s)`)
 const withOrig = await client.callTool({ name: 'backseat_latest', arguments: { includeOriginal: true } })
-console.log('LATEST+ORIGINAL', withOrig.content.map((c) => c.type).join('+'), '(expect text+text+image+text+image when the latest session has screenshot.png)')
+check(images(withOrig).length === 2 && sameBytes(images(withOrig)[0], PNG_ANNOTATED) && sameBytes(images(withOrig)[1], PNG_ORIGINAL),
+  'includeOriginal adds screenshot.png after annotated.png', `${images(withOrig).length} image(s)`)
+const textOnly = await client.callTool({ name: 'backseat_latest', arguments: { includeImage: false } })
+check(images(textOnly).length === 0 && texts(textOnly).includes('SEED-PACKAGE'), 'includeImage:false returns the brief only')
+console.log('LATEST', latest.content?.map((c) => c.type).join('+'))
 
-const agents = await client.callTool({ name: 'backseat_agents', arguments: {} })
-console.log('AGENTS', JSON.parse(agents.content[0].text).length)
+check(texts(await client.callTool({ name: 'backseat_list', arguments: { limit: 5 } })).includes(seedId), 'backseat_list lists the package id')
+const got = await client.callTool({ name: 'backseat_get', arguments: { id: seedId } })
+check(texts(got).includes('SEED-PACKAGE') && images(got).length === 1, 'backseat_get returns the package by id')
+const missing = await client.callTool({ name: 'backseat_get', arguments: { id: '20000101-000000-none' } })
+check(missing.isError === true, 'backseat_get of an unknown id is an error')
 
-// wait with a short timeout: must return the timeout message, not hang
-const t0 = Date.now()
-const w = await client.callTool({ name: 'backseat_wait', arguments: { timeoutSec: 1 } })
-console.log('WAIT', Math.round((Date.now() - t0) / 100) / 10 + 's', w.content[0].text.slice(0, 30))
+// wait: an existing package is not "new"; a short timeout returns (no hang, no image).
+let t0 = Date.now()
+const timedOut = await client.callTool({ name: 'backseat_wait', arguments: { timeoutSec: 1 } })
+const waited = Date.now() - t0
+check(waited >= 900 && waited < 5000, 'backseat_wait honours timeoutSec', `${waited} ms`)
+check(images(timedOut).length === 0 && !texts(timedOut).includes('SEED-PACKAGE'), 'backseat_wait does not return an old package')
+console.log('WAIT', `${Math.round(waited / 100) / 10}s`)
 
-// ask round trip: the server writes requests/<id>.json; we play the app and answer with a package
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-const askPromise = client.callTool({ name: 'backseat_ask', arguments: { question: '어느 버튼이 문제인지 표시해 주세요', timeoutSec: 15 } })
-await new Promise((r) => setTimeout(r, 800))
-const reqDir = join(root, 'requests')
-const reqFiles = (await readdir(reqDir)).filter((f) => f.endsWith('.json'))
-const req = JSON.parse(await readFile(join(reqDir, reqFiles[reqFiles.length - 1]), 'utf8'))
-console.log('REQUEST', req.question === '어느 버튼이 문제인지 표시해 주세요' ? 'written' : 'mismatch', req.agent)
-const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/^(\d{8})(\d{6}).*/, '$1-$2')
-const dir = join(root, stamp + '-ask')
-await mkdir(dir, { recursive: true })
-await writeFile(join(dir, 'brief.md'), `# answer\n\n> ${req.question}\n\n① 번호 1 (10,10)\n`, 'utf8')
-await writeFile(join(dir, 'meta.json'), JSON.stringify({ id: stamp, requestId: req.requestId, files: ['brief.md', 'meta.json'] }), 'utf8')
-const ans = await askPromise
-const ansText = ans.content.find((c) => c.type === 'text')?.text ?? ''
-console.log('ASK', ansText.includes('# answer') ? 'resolved with the answer package' : 'unexpected: ' + ansText.slice(0, 60))
+// wait: a package addressed to another agent is skipped; the next one for anyone is returned.
+const waitNew = client.callTool({ name: 'backseat_wait', arguments: { timeoutSec: 20 } })
+await sleep(600)
+await publish('FOR-ANOTHER-AGENT', { recipient: { agentId: '999999999', name: 'other', cwd: 'D:/elsewhere' } })
+await sleep(1500)
+await publish('NEW-PACKAGE')
+const newPkg = await waitNew
+check(texts(newPkg).includes('NEW-PACKAGE'), 'backseat_wait returns the next package (and skips one addressed to another agent)', texts(newPkg).slice(0, 80))
+check(images(newPkg).length === 1, 'backseat_wait attaches annotated.png')
+
+// ask: writes requests/<id>.json, ignores unrelated packages, resolves with the answer carrying requestId.
+const question = '어느 버튼이 문제인지 표시해 주세요'
+const askPromise = client.callTool({ name: 'backseat_ask', arguments: { question, timeoutSec: 20 } })
+let req = null
+for (let i = 0; i < 40 && !req; i++) {
+  await sleep(100)
+  try {
+    const names = (await readdir(join(root, 'requests'))).filter((f) => f.endsWith('.json'))
+    if (names.length) req = JSON.parse(await readFile(join(root, 'requests', names.sort().at(-1)), 'utf8'))
+  } catch {
+    /* not written yet */
+  }
+}
+check(Boolean(req), 'backseat_ask writes requests/<id>.json')
+if (req) {
+  check(req.question === question, 'request carries the question')
+  check(req.agent === 'mcp-check', 'request names the registered agent', String(req.agent))
+  check(typeof req.requestId === 'string' && req.requestId.length > 0, 'request has a requestId')
+  await publish('UNRELATED-PACKAGE')
+  await sleep(1500)
+  await publish('ASK-ANSWER', { requestId: req.requestId })
+  const ans = await askPromise
+  check(texts(ans).includes('ASK-ANSWER') && !texts(ans).includes('UNRELATED-PACKAGE'), 'backseat_ask resolves with the package that answers its requestId', texts(ans).slice(0, 80))
+  console.log('ASK', texts(ans).includes('ASK-ANSWER') ? 'answered' : 'wrong answer')
+}
 
 await client.close()
-console.log('MCP_OK')
+finish()

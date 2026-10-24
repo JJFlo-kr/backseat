@@ -1,0 +1,22 @@
+# The GUI self-test (npm run selftest) needs a desktop session, so it is not run in CI.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # MCP contract check against the freshly built out/main/mcp-server.js (uses a temp folder).
+      - run: node scripts/mcp-check.mjs

@@ -1,18 +1,11 @@
 import type { AgentTarget, Annotation, ExportPayload, Segment } from '../shared/types.ts'
-import { alignSegments, groupByAnnotation, type Assignment } from '../shared/align.ts'
+import { alignSegments, fmtClock, groupByAnnotation, type Assignment } from '../shared/align.ts'
 import { t, type Translate } from '../shared/i18n.ts'
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
 
 function badge(i: number): string {
   return i < CIRCLED.length ? CIRCLED[i] : `(${i + 1})`
-}
-
-function fmtTime(ms: number): string {
-  const s = ms / 1000
-  const m = Math.floor(s / 60)
-  const rest = (s - m * 60).toFixed(1).padStart(4, '0')
-  return `${String(m).padStart(2, '0')}:${rest}`
 }
 
 const r = Math.round
@@ -42,7 +35,7 @@ function textStyleNote(a: Extract<Annotation, { kind: 'text' }>, tr: Translate):
 }
 
 function describe(a: Annotation, i: number, withColor: boolean, withSpan: boolean, tr: Translate): string {
-  const span = withSpan ? ` [${fmtTime(a.tStart)}–${fmtTime(a.tEnd)}]` : ''
+  const span = withSpan ? ` [${fmtClock(a.tStart)}–${fmtClock(a.tEnd)}]` : ''
   const color = (c: string): string => (withColor ? ` ${c}` : '')
   switch (a.kind) {
     case 'text':
@@ -140,7 +133,7 @@ export function buildBrief(
     const s = segments[segIdx]
     const a = assignments[segIdx]
     const how = a.source === 'manual' ? tr('brief.speech.manual') : tr('brief.speech.auto', { confidence: a.confidence.toFixed(2) })
-    return `🗣 "${oneLine(s.text)}" [${fmtTime(s.start)}–${fmtTime(s.end)}] (${how})`
+    return `🗣 "${oneLine(s.text)}" [${fmtClock(s.start)}–${fmtClock(s.end)}] (${how})`
   }
 
   if (annotations.length > 0) {
