@@ -838,8 +838,14 @@ export async function runSelfTest(): Promise<void> {
           ed.webContents.executeJavaScript(`window.__backseat.state().annotations.length`) as Promise<number>
         const before = await countAnn()
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="text"]').click(); true`)
-        ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 80, y: cy - 90, button: 'left', clickCount: 1 })
-        ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx - 80, y: cy - 90, button: 'left', clickCount: 1 })
+        await sleep(150) // the text tool shows #textbar, which moves the canvas down: click relative to the canvas
+        const inkAt = (fx: number, fy: number): Promise<{ x: number; y: number }> =>
+          ed.webContents.executeJavaScript(
+            `(() => { const r = document.getElementById('ink').getBoundingClientRect(); return { x: Math.round(r.left + r.width * ${fx}), y: Math.round(r.top + r.height * ${fy}) } })()`
+          ) as Promise<{ x: number; y: number }>
+        const tp = await inkAt(0.12, 0.15)
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: tp.x, y: tp.y, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: tp.x, y: tp.y, button: 'left', clickCount: 1 })
         await sleep(250)
         for (const ch of '가독성 OK') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
         await sleep(100)
@@ -855,15 +861,21 @@ export async function runSelfTest(): Promise<void> {
         await shot(ed, join(shotsDir, 'editor-text-typed.png'), warnings)
 
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="eraser"]').click(); true`)
-        ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 90, y: cy - 90, button: 'left', clickCount: 1 })
+        await sleep(150) // #textbar hides again: the text moved back up with the canvas
+        const ep = await inkAt(0.12, 0.15)
+        // Short sweep over the first glyphs only: with the timeline open the canvas is small and the pen stroke is close.
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: ep.x + 2, y: ep.y, button: 'left', clickCount: 1 })
         for (let i = 1; i <= 6; i++) {
-          ed.webContents.sendInputEvent({ type: 'mouseMove', x: cx - 90 + i * 15, y: cy - 90, button: 'left' })
+          ed.webContents.sendInputEvent({ type: 'mouseMove', x: ep.x + 2 + i * 5, y: ep.y, button: 'left' })
           await sleep(16)
         }
-        ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx, y: cy - 90, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: ep.x + 32, y: ep.y, button: 'left', clickCount: 1 })
         await sleep(300)
         const afterErase = await countAnn()
-        report.eraser = { afterErase, status: await statusText() }
+        report.eraser = {
+          afterErase, status: await statusText(), ep,
+          layout: await ed.webContents.executeJavaScript(`(() => { const c = document.getElementById('ink'); const r = c.getBoundingClientRect(); return { r: [r.left, r.top, r.width, r.height], px: [c.width, c.height] } })()`)
+        }
         if (afterErase !== before) errors.push(`eraser did not remove exactly the text: ${afterText} -> ${afterErase}`)
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="pen"]').click(); true`)
       }
