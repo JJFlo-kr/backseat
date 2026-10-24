@@ -1,7 +1,6 @@
 # Backseat (AI 소통기)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/REPLACE_ME)
 
 화면을 캡처하고, 그 위에 그리면서 말하고, 그대로 AI 코딩 에이전트에게 보내는 Windows 도구.
 "backseat driver"에서 이름을 땄다. AI가 운전(코딩)하고, 사용자는 뒷좌석에서 화면을 가리키며 지시한다.
@@ -91,7 +90,7 @@ transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-
 
 ## 후원
 
-Backseat은 **무료**이며 모든 기능을 제한 없이 쓸 수 있습니다. 도움이 되었다면 [Buy Me a Coffee](https://buymeacoffee.com/REPLACE_ME)로 커피 한 잔 후원해 주시면 큰 힘이 되지만, 후원은 어디까지나 선택입니다(트레이 메뉴 "후원하기 ☕"와 "정보…" 창에서도 같은 링크로 연결됩니다). 링크는 [`src/shared/links.ts`](src/shared/links.ts)의 `SUPPORT_URL`과 이 README에 있습니다.
+Backseat은 **무료**이며 모든 기능을 제한 없이 쓸 수 있습니다. 후원 링크(Buy Me a Coffee)는 준비 중이며, 열리면 이 자리와 트레이 메뉴에 연결됩니다. 후원은 어디까지나 선택입니다(트레이 메뉴 "후원하기 ☕"와 "정보…" 창에서도 같은 링크로 연결됩니다). 링크는 [`src/shared/links.ts`](src/shared/links.ts)의 `SUPPORT_URL`과 이 README에 있습니다.
 
 ## 라이선스
 
