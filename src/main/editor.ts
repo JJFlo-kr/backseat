@@ -12,14 +12,19 @@ import type {
   TranscribeRequest,
   VideoSave
 } from '../shared/types'
+import { pinParts, rememberTarget } from './agents'
 import { buildBrief } from './brief'
+import { saveSettings } from './config'
+import { isWindow } from './native/win32'
 import { sendToTarget } from './send'
 import { transcribe } from './stt'
 import { baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
 let ipcInstalled = false
 /** Delivery target per editor window (several editors can be open at once). */
-const targets = new WeakMap<Electron.WebContents, AgentTarget | null>
+const targets = new WeakMap<Electron.WebContents, AgentTarget | null>()
+/** Other windows offered in each editor's target menu; a send may only pick the detected target or one of these. */
+const candidateTargets = new WeakMap<Electron.WebContents, AgentTarget[]>()
 
 function stamp(d = new Date()): string {
   const p = (n: number): string => String(n).padStart(2, '0')
@@ -103,9 +108,23 @@ export function installEditorIpc(): void {
   ipcMain.handle(IPC.editorSaveVideo, (e, video: VideoSave) =>
     handleSaveVideo(BrowserWindow.fromWebContents(e.sender), video)
   )
-  ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions) =>
-    sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, targets.get(e.sender) ?? null, opts)
-  )
+  ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions = {}) => {
+    const detected = targets.get(e.sender) ?? null
+    let chosen = detected
+    // A picked window must be the detected target or one of THIS editor's candidates, and must still exist.
+    if (opts.targetHwnd && opts.targetHwnd !== detected?.hwnd) {
+      const pick = candidateTargets.get(e.sender)?.find((t) => t.hwnd === opts.targetHwnd)
+      if (pick && isWindow(pick.hwnd)) chosen = pick
+    }
+    if (chosen?.hwnd) rememberTarget(chosen)
+    if (opts.pinTarget === true && chosen?.hwnd && chosen.process) {
+      const p = pinParts(chosen)
+      void saveSettings({ pinnedTargetProcess: p.process, pinnedTargetTitle: p.title })
+    } else if (opts.pinTarget === false) {
+      void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' })
+    }
+    return sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, chosen, opts)
+  })
   ipcMain.handle(IPC.editorPin, (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) return false
@@ -160,6 +179,7 @@ export function createEditorWindow(init: EditorInit, errors?: string[]): Browser
   })
   win.setMenu(null)
   targets.set(win.webContents, init.target)
+  candidateTargets.set(win.webContents, init.candidates ?? [])
   if (errors) watchRendererErrors(win.webContents, errors, 'editor')
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return

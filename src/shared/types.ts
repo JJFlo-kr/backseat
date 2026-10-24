@@ -27,6 +27,8 @@ export interface WindowInfo {
   process: string
   /** DIP bounds. In SelectorInit they are relative to that display's window; elsewhere virtual-desktop. */
   bounds: Rect
+  /** Win32 window class (e.g. "Progman", "Shell_TrayWnd"), when known: tells the desktop / taskbar apart from apps. */
+  className?: string
 }
 
 /** main -> selector renderer, once per selector window. */
@@ -146,6 +148,13 @@ export interface EditorInit {
   autoRecord?: boolean
   /** The agent's question this capture is answering, if any. */
   request?: AskRequest
+  /**
+   * Other open top-level windows the user may pick as this capture's target instead (front-most first,
+   * our own windows excluded, at most 12). Each is already classified; unknown apps are kind 'unknown'.
+   */
+  candidates?: AgentTarget[]
+  /** The detected target came from the user's pinned default (config pinnedTargetProcess/Title). */
+  targetPinned?: boolean
   /** Previous capture of the same region (tray "마지막 영역 다시 캡처"): enables the compare view (O). */
   compare?: CompareSource
   /** Self-test only: lets the harness inject a transcript via a DOM event. */
@@ -337,6 +346,10 @@ export interface CopyResult {
 export interface SendOptions {
   /** Press Enter after pasting (default false: the user reviews the line first). */
   pressEnter?: boolean
+  /** Deliver to this window (one of EditorInit.candidates / the detected target) instead of the detected target. */
+  targetHwnd?: number
+  /** Also make that window the default target from now on (config pinnedTargetProcess/Title); false = unpin. */
+  pinTarget?: boolean
 }
 
 export interface SendResult {

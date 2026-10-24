@@ -1,5 +1,5 @@
 import type {
-  EditorInit, ExportPayload, Annotation, AgentTarget, Point, Transcript, Rect, CompareMode, CaptureMeta
+  EditorInit, ExportPayload, Annotation, AgentTarget, AgentKind, Point, Transcript, Rect, CompareMode, CaptureMeta, SendOptions
 } from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
@@ -89,6 +89,7 @@ const cmpCtx = ctxOf(cmp, true)
 const memoInput = byId<HTMLInputElement>('memo')
 const statusEl = byId<HTMLElement>('status')
 const targetBar = byId<HTMLElement>('targetbar')
+const targetBtn = byId<HTMLButtonElement>('target-btn')
 const undoBtn = byId<HTMLButtonElement>('undo')
 const redoBtn = byId<HTMLButtonElement>('redo')
 const timelineBtn = byId<HTMLButtonElement>('timeline-toggle')
@@ -1487,12 +1488,12 @@ async function send(): Promise<void> {
     const payload = buildPayload()
     if (!payload) return
     setStatus('전송 중…')
-    const r = await window.backseat.editor.send(payload, { pressEnter: false })
+    const r = await window.backseat.editor.send(payload, sendOptions())
     setStatus(r.message, !r.ok)
     if (r.ok && r.delivered === 'clipboard') {
       // nothing was pasted anywhere: keep the editor open so the user sees what happened
-      targetBar.textContent = '대상 창이 없어 클립보드에 복사했습니다. 채팅창이나 터미널에 Ctrl+V 하세요.'
-      targetBar.title = ''
+      targetNote = '대상 창이 없어 클립보드에 복사했습니다. 채팅창이나 터미널에 Ctrl+V 하세요.'
+      showTarget()
     } else if (r.ok && r.delivered === 'pasted') {
       closing = true // stay busy: no double send while the status is visible
       if (!pinned) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
@@ -1510,20 +1511,200 @@ const METHOD_HINT: Record<AgentTarget['method'], string> = {
   clipboard: '클립보드'
 }
 
-function showTarget(target: AgentTarget | null): void {
-  targetBar.textContent = ''
-  if (!target) {
-    targetBar.textContent = '대상 없음 · 전송하면 클립보드에 복사됩니다'
-    targetBar.title = ''
+// ---------- send target (detected, or picked from the Ctrl+T menu for this send only) ----------
+
+let initData: EditorInit | null = null // the init payload as received (`init` is set once the image is drawn)
+/** The window picked in the target menu; null = the automatic / pinned target main detected. */
+let chosenTarget: AgentTarget | null = null
+/** State of the "pin as default" checkbox. */
+let pinChecked = false
+/** One-off message replacing the target label (e.g. after a clipboard-only send). */
+let targetNote = ''
+
+function showTarget(): void {
+  const label = targetBtn.querySelector<HTMLElement>('.tb-label')
+  const hint = targetBtn.querySelector<HTMLElement>('.hint')
+  if (!label || !hint) return
+  const target = chosenTarget ?? initData?.target ?? null
+  const menuTitle = hotkeys.label('target')
+  if (targetNote) {
+    label.textContent = targetNote
+    hint.textContent = ''
+    targetBtn.title = menuTitle
     return
   }
-  targetBar.append(`→ ${target.label}`)
-  const hint = document.createElement('span')
-  hint.className = 'hint'
+  if (!target) {
+    label.textContent = '대상 없음 · 전송하면 클립보드에 복사됩니다'
+    hint.textContent = ''
+    targetBtn.title = menuTitle
+    return
+  }
+  const tag = chosenTarget ? ' (선택)' : initData?.targetPinned ? ' (고정)' : ''
+  label.textContent = `→ ${target.label}${tag}`
   hint.textContent = METHOD_HINT[target.method]
-  targetBar.append(hint)
-  targetBar.title = `${target.title} (${target.process})`
+  targetBtn.title = `${menuTitle}\n${target.title} (${target.process})`
 }
+
+/** What 전송 passes to the main process: the picked window and / or a changed pin state. */
+function sendOptions(): SendOptions {
+  const o: SendOptions = { pressEnter: false }
+  if (chosenTarget) o.targetHwnd = chosenTarget.hwnd
+  if (pinChecked !== (initData?.targetPinned === true)) o.pinTarget = pinChecked
+  return o
+}
+
+const KIND_CHIP: Record<AgentKind, string> = {
+  'claude-code': 'Claude Code', 'claude-desktop': 'Claude 앱', cursor: 'Cursor', vscode: 'VS Code', codex: 'Codex',
+  orca: 'Orca', terminal: '터미널', chat: '웹 채팅', unknown: '창'
+}
+function kindChip(t: AgentTarget): string {
+  if (t.kind === 'chat') return /^slack/i.test(t.label) ? 'Slack' : /^discord/i.test(t.label) ? 'Discord' : '웹 채팅'
+  return KIND_CHIP[t.kind]
+}
+const METHOD_ROW_HINT: Record<AgentTarget['method'], string> = {
+  'paste-path': '경로 붙여넣기',
+  'paste-image': '이미지 붙여넣기',
+  clipboard: '클립보드'
+}
+
+const targetMenu = document.createElement('div')
+targetMenu.id = 'target-menu'
+targetMenu.hidden = true
+targetMenu.setAttribute('role', 'listbox')
+targetMenu.setAttribute('aria-label', '전송 대상')
+document.body.append(targetMenu)
+let menuRows: { el: HTMLElement; target: AgentTarget | null }[] = []
+let menuActive = 0
+
+const targetMenuOpen = (): boolean => !targetMenu.hidden
+
+function setMenuActive(i: number): void {
+  menuActive = (i + menuRows.length) % menuRows.length
+  menuRows.forEach((r, k) => r.el.classList.toggle('active', k === menuActive))
+  menuRows[menuActive]?.el.scrollIntoView({ block: 'nearest' })
+}
+
+function pickMenuRow(i: number): void {
+  const row = menuRows[i]
+  if (!row) return
+  chosenTarget = row.target
+  targetNote = ''
+  closeTargetMenu()
+  showTarget()
+}
+
+function closeTargetMenu(): void {
+  if (!targetMenuOpen()) return
+  targetMenu.hidden = true
+  targetMenu.replaceChildren()
+  menuRows = []
+  targetBtn.setAttribute('aria-expanded', 'false')
+  document.removeEventListener('pointerdown', onMenuPointerDown, true)
+  window.removeEventListener('keydown', onMenuKey, true)
+  window.removeEventListener('resize', closeTargetMenu)
+}
+
+function onMenuPointerDown(e: PointerEvent): void {
+  const t = e.target as Node | null
+  if (t && (targetMenu.contains(t) || targetBtn.contains(t))) return
+  closeTargetMenu()
+}
+
+function onMenuKey(e: KeyboardEvent): void {
+  if (e.isComposing) return
+  const stop = (): void => { e.preventDefault(); e.stopImmediatePropagation() }
+  if (e.key === 'Escape') { stop(); closeTargetMenu() }
+  else if (e.key === 'ArrowDown') { stop(); setMenuActive(menuActive + 1) }
+  else if (e.key === 'ArrowUp') { stop(); setMenuActive(menuActive - 1) }
+  else if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement)) { stop(); pickMenuRow(menuActive) }
+}
+
+function openTargetMenu(): void {
+  if (!initData) return
+  commitPendingText() // the menu and an open text box would fight over the keyboard
+  picker.close()
+  const detected = initData.target
+  const cands = initData.candidates ?? []
+  const list = document.createElement('div')
+  list.className = 'tm-list'
+  menuRows = []
+  const addRow = (t: AgentTarget | null, chip: string, agent: boolean, text: string, hint: string, current: boolean): void => {
+    const el = document.createElement('div')
+    el.className = 'tm-item'
+    el.setAttribute('role', 'option')
+    el.setAttribute('aria-selected', String(current))
+    const mark = document.createElement('span')
+    mark.className = 'tm-mark'
+    mark.textContent = current ? '✓' : ''
+    const c = document.createElement('span')
+    c.className = `tm-chip${agent ? ' agent' : ''}`
+    c.textContent = chip
+    const title = document.createElement('span')
+    title.className = 'tm-title'
+    title.textContent = text
+    title.title = text
+    const h = document.createElement('span')
+    h.className = 'tm-hint'
+    h.textContent = hint
+    el.append(mark, c, title, h)
+    const idx = menuRows.length
+    el.addEventListener('click', () => pickMenuRow(idx))
+    el.addEventListener('mousemove', () => { if (menuActive !== idx) setMenuActive(idx) })
+    menuRows.push({ el, target: t })
+    list.append(el)
+  }
+  const pinned = initData.targetPinned === true
+  addRow(
+    null, pinned ? '고정' : '자동', true,
+    detected ? `${pinned ? '고정' : '자동'}: ${detected.label}` : '자동: 대상 없음 (클립보드)',
+    detected ? METHOD_ROW_HINT[detected.method] : '', chosenTarget === null
+  )
+  let sepDone = false
+  for (const t of cands) {
+    if (!sepDone && t.kind === 'unknown') {
+      sepDone = true
+      const sep = document.createElement('div')
+      sep.className = 'tm-sep'
+      list.append(sep)
+    }
+    addRow(t, kindChip(t), t.kind !== 'unknown', t.title.slice(0, 40) || t.process, METHOD_ROW_HINT[t.method], chosenTarget?.hwnd === t.hwnd)
+  }
+  const foot = document.createElement('div')
+  foot.className = 'tm-foot'
+  const pin = document.createElement('label')
+  pin.className = 'tm-pin'
+  const box = document.createElement('input')
+  box.type = 'checkbox'
+  box.checked = pinChecked
+  box.addEventListener('change', () => { pinChecked = box.checked })
+  pin.append(box, '이 창을 기본 대상으로 고정')
+  foot.append(pin)
+  targetMenu.replaceChildren(list, foot)
+
+  targetMenu.hidden = false
+  targetMenu.style.visibility = 'hidden'
+  const a = targetBtn.getBoundingClientRect()
+  const bar = targetBar.getBoundingClientRect()
+  const vw = document.documentElement.clientWidth
+  const vh = document.documentElement.clientHeight
+  const top = Math.round(bar.bottom + 2)
+  list.style.maxHeight = `${Math.max(80, vh - top - 8 - 48)}px` // keep room for the footer row
+  const w = targetMenu.offsetWidth
+  targetMenu.style.left = `${Math.round(Math.max(8, Math.min(a.left, vw - w - 8)))}px`
+  targetMenu.style.top = `${top}px`
+  targetMenu.style.visibility = ''
+  targetBtn.setAttribute('aria-expanded', 'true')
+  setMenuActive(Math.max(0, menuRows.findIndex((r) => (r.target?.hwnd ?? null) === (chosenTarget?.hwnd ?? null))))
+  document.addEventListener('pointerdown', onMenuPointerDown, true)
+  window.addEventListener('keydown', onMenuKey, true)
+  window.addEventListener('resize', closeTargetMenu)
+}
+
+function toggleTargetMenu(): void {
+  if (targetMenuOpen()) closeTargetMenu()
+  else openTargetMenu()
+}
+targetBtn.addEventListener('mousedown', (e) => e.preventDefault())
 
 async function copy(): Promise<void> {
   if (busy || !init) return
@@ -2064,6 +2245,7 @@ const hotkeys = new Hotkeys([
   { id: 'redo', label: '다시 실행', keys: ['Ctrl+Shift+KeyZ', 'Ctrl+KeyY'], run: redo },
   { id: 'pen', label: '펜', keys: ['KeyP'], run: () => setTool('pen') },
   { id: 'text', label: '텍스트', keys: ['KeyT'], run: () => setTool('text') },
+  { id: 'target', label: '전송 대상 바꾸기', keys: ['Ctrl+KeyT'], context: 'global', run: toggleTargetMenu },
   { id: 'arrow', label: '화살표', keys: ['KeyA'], run: () => setTool('arrow') },
   { id: 'rect', label: '사각형', keys: ['KeyR'], run: () => setTool('rect') },
   { id: 'badge', label: '번호', keys: ['KeyN'], run: () => setTool('badge') },
@@ -2114,7 +2296,9 @@ window.backseat.editor.onInit((data) => {
   t0 = performance.now()
   document.title = 'Backseat'
   syncToolbar()
-  showTarget(data.target)
+  initData = data
+  pinChecked = data.targetPinned === true
+  showTarget()
   if (data.request) {
     const q = document.createElement('span')
     q.className = 'ask'
@@ -2153,6 +2337,7 @@ window.backseat.editor.onInit((data) => {
         textBg: textBg ?? null,
         textOutline: textOutline ?? null,
         pickerOpen: picker.isOpen(),
+        targetMenuOpen: targetMenuOpen(),
         cropDrag: cropDrag !== null,
         pointer: { ...pointerCounts },
         compare: { available: compareImg !== null, on: cmpOn, mode: cmpMode, diffPercent: compareImg ? diffPercent() : null }
@@ -2163,6 +2348,8 @@ window.backseat.editor.onInit((data) => {
       addAnnotations: (list: Annotation[]) => { commit('주석 추가 (디버그)', [...annotations, ...list]) },
       /** Restore the pen colour without the popover (self-test cleanup). */
       setColor: (c: string) => setColor(c, false),
+      /** The SendOptions 전송 would pass right now (nothing is sent). */
+      sendOptions: () => sendOptions(),
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
       payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
     }

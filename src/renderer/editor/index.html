@@ -88,7 +88,9 @@
       <button type="button" class="tgl tgl-shadow" id="text-shadow" aria-pressed="false" title="그림자">그림자</button>
     </div>
 
-    <div id="targetbar" role="status"></div>
+    <div id="targetbar">
+      <button type="button" class="target-btn" id="target-btn" data-command="target" aria-haspopup="listbox" aria-expanded="false"><span class="tb-label"></span><span class="hint"></span><span class="tb-caret" aria-hidden="true">▾</span></button>
+    </div>
 
     <div id="comparebar" hidden aria-label="이전 캡처와 비교">
       <button type="button" class="btn cmp-btn" id="compare-toggle" data-command="compare">전/후 비교</button>

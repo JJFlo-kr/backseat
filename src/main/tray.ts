@@ -60,6 +60,14 @@ function buildMenu(actions: TrayActions): Menu {
       checked: app.isPackaged && s.launchAtLogin,
       click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem)
     },
+    ...(s.pinnedTargetProcess
+      ? [
+          {
+            label: `기본 대상 고정 해제 (${s.pinnedTargetProcess})`,
+            click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' })
+          }
+        ]
+      : []),
     { type: 'separator' },
     { label: '에이전트 연결 설정(MCP) 복사', click: copyMcpConfig },
     { label: '세션 폴더 열기', click: () => void shell.openPath(sessionsRoot()) },

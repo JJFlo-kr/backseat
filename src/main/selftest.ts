@@ -115,6 +115,13 @@ async function shot(win: BrowserWindow, file: string, warnings: string[]): Promi
   }
 }
 
+const FAKE_CANDIDATES: AgentTarget[] = [
+  { kind: 'claude-desktop', label: 'Claude 앱', hwnd: 900001, title: 'Claude', process: 'claude.exe', method: 'paste-image', confidence: 0.8 },
+  { kind: 'codex', label: 'Codex · ChatGPT 앱', hwnd: 900002, title: 'Codex - 로그인 버튼 수정', process: 'codex.exe', method: 'paste-image', confidence: 0.8 },
+  { kind: 'terminal', label: '터미널 (WindowsTerminal.exe)', hwnd: 900004, title: 'PowerShell', process: 'WindowsTerminal.exe', method: 'paste-path', confidence: 0.6 },
+  { kind: 'unknown', label: '창: 제목 없음 - 메모장 (notepad.exe)', hwnd: 900003, title: '제목 없음 - 메모장', process: 'notepad.exe', method: 'paste-image', confidence: 0.4 }
+]
+
 export async function runSelfTest(): Promise<void> {
   const errors: string[] = []
   const warnings: string[] = []
@@ -244,6 +251,8 @@ export async function runSelfTest(): Promise<void> {
         request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest' }
       },
       target,
+      // Fake alternatives for the target menu (the harness never sends for real): two known apps, one plain window.
+      candidates: FAKE_CANDIDATES,
       request: { requestId: 'selftest-1', question: '어느 버튼이 문제인지 표시해 주세요', agent: 'selftest', cwd: '', createdAt: new Date().toISOString() },
       // "Previous capture" for the compare view: the same image with its left half inverted, so it
       // differs whatever happens to be on screen (the diff share must come out near 50%).
@@ -786,6 +795,105 @@ export async function runSelfTest(): Promise<void> {
           const fin = await cs()
           if (fin.color !== origColor || fin.pickerOpen || (await annCount()) !== ann0) errors.push(`colour step left the editor changed: ${JSON.stringify({ color: fin.color, origColor, open: fin.pickerOpen, ann: await annCount(), ann0 })}`)
           if (tlWasOpen) { await js(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+        }
+      }
+
+      // Target menu (Ctrl+T): pick another window / back to automatic, pin checkbox, Esc. Only the SendOptions that WOULD be used are
+      // read (window.__backseat.sendOptions()); nothing is sent.
+      step = 'target-menu'
+      {
+        type TmState = { tool: string; targetMenuOpen: boolean }
+        type SendOpts = { pressEnter?: boolean; targetHwnd?: number; pinTarget?: boolean }
+        const ts = (): Promise<TmState> => state() as unknown as Promise<TmState>
+        const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
+        const opts = (): Promise<SendOpts> => js<SendOpts>(`window.__backseat.sendOptions()`)
+        const label = (): Promise<string> => js<string>(`document.querySelector('#target-btn .tb-label').textContent`)
+        const key = async (keyCode: string, modifiers: ('control' | 'shift')[] = []): Promise<void> => {
+          ed.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+          ed.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+          await sleep(120)
+        }
+        const rectOf = (sel: string): Promise<{ x: number; y: number; l: number; t: number; r: number; b: number } | null> => js(
+          `(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const r = e.getBoundingClientRect();
+             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), l: r.left, t: r.top, r: r.right, b: r.bottom }; })()`
+        )
+        const click = async (sel: string): Promise<void> => {
+          const p = await rectOf(sel)
+          if (!p) { errors.push(`target-menu: ${sel} not found`); return }
+          ed.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y })
+          ed.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+          ed.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+          await sleep(150)
+        }
+        await js(`document.querySelector('[data-tool="pen"]').click(); true`)
+        const label0 = await label()
+        const tool0 = (await ts()).tool
+        const o0 = await opts()
+        if (o0.targetHwnd !== undefined || o0.pinTarget !== undefined) errors.push(`initial send options should be plain: ${JSON.stringify(o0)}`)
+
+        // 1. Ctrl+T opens the menu under the target bar
+        await key('T', ['control'])
+        const open1 = await js<{ rows: number; l: number; t: number; r: number; b: number; w: number; h: number; barB: number; first: string; chips: string[]; pin: boolean } | null>(
+          `(() => { const m = document.getElementById('target-menu'); if (m.hidden) return null; const r = m.getBoundingClientRect();
+             return { rows: m.querySelectorAll('.tm-item').length, l: r.left, t: r.top, r: r.right, b: r.bottom, w: window.innerWidth, h: window.innerHeight,
+                      barB: document.getElementById('targetbar').getBoundingClientRect().bottom, first: m.querySelector('.tm-title').textContent,
+                      chips: [...m.querySelectorAll('.tm-chip')].map((c) => c.textContent), pin: m.querySelector('.tm-pin input').checked }; })()`
+        )
+        if (!open1) errors.push('Ctrl+T did not open the target menu')
+        else {
+          report.targetMenu = open1
+          if (open1.rows !== 1 + FAKE_CANDIDATES.length) errors.push(`target menu rows: ${open1.rows}`)
+          if (!open1.first.startsWith('자동: ')) errors.push(`first menu row should be the automatic target: ${open1.first}`)
+          if (open1.l < 0 || open1.r > open1.w || open1.b > open1.h || open1.t < open1.barB) errors.push(`target menu is not under the bar / inside the window: ${JSON.stringify(open1)}`)
+          if (open1.pin) errors.push('pin checkbox should start unchecked (init.targetPinned is unset)')
+          if ((await ts()).tool !== tool0) errors.push('Ctrl+T changed the tool')
+        }
+        await shot(ed, join(shotsDir, 'editor-target-menu.png'), warnings)
+
+        // 2. ↓ ↓ Enter -> the second candidate (Codex)
+        await key('Down')
+        await key('Down')
+        await key('Return')
+        const picked = FAKE_CANDIDATES[1]
+        const label1 = await label()
+        const o1 = await opts()
+        if ((await ts()).targetMenuOpen) errors.push('Enter did not close the target menu')
+        if (!label1.includes(picked.label) || !label1.includes('(선택)') || label1 === label0) errors.push(`target bar did not change to the pick: ${label1}`)
+        if (o1.targetHwnd !== picked.hwnd || o1.pinTarget !== undefined) errors.push(`send options after picking: ${JSON.stringify(o1)}`)
+        if (ed.isDestroyed()) errors.push('Enter in the target menu closed / sent the editor')
+
+        // 3. reopen (selection kept), tick the pin box with the mouse, back to automatic with the mouse
+        await key('T', ['control'])
+        const active = await js<string | null>(`(() => { const a = document.querySelector('#target-menu .tm-item.active .tm-title'); return a ? a.textContent : null })()`)
+        if (active !== picked.title.slice(0, 40)) errors.push(`reopened menu should start on the current pick: ${active}`)
+        await click('#target-menu .tm-pin input')
+        await click('#target-menu .tm-item')
+        const label2 = await label()
+        const o2 = await opts()
+        if (label2 !== label0) errors.push(`automatic did not restore the label: ${label2} vs ${label0}`)
+        if (o2.targetHwnd !== undefined || o2.pinTarget !== true) errors.push(`send options with pin + automatic: ${JSON.stringify(o2)}`)
+        if ((await ts()).targetMenuOpen) errors.push('clicking a menu row did not close the menu')
+
+        // 4. Esc closes only the menu; Ctrl+T again toggles it closed; a plain T still selects the text tool
+        await key('T', ['control'])
+        if (!(await ts()).targetMenuOpen) errors.push('target menu did not reopen')
+        await key('Escape')
+        if ((await ts()).targetMenuOpen) errors.push('Escape did not close the target menu')
+        if (ed.isDestroyed()) errors.push('Escape closed the editor instead of the target menu')
+        else {
+          await key('T', ['control'])
+          await key('T', ['control'])
+          if ((await ts()).targetMenuOpen) errors.push('Ctrl+T did not toggle the menu closed')
+          await key('T')
+          if ((await ts()).tool !== 'text') errors.push('plain T no longer selects the text tool')
+          await js(`document.querySelector('[data-tool="pen"]').click(); true`)
+
+          // 5. reset: untick the pin, automatic
+          await key('T', ['control'])
+          await click('#target-menu .tm-pin input')
+          await click('#target-menu .tm-item')
+          const o3 = await opts()
+          if (o3.targetHwnd !== undefined || o3.pinTarget !== undefined) errors.push(`send options not reset: ${JSON.stringify(o3)}`)
         }
       }
 

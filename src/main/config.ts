@@ -37,6 +37,9 @@ export interface Settings {
    * a development run (`electron .`) would register electron.exe, so there it is ignored.
    */
   launchAtLogin: boolean
+  /** Pinned default delivery target: process name (e.g. "ChatGPT.exe") + a short part of its title; "" = none. */
+  pinnedTargetProcess: string
+  pinnedTargetTitle: string
 }
 
 const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
@@ -50,6 +53,8 @@ const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
   sttCloudModel: 'whisper-1',
   scrollMaxHeightPx: 16000,
   launchAtLogin: app.isPackaged,
+  pinnedTargetProcess: '',
+  pinnedTargetTitle: '',
   hotkeyRect: 'CommandOrControl+Shift+A',
   hotkeyWindow: 'CommandOrControl+Shift+W'
 }
