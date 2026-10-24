@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target}: クリップボードにコピーしました。Ctrl+V で貼り付けてください。",
   "send.failed": "送信に失敗しました: {error}",
   "send.imageNotice": "[Backseat の注釈を含む]",
-  "send.pasted": "{target} に貼り付けて Enter を押しました",
+  "send.pasted": "{target} への貼り付けを試して Enter を押しました",
   "send.pastedPressEnter": "{target} への貼り付けを試しました · 送信は自分で行ってください",
   "send.stopped.error": "貼り付けできませんでした · クリップボードに用意してあります",
   "send.stopped.focusLost": "貼り付ける直前にフォーカスが移ったため、中止しました · クリップボードに用意してあります",

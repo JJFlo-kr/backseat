@@ -79,7 +79,8 @@ export function defaultSessionsRoot(): string {
  * the same file (src/main/mcp/server.ts sessionsRoot) — Codex review F08.
  */
 export function sessionsRoot(): string {
-  return loadSettings().sessionsRoot || defaultSessionsRoot()
+  // BACKSEAT_SESSIONS overrides it, as in backseat-mcp: the delivery self-test writes into a temp folder.
+  return process.env.BACKSEAT_SESSIONS || loadSettings().sessionsRoot || defaultSessionsRoot()
 }
 
 export function configPath(): string {

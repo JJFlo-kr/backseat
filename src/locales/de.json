@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target}: in die Zwischenablage kopiert. Füge es mit Ctrl+V ein.",
   "send.failed": "Senden fehlgeschlagen: {error}",
   "send.imageNotice": "[Backseat-Annotationen enthalten]",
-  "send.pasted": "In {target} eingefügt und Enter gedrückt",
+  "send.pasted": "Einfügen in {target} versucht und Enter gedrückt",
   "send.pastedPressEnter": "Einfügen in {target} versucht · sende es selbst ab",
   "send.stopped.error": "Einfügen nicht möglich · es liegt in der Zwischenablage bereit",
   "send.stopped.focusLost": "Der Fokus wechselte kurz vor dem Einfügen, daher wurde abgebrochen · es liegt in der Zwischenablage bereit",

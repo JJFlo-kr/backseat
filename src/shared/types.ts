@@ -366,7 +366,8 @@ export interface SendOptions {
   withoutVoice?: boolean
   /**
    * The previous send stopped with 'targetChanged' (a browser / picked window shows another title) and the
-   * user confirmed that window: accept its current title once. A different window instance still stops.
+   * user confirmed that window. Main treats the next send to that same window as the confirmation anyway,
+   * for exactly the title it showed at the stop (a further change stops again; no auto Enter on it).
    */
   confirmTarget?: boolean
 }

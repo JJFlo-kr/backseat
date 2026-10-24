@@ -36,9 +36,14 @@ export async function gatherInputs(front: WindowInfo | null, windows: WindowInfo
  * The target for a new capture plus the menu candidates. A pick whose window is gone gives 'none' once
  * (the editor says so) and is then forgotten, so the following captures go back to automatic.
  */
-export async function resolveForCapture(front: WindowInfo | null, windows?: WindowInfo[]): Promise<EditorTargets> {
+export async function resolveForCapture(
+  front: WindowInfo | null,
+  windows?: WindowInfo[],
+  /** Self-test only: replace parts of the live input (no pin, no registered agents, only its own windows). */
+  overrides: Partial<ResolveInput> = {}
+): Promise<EditorTargets> {
   observeForeground() // the window in front right now counts as "recently used" if it is an AI tool
-  const input = await gatherInputs(front, windows)
+  const input = { ...(await gatherInputs(front, windows)), ...overrides }
   const current = resolveTarget(input)
   if (current.view.unavailable?.source === 'picked') setPicked(null)
   const cands = candidateViews(input, current.identity?.hwnd)

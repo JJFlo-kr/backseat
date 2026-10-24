@@ -96,3 +96,10 @@ test('an unknown window picked in the target menu is used for that send', () => 
   assert.equal(r.kind === 'target' && r.ctx.target?.hwnd, KAKAO.hwnd)
   assert.equal(r.kind === 'target' && r.ctx.view.source, 'picked')
 })
+
+test('an AI vendor’s sign-in, billing or settings tab is a form, not an automatic chat target', () => {
+  for (const title of ['Billing - Claude - Chrome', 'Log in - ChatGPT - Chrome', 'ChatGPT 결제 설정 - Chrome', 'Settings - Claude - Microsoft Edge', 'Gemini - Anmelden - Chrome']) {
+    assert.equal(classifyTarget(win('chrome.exe', title))?.kind, 'unknown', title)
+  }
+  assert.equal(classifyTarget(win('chrome.exe', 'Fix tray bug - Claude - Chrome'))?.kind, 'chat')
+})

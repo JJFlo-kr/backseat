@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target}: copiado para a área de transferência. Cole com Ctrl+V.",
   "send.failed": "Falha ao enviar: {error}",
   "send.imageNotice": "[Anotações do Backseat incluídas]",
-  "send.pasted": "Colado em {target} e Enter pressionado",
+  "send.pasted": "Tentativa de colar em {target} e Enter pressionado",
   "send.pastedPressEnter": "Tentativa de colar em {target} · envie você mesmo",
   "send.stopped.error": "Não foi possível colar · está pronto na área de transferência",
   "send.stopped.focusLost": "O foco mudou logo antes de colar, então foi interrompido · está pronto na área de transferência",

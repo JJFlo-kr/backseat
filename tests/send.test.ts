@@ -26,8 +26,11 @@ const W = {
   paste: { pasted: true } as PasteCheck,
   pastes: 0,
   enters: 0,
-  uiaThrows: false
+  enter: { pasted: true } as PasteCheck,
+  uiaThrows: false,
+  describeThrows: false
 }
+const PROCESS: Record<number, string> = { 777: 'WindowsTerminal.exe', 888: 'chrome.exe', 999: 'ChatGPT.exe', 555: 'KakaoTalk.exe' }
 
 mock.module('../src/main/native/win32.ts', {
   exports: fakeWin32({
@@ -37,9 +40,10 @@ mock.module('../src/main/native/win32.ts', {
       if (W.focusOk) W.foreground = h
       return W.focusOk
     },
-    sendEnter: () => {
-      W.enters++
-      return true
+    describeWindow: (h: number) => {
+      if (W.describeThrows) throw new Error('window vanished mid-way')
+      const l = W.live.get(h)
+      return l ? { hwnd: h, pid: l.pid, title: l.title, process: PROCESS[h] ?? 'x.exe', bounds: { x: 0, y: 0, width: 1, height: 1 } } : null
     }
   })
 })
@@ -59,6 +63,10 @@ mock.module('../src/main/native/uia.ts', {
       W.pastes++
       return W.paste
     },
+    uiaEnterIfUnchanged: async () => {
+      if (W.enter.pasted) W.enters++
+      return W.enter
+    },
     uiaClear: () => undefined,
     uiaFocus: async () => null,
     uiaAvailable: () => true,
@@ -73,7 +81,8 @@ const { deliveryLogPath } = await import('../src/main/diaglog.ts')
 const SECRET_TITLE = 'Private chat with Alice - Chrome'
 const MEMO = 'my-secret-memo-text'
 const id = (hwnd: number, title: string, process: string): TargetIdentity => ({ hwnd, pid: 500, processStartMs: 1000, title, process })
-const terminal: AgentTarget = { kind: 'claude-code', label: 'Claude Code · 터미널', hwnd: 777, title: 'T', process: 'WindowsTerminal.exe', method: 'paste-path', confidence: 0.9 }
+const terminal: AgentTarget = { kind: 'claude-code', label: 'Claude Code · 터미널', hwnd: 777, title: '✳ Claude Code', process: 'WindowsTerminal.exe', method: 'paste-path', confidence: 0.9 }
+const kakao: AgentTarget = { kind: 'unknown', label: '창: 카카오톡', hwnd: 555, title: '카카오톡', process: 'KakaoTalk.exe', method: 'paste-image', confidence: 0.4 }
 const browser: AgentTarget = { kind: 'chat', label: '웹 채팅', hwnd: 888, title: SECRET_TITLE, process: 'chrome.exe', method: 'paste-image', confidence: 0.7 }
 const codexApp: AgentTarget = { kind: 'codex', label: 'Codex · ChatGPT 앱', hwnd: 999, title: 'ChatGPT', process: 'ChatGPT.exe', method: 'paste-image', confidence: 0.8 }
 const ctx = (t: AgentTarget) => {
@@ -92,7 +101,8 @@ const field = (over: Partial<FocusInfo> = {}): FocusInfo => ({
 beforeEach(() => {
   W.foreground = 0
   W.live = new Map([
-    [777, { pid: 500, processStartMs: 1000, title: 'T' }],
+    [777, { pid: 500, processStartMs: 1000, title: '✳ Claude Code' }],
+    [555, { pid: 500, processStartMs: 1000, title: '카카오톡' }],
     [888, { pid: 500, processStartMs: 1000, title: SECRET_TITLE }],
     [999, { pid: 500, processStartMs: 1000, title: 'ChatGPT' }]
   ])
@@ -104,6 +114,8 @@ beforeEach(() => {
   W.paste = { pasted: true }
   W.pastes = 0
   W.enters = 0
+  W.enter = { pasted: true }
+  W.describeThrows = false
   W.uiaThrows = false
 })
 
@@ -145,10 +157,15 @@ test('a browser tab switched to another page: targetChanged before focusing, not
   assert.equal(W.pastes, 0)
 })
 
-test('confirmTarget accepts the new title of the same window once', async () => {
+test('a confirmed title is accepted only while the window still shows exactly that title, and gets no Enter', async () => {
   W.live.set(888, { pid: 500, processStartMs: 1000, title: 'ChatGPT - new chat - Chrome' })
-  const r = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(browser), { confirmTarget: true, pressEnter: false })
+  const r = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(browser), { pressEnter: true }, { acceptTitle: 'ChatGPT - new chat - Chrome' })
   assert.equal(r.delivered, 'pasted')
+  assert.equal(W.enters, 0, 'no auto Enter on a confirmed title change')
+  W.live.set(888, { pid: 500, processStartMs: 1000, title: 'Billing - Chrome' })
+  const r2 = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(browser), {}, { acceptTitle: 'ChatGPT - new chat - Chrome' })
+  assert.equal(r2.status?.stoppedAt?.reason, 'targetChanged', 'it changed again after the user looked: stop again')
+  assert.equal(W.pastes, 1)
 })
 
 test('the target closed or its process restarted: targetExpired, no other window used', async () => {
@@ -157,7 +174,7 @@ test('the target closed or its process restarted: targetExpired, no other window
   assert.deepEqual(r.status?.stoppedAt, { step: 'targetVerified', reason: 'targetExpired' })
   assert.equal(r.targetExpired, true)
   assert.equal(W.foreground, 0)
-  W.live.set(777, { pid: 500, processStartMs: 2000, title: 'T' })
+  W.live.set(777, { pid: 500, processStartMs: 2000, title: '✳ Claude Code' })
   const r2 = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(terminal))
   assert.equal(r2.status?.stoppedAt?.reason, 'targetExpired')
   assert.ok(r2.status?.reached.includes('saved'), 'the package is kept')
@@ -213,6 +230,34 @@ test('auto Enter after a verified paste only, and reported as enterPressed', asy
   const r = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(terminal), { pressEnter: true })
   assert.equal(W.enters, 1)
   assert.equal(r.status?.enterPressed, true)
+})
+
+test('no auto Enter when the focus moved after the paste, the terminal tab became a plain shell, or the target is a picked messenger', async () => {
+  W.enter = { pasted: false, reason: 'focus' }
+  const a = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(terminal), { pressEnter: true })
+  assert.equal(a.delivered, 'pasted')
+  assert.equal(a.status?.enterPressed, undefined)
+  W.enter = { pasted: true }
+  // the paste went in, then the tab shows a plain PowerShell: Enter would run the line as a command
+  W.focus = [field({ className: 'TermControl', controlType: 50020, valuePattern: false, valueReadOnly: null })]
+  W.live.set(777, { pid: 500, processStartMs: 1000, title: 'Windows PowerShell' })
+  const b = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(terminal), { pressEnter: true })
+  assert.equal(b.delivered, 'pasted')
+  assert.equal(b.status?.enterPressed, undefined)
+  W.focus = [field()]
+  const c = await sendToTarget(new FakeBrowserWindow() as never, payload, { ...ctx(kakao), view: toView(kakao, 'picked', id(555, '카카오톡', 'KakaoTalk.exe')) }, { pressEnter: true })
+  assert.equal(c.delivered, 'pasted')
+  assert.equal(c.status?.enterPressed, undefined, 'Enter in a messenger would message a person')
+  assert.equal(W.enters, 0)
+})
+
+test('an error after Ctrl+V still reports the paste (no "failed")', async () => {
+  W.describeThrows = true // the first call after Ctrl+V
+  const r = await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(browser), { pressEnter: false })
+  assert.equal(W.pastes, 1)
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.status?.reached, ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'])
+  assert.equal(r.delivered, 'pasted')
 })
 
 test('no target / clipboard only: saved + clipboard, stopped with noTarget, nothing focused', async () => {

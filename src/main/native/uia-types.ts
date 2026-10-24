@@ -36,11 +36,14 @@ export interface FocusInfo {
   nativeHwnd: number
 }
 
-export type PasteCheck = { pasted: true } | { pasted: false; reason: 'foreground' | 'focus' | 'password' | 'none' }
+/** pasted = the key was pressed. timeout: past the caller's deadline, so no key was pressed. */
+export type PasteCheck = { pasted: true } | { pasted: false; reason: 'foreground' | 'focus' | 'password' | 'none' | 'timeout' }
 
 export interface SoleInput {
   /** Usable text inputs found in the window (enabled, focusable, on screen, not password, not read-only). */
   candidates: number
+  /** Password fields in the window: any at all means a sign-in view, and nothing is focused. */
+  passwordFields: number
   /** SetFocus was called on the only candidate. */
   focused: boolean
 }

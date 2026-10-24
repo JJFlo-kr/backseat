@@ -22,10 +22,10 @@ import { resolveForCapture } from './destination'
 import { createEditorWindow } from './editor'
 import { classifyTarget } from './agents'
 import { judgeInput } from './delivery'
-import { closeWindow, describeWindow, focusWindow, getForegroundWindow, listTopLevelWindows, processStartMs, tapKeys } from './native/win32'
+import { closeWindow, describeWindow, focusWindow, foregroundHwnd, getForegroundWindow, listTopLevelWindows, processStartMs, tapKeys } from './native/win32'
 import { stopUia, uiaFocus } from './native/uia'
 import { identityOf, toView } from './targets'
-import { observeForeground, resetTracker } from './tracker'
+import { observeForeground, recentAgents, resetTracker, setPicked } from './tracker'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const VK_CONTROL = 0x11
@@ -218,9 +218,27 @@ function payload(): ExportPayload {
   }
 }
 
+/**
+ * The only windows the self-test may ever send to (its own test windows). Everything the target model sees is
+ * narrowed to them — no pin, no registered MCP agent, no other remembered window — and every send is checked
+ * against this set first, so a self-test can never reach the user's real agent windows.
+ */
+const allowed = new Set<number>()
+
+function assertAllowed(hwnd: number | undefined, what: string): void {
+  if (hwnd && !allowed.has(hwnd)) throw new Error(`${what} is not a test window (${hwnd}): aborting`)
+}
+
 /** A capture taken while `capturedWin` is in front: target resolved like startCapture() does, editor opened. */
 async function capture(capturedWin: WindowInfo, errors: string[]): Promise<BrowserWindow> {
-  const targets = await resolveForCapture(capturedWin)
+  const targets = await resolveForCapture(capturedWin, listTopLevelWindows().filter((w) => allowed.has(w.hwnd)), {
+    picked: null,
+    pinned: null,
+    agents: [],
+    recent: recentAgents().filter((r) => allowed.has(r.identity.hwnd))
+  })
+  assertAllowed(targets.current.identity?.hwnd, 'the resolved target')
+  for (const c of targets.candidates.values()) assertAllowed(c.identity.hwnd, 'a candidate')
   const init: EditorInit = {
     imageDataUrl: `data:image/png;base64,${PNG_1x1}`,
     width: 1,
@@ -240,6 +258,7 @@ async function capture(capturedWin: WindowInfo, errors: string[]): Promise<Brows
 }
 
 async function edSend(ed: BrowserWindow, opts: SendOptions = {}): Promise<SendResult> {
+  assertAllowed(opts.targetHwnd, 'the picked window')
   ed.show()
   ed.focus()
   await sleep(200)
@@ -262,6 +281,10 @@ async function edTargets(ed: BrowserWindow): Promise<SendTargetView[]> {
 export async function runRealAppCheck(hwnd: number): Promise<void> {
   const out: Record<string, unknown> = { hwnd }
   const errors: string[] = []
+  // Packages go to a temp folder: an agent waiting on the real sessions folder must not pick up test sends.
+  process.env.BACKSEAT_SESSIONS = mkdtempSync(join(tmpdir(), 'backseat-real-check-'))
+  setPicked(null)
+  allowed.add(hwnd)
   try {
     const win = describeWindow(hwnd)
     const t = win ? classifyTarget(win, { selfPid: process.pid }) : null
@@ -271,13 +294,15 @@ export async function runRealAppCheck(hwnd: number): Promise<void> {
     out.kind = t.kind
     out.method = t.method
     if (process.argv.includes('--real-dry') || process.argv.includes('--real-clear')) {
-      await focusWindow(hwnd)
+      const fronted = (await focusWindow(hwnd)) && foregroundHwnd() === hwnd
+      out.fronted = fronted
       await sleep(400)
       const f = await uiaFocus()
       const v = judgeInput(f, { pid: identity.pid, method: t.method, kind: t.kind })
       out.element = f ? { controlType: f.controlType, className: f.className, frameworkId: f.frameworkId, isPassword: f.isPassword, readOnly: f.valueReadOnly, samePid: f.pid === identity.pid } : null
       out.verdict = v
-      if (process.argv.includes('--real-clear') && v.ok && v.via === 'field' && f && !f.isPassword) {
+      // Clear only the field the paste went into: the same window still in front, its own editable non-password field.
+      if (process.argv.includes('--real-clear') && fronted && foregroundHwnd() === hwnd && v.ok && v.via === 'field' && f && !f.isPassword && f.pid === identity.pid) {
         tapKeys([VK_CONTROL, VK_A])
         await sleep(80)
         for (let i = 0; i < 4; i++) tapKeys([VK_BACK])
@@ -318,6 +343,8 @@ export async function runDeliverySelfTest(): Promise<void> {
   const pages = new Pages()
   let browser: Browser | null = null
   const token = Math.random().toString(16).slice(2, 6)
+  process.env.BACKSEAT_SESSIONS = mkdtempSync(join(tmpdir(), 'backseat-delivery-sessions-'))
+  setPicked(null)
   try {
     if (process.platform !== 'win32' || !exe) throw new Error('needs Windows with Chrome or Edge')
     await pages.start()
@@ -334,6 +361,7 @@ export async function runDeliverySelfTest(): Promise<void> {
     const B = await findWindow(titleB)
     const L = await findWindow('Acme Tasks · Sign in (fake)')
     if (!A || !B || !L) throw new Error(`test windows did not appear (A ${Boolean(A)}, B ${Boolean(B)}, L ${Boolean(L)})`)
+    for (const w of [A, B, L]) allowed.add(w.hwnd)
     for (const p of ['A', 'B', 'L']) if (!(await pages.waitFor(p, () => true, 8000))) throw new Error(`page ${p} never reported`)
 
     const clearAll = async (): Promise<void> => {

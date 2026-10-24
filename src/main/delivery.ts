@@ -99,12 +99,22 @@ export class DeliveryTracker {
   }
 }
 
+/** Kinds where Enter submits to an AI. 'terminal' (no agent recognised: a plain shell would run the line as a
+ * command) and 'unknown' (a picked messenger or page: Enter could message a person) never get one. */
+const ENTER_KINDS = new Set<AgentKind>(['claude-code', 'claude-desktop', 'codex', 'cursor', 'vscode', 'orca', 'chat'])
+
 /**
  * Auto Enter only after a verified paste: same target window, a checked input field, Ctrl+V sent after the
- * last re-check (request (1) item 3). Anything less and the line waits for the user.
+ * last re-check (request (1) item 3) — into a known AI tool that still looks like the same kind of window,
+ * and not on a send whose changed title the user merely confirmed. Anything less and the line waits.
  */
-export function mayPressEnter(status: DeliveryStatus, wanted: boolean): boolean {
-  return wanted && !status.stoppedAt && (['targetVerified', 'inputVerified', 'pasted'] as const).every((s) => status.reached.includes(s))
+export function mayPressEnter(
+  status: DeliveryStatus,
+  wanted: boolean,
+  target: { kind: AgentKind; sameKindNow: boolean; confirmed: boolean }
+): boolean {
+  if (!wanted || status.stoppedAt || target.confirmed || !target.sameKindNow || !ENTER_KINDS.has(target.kind)) return false
+  return (['targetVerified', 'inputVerified', 'pasted'] as const).every((s) => status.reached.includes(s))
 }
 
 // ---------- diagnostics ----------
@@ -127,12 +137,16 @@ export interface DeliveryLogEntry {
   detail?: string
 }
 
-/** The element part of a log line: type and flags, nothing the user typed. */
+/**
+ * The element part of a log line: type and flags, nothing the user typed. In web content (Chromium) the UIA
+ * class name is the page's own HTML class attribute, so it is replaced by a placeholder.
+ */
 export function elementForLog(focus: FocusInfo | null, targetPid: number): DeliveryLogEntry['element'] {
   if (!focus) return undefined
+  const web = focus.frameworkId === 'Chrome' && !/^Chrome_|^Intermediate D3D Window$/.test(focus.className)
   return {
     controlType: focus.controlType,
-    className: focus.className.slice(0, 64),
+    className: web ? '(web)' : focus.className.slice(0, 64),
     frameworkId: focus.frameworkId.slice(0, 32),
     isPassword: focus.isPassword,
     readOnly: focus.valueReadOnly,

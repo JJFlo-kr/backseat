@@ -1,13 +1,15 @@
 // worker_threads entry (out/main/uia-worker.js): UI Automation queries off the main thread, in a COM MTA,
 // so a slow or hung target app never blocks the Electron main process. See src/main/native/uia.ts.
 import { parentPort } from 'worker_threads'
-import { clearVerified, focusedInfo, focusSoleInput, initUia, inputCheck, pasteIfUnchanged } from './uia-com'
+import { clearVerified, enterIfUnchanged, focusedInfo, focusSoleInput, initUia, inputCheck, pasteIfUnchanged } from './uia-com'
 
 export type UiaOp =
   | { op: 'focus' }
   | { op: 'inputCheck' }
   | { op: 'soleInput'; hwnd: number }
-  | { op: 'paste'; hwnd: number }
+  /** deadlineAt: ms since 1970; past it the worker presses no key (the caller already gave up). */
+  | { op: 'paste'; hwnd: number; deadlineAt: number }
+  | { op: 'enter'; hwnd: number; deadlineAt: number }
   | { op: 'clear' }
 
 export type UiaRequest = UiaOp & { id: number }
@@ -28,7 +30,9 @@ function run(req: UiaOp): unknown {
     case 'soleInput':
       return focusSoleInput(req.hwnd)
     case 'paste':
-      return pasteIfUnchanged(req.hwnd)
+      return pasteIfUnchanged(req.hwnd, req.deadlineAt)
+    case 'enter':
+      return enterIfUnchanged(req.hwnd, req.deadlineAt)
     case 'clear':
       clearVerified()
       return null

@@ -144,6 +144,11 @@ const num = (v: unknown): number => (typeof v === 'number' ? v : 0)
 const bool = (v: unknown): boolean => v === true
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
+/** Fails closed: anything but an explicit IsPassword = false counts as a password field. */
+function passwordOf(el: Ptr): boolean {
+  return prop(el, UIA_PROP.isPassword) !== false
+}
+
 function describe(el: Ptr): FocusInfo {
   const valuePattern = bool(prop(el, UIA_PROP.isValuePatternAvailable))
   const ro = valuePattern ? prop(el, UIA_PROP.valueIsReadOnly) : null
@@ -152,7 +157,7 @@ function describe(el: Ptr): FocusInfo {
     controlType: num(prop(el, UIA_PROP.controlType)),
     className: str(prop(el, UIA_PROP.className)),
     frameworkId: str(prop(el, UIA_PROP.frameworkId)),
-    isPassword: bool(prop(el, UIA_PROP.isPassword)),
+    isPassword: passwordOf(el),
     hasKeyboardFocus: bool(prop(el, UIA_PROP.hasKeyboardFocus)),
     isEnabled: bool(prop(el, UIA_PROP.isEnabled)),
     isKeyboardFocusable: bool(prop(el, UIA_PROP.isKeyboardFocusable)),
@@ -184,13 +189,11 @@ export function focusedInfo(): FocusInfo | null {
 
 /**
  * Read the focused element and remember it as the one a following pasteIfUnchanged() must still find
- * focused. Returns its description (the caller judges it: src/main/delivery.ts judgeInput).
+ * focused. Returns its description (the caller judges it: src/main/delivery.ts judgeInput). Deliveries run
+ * one at a time (src/main/send.ts), so one remembered element is enough.
  */
 export function inputCheck(): FocusInfo | null {
-  if (verified) {
-    release(verified)
-    verified = null
-  }
+  clearVerified()
   const el = focusedElement()
   if (!el) return null
   try {
@@ -203,7 +206,7 @@ export function inputCheck(): FocusInfo | null {
   }
 }
 
-/** Forget the remembered element (after a paste or a stop). */
+/** Forget the remembered element (after a delivery or a stop). */
 export function clearVerified(): void {
   if (verified) release(verified)
   verified = null
@@ -211,14 +214,14 @@ export function clearVerified(): void {
 
 const VK_CONTROL = 0x11
 const VK_V = 0x56
+const VK_RETURN = 0x0d
 const KEYEVENTF_KEYUP = 2
 
 /**
- * The last check before Ctrl+V, as close to the key press as possible: the target window is still in
- * front and the focused element is still the one inputCheck() accepted (CompareElements) and not a
- * password field. Only then Ctrl+V is sent.
+ * Is the keyboard focus still exactly where inputCheck() looked: the target window in front, the same
+ * element (CompareElements), still not a password field? null = yes, else why not.
  */
-export function pasteIfUnchanged(hwnd: number): PasteCheck {
+function stillVerified(hwnd: number): PasteCheck | null {
   const c = loadCom()
   if (!verified) return { pasted: false, reason: 'none' }
   if (Number(c.GetForegroundWindow()) !== hwnd) return { pasted: false, reason: 'foreground' }
@@ -228,15 +231,48 @@ export function pasteIfUnchanged(hwnd: number): PasteCheck {
     const same: number[] = [0]
     const hr = call(uia, IUIAutomation_CompareElements, P_Compare, verified, el, same)
     if (hr < 0 || !same[0]) return { pasted: false, reason: 'focus' }
-    if (bool(prop(el, UIA_PROP.isPassword))) return { pasted: false, reason: 'password' }
+    if (passwordOf(el)) return { pasted: false, reason: 'password' }
     if (Number(c.GetForegroundWindow()) !== hwnd) return { pasted: false, reason: 'foreground' }
-    c.keybd_event(VK_CONTROL, 0, 0, 0)
-    c.keybd_event(VK_V, 0, 0, 0)
-    c.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
-    c.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
-    return { pasted: true }
+    return null
   } finally {
     release(el)
+  }
+}
+
+function press(chord: number[]): void {
+  const c = loadCom()
+  for (const vk of chord) c.keybd_event(vk, 0, 0, 0)
+  for (const vk of [...chord].reverse()) c.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+}
+
+/**
+ * The last check before Ctrl+V, as close to the key press as possible (stillVerified). `deadlineAt`
+ * (ms since 1970): past it no key is pressed — the main process has already given up on this call and
+ * reported that nothing was pasted. The element stays remembered for enterIfUnchanged().
+ */
+export function pasteIfUnchanged(hwnd: number, deadlineAt: number): PasteCheck {
+  const why = stillVerified(hwnd)
+  if (why) {
+    clearVerified()
+    return why
+  }
+  if (Date.now() > deadlineAt) {
+    clearVerified()
+    return { pasted: false, reason: 'timeout' }
+  }
+  press([VK_CONTROL, VK_V])
+  return { pasted: true }
+}
+
+/** Enter after a verified paste, under the same checks as the paste itself; forgets the element either way. */
+export function enterIfUnchanged(hwnd: number, deadlineAt: number): PasteCheck {
+  try {
+    const why = stillVerified(hwnd)
+    if (why) return why
+    if (Date.now() > deadlineAt) return { pasted: false, reason: 'timeout' }
+    press([VK_RETURN])
+    return { pasted: true }
+  } finally {
     clearVerified()
   }
 }
@@ -257,15 +293,16 @@ function boolVariant(value: boolean): Buffer {
 
 /**
  * Chat apps (Claude, ChatGPT / Codex) where the message box is not focused: when the window has exactly
- * ONE usable text input, give it the keyboard focus through UIA (no coordinates, no Tab presses). With
- * zero or several candidates nothing is focused and the caller stops.
+ * ONE usable text input and no password field at all, give it the keyboard focus through UIA (no
+ * coordinates, no Tab presses). With zero or several candidates — or a sign-in view (email + password) —
+ * nothing is focused and the caller stops.
  */
 export function focusSoleInput(hwnd: number): SoleInput {
   if (!uia) initUia()
   const rootOut: Ptr[] = [null]
   call(uia, IUIAutomation_ElementFromHandle, P_FromHandle, hwnd, rootOut)
   const root = rootOut[0]
-  if (!root) return { candidates: 0, focused: false }
+  if (!root) return { candidates: 0, passwordFields: 0, focused: false }
   const conds: Ptr[] = []
   const cond = (id: number, v: Buffer): Ptr => {
     const out: Ptr[] = [null]
@@ -280,6 +317,7 @@ export function focusSoleInput(hwnd: number): SoleInput {
     return out[0]
   }
   let arr: Ptr = null
+  const usable: Ptr[] = []
   try {
     const edit = cond(UIA_PROP.controlType, intVariant(UIA_CONTROL.edit))
     const focusable = cond(UIA_PROP.isKeyboardFocusable, boolVariant(true))
@@ -289,25 +327,29 @@ export function focusSoleInput(hwnd: number): SoleInput {
     const arrOut: Ptr[] = [null]
     const hr = call(root, IUIAutomationElement_FindAll, P_FindAll, TreeScope_Descendants, all, arrOut)
     arr = arrOut[0]
-    if (hr < 0 || !arr) return { candidates: 0, focused: false }
+    if (hr < 0 || !arr) return { candidates: 0, passwordFields: 0, focused: false }
     const n: number[] = [0]
     call(arr, IUIAutomationElementArray_get_Length, P_OutInt, n)
-    const usable: Ptr[] = []
+    let passwordFields = 0
     for (let i = 0; i < n[0]; i++) {
       const elOut: Ptr[] = [null]
       call(arr, IUIAutomationElementArray_GetElement, P_GetElement, i, elOut)
       const el = elOut[0]
       if (!el) continue
-      const password = bool(prop(el, UIA_PROP.isPassword))
-      const ro = bool(prop(el, UIA_PROP.isValuePatternAvailable)) ? prop(el, UIA_PROP.valueIsReadOnly) === true : false
-      if (!password && !ro) usable.push(el)
-      else release(el)
+      let keep = false
+      try {
+        if (passwordOf(el)) passwordFields++
+        else keep = !(bool(prop(el, UIA_PROP.isValuePatternAvailable)) && prop(el, UIA_PROP.valueIsReadOnly) === true)
+      } finally {
+        if (keep) usable.push(el)
+        else release(el)
+      }
     }
     let focused = false
-    if (usable.length === 1) focused = call(usable[0], IUIAutomationElement_SetFocus, P_Void) === S_OK
-    for (const el of usable) release(el)
-    return { candidates: usable.length, focused }
+    if (usable.length === 1 && passwordFields === 0) focused = call(usable[0], IUIAutomationElement_SetFocus, P_Void) === S_OK
+    return { candidates: usable.length, passwordFields, focused }
   } finally {
+    for (const el of usable) release(el)
     release(arr)
     for (const c of conds) release(c)
     release(root)

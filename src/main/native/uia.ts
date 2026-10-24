@@ -1,6 +1,7 @@
 // Main-process side of the UI Automation worker (src/main/native/uia-worker.ts). Every call has a deadline:
 // when UIA does not answer (hung target, broken accessibility) the worker is replaced and the caller gets
-// an error, which delivery reports as 'uiaUnavailable' instead of pasting blind.
+// an error, which delivery reports as 'uiaUnavailable' instead of pasting blind. Calls that press a key carry
+// an earlier deadline into the worker, so a worker that resumes after the caller gave up never presses it.
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { Worker } from 'worker_threads'
@@ -10,10 +11,19 @@ import type { UiaOp, UiaRequest, UiaResponse } from './uia-worker'
 export type { FocusInfo, PasteCheck, SoleInput }
 
 const DEFAULT_DEADLINE_MS = 2500
+/** How much earlier than the caller's deadline the worker stops pressing keys. */
+const KEY_MARGIN_MS = 700
+
+interface Pending {
+  resolve: (v: unknown) => void
+  reject: (e: Error) => void
+  timer: NodeJS.Timeout
+}
 
 let worker: Worker | null = null
 let nextId = 1
-const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
+/** Pending calls per worker: an old worker's exit fails only its own calls. */
+const pending = new Map<Worker, Map<number, Pending>>()
 
 function workerPath(): string {
   return join(__dirname, 'uia-worker.js')
@@ -23,11 +33,13 @@ export function uiaAvailable(): boolean {
   return process.platform === 'win32' && existsSync(workerPath())
 }
 
-function failAll(error: string): void {
-  for (const [id, p] of pending) {
+function failAll(w: Worker, error: string): void {
+  const mine = pending.get(w)
+  if (!mine) return
+  pending.delete(w)
+  for (const p of mine.values()) {
     clearTimeout(p.timer)
     p.reject(new Error(error))
-    pending.delete(id)
   }
 }
 
@@ -35,21 +47,23 @@ function getWorker(): Worker {
   if (worker) return worker
   const w = new Worker(workerPath())
   worker = w
+  pending.set(w, new Map())
   w.on('message', (res: UiaResponse) => {
-    const p = pending.get(res.id)
-    if (!p) return
-    pending.delete(res.id)
+    const mine = pending.get(w)
+    const p = mine?.get(res.id)
+    if (!mine || !p) return
+    mine.delete(res.id)
     clearTimeout(p.timer)
     if (res.ok) p.resolve(res.result)
     else p.reject(new Error(res.error ?? 'UI Automation failed'))
   })
   w.on('error', (err: Error) => {
     if (worker === w) worker = null
-    failAll(err.message)
+    failAll(w, err.message)
   })
   w.on('exit', () => {
     if (worker === w) worker = null
-    failAll('UI Automation worker exited')
+    failAll(w, 'UI Automation worker exited')
   })
   w.unref()
   return w
@@ -61,13 +75,14 @@ function ask<T>(op: UiaOp, deadlineMs = DEFAULT_DEADLINE_MS): Promise<T> {
     const id = nextId++
     const w = getWorker()
     const timer = setTimeout(() => {
-      pending.delete(id)
+      pending.get(w)?.delete(id)
       reject(new Error('UI Automation did not answer in time'))
       // A stuck COM call cannot be cancelled: drop the worker, the next call starts a fresh one.
       if (worker === w) worker = null
+      failAll(w, 'UI Automation worker replaced')
       void w.terminate()
     }, deadlineMs)
-    pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
+    pending.get(w)?.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
     w.postMessage({ ...op, id } satisfies UiaRequest)
   })
 }
@@ -82,14 +97,19 @@ export function uiaInputCheck(): Promise<FocusInfo | null> {
   return ask<FocusInfo | null>({ op: 'inputCheck' })
 }
 
-/** Focus the window's only usable text input through UIA, if it has exactly one. */
+/** Focus the window's only usable text input through UIA, if it has exactly one and no password field. */
 export function uiaFocusSoleInput(hwnd: number): Promise<SoleInput> {
   return ask<SoleInput>({ op: 'soleInput', hwnd }, 4000)
 }
 
 /** Ctrl+V, but only while `hwnd` is in front and the element from uiaInputCheck() still has the focus. */
 export function uiaPasteIfUnchanged(hwnd: number): Promise<PasteCheck> {
-  return ask<PasteCheck>({ op: 'paste', hwnd })
+  return ask<PasteCheck>({ op: 'paste', hwnd, deadlineAt: Date.now() + DEFAULT_DEADLINE_MS - KEY_MARGIN_MS })
+}
+
+/** Enter after a verified paste, under the same checks (same window in front, same element, no password field). */
+export function uiaEnterIfUnchanged(hwnd: number): Promise<PasteCheck> {
+  return ask<PasteCheck>({ op: 'enter', hwnd, deadlineAt: Date.now() + DEFAULT_DEADLINE_MS - KEY_MARGIN_MS })
 }
 
 export function uiaClear(): void {

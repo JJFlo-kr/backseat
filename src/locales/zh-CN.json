@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target}：已复制到剪贴板。按 Ctrl+V 粘贴。",
   "send.failed": "发送失败：{error}",
   "send.imageNotice": "[已包含 Backseat 标注]",
-  "send.pasted": "已粘贴到 {target} 并按了 Enter",
+  "send.pasted": "已尝试粘贴到 {target} 并按了 Enter",
   "send.pastedPressEnter": "已尝试粘贴到 {target} · 请自行发送",
   "send.stopped.error": "无法粘贴 · 内容已在剪贴板中",
   "send.stopped.focusLost": "粘贴前焦点发生了变化，已停止 · 内容已在剪贴板中",

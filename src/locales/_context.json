@@ -294,7 +294,7 @@
   "send.clipboard.target": "Editor status message after sending when the target cannot be pasted into automatically. {target} = target label. Keep Ctrl+V.",
   "send.failed": "Editor status message when sending threw an error. {error} = the error's message.",
   "send.imageNotice": "Prefix of the text pasted together with the image into chat apps; tells the agent that the drawn marks in the image are the user's annotations. Read by an AI agent. Keep the square brackets.",
-  "send.pasted": "Status message after a checked paste followed by the automatic Enter (tray setting). {target} = target label. Must not claim the AI received or understood anything.",
+  "send.pasted": "Status message after a checked paste followed by the automatic Enter (tray setting). An attempt: never say the AI received, understood or finished anything. {target} = target label.",
   "send.pastedPressEnter": "Status message after Ctrl+V went into a checked input field. It is an attempt, not a confirmed delivery: never say 'sent' or 'delivered'. {target} = target label.",
   "send.stopped.error": "Status message: an unexpected error stopped the paste; the package is saved and on the clipboard.",
   "send.stopped.focusLost": "Status message: another window or element took the keyboard focus right before Ctrl+V; nothing was pasted.",

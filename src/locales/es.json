@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target}: copiado al portapapeles. Pégalo con Ctrl+V.",
   "send.failed": "Error al enviar: {error}",
   "send.imageNotice": "[Incluye anotaciones de Backseat]",
-  "send.pasted": "Pegado en {target} y Enter pulsado",
+  "send.pasted": "Se intentó pegar en {target} y se pulsó Enter",
   "send.pastedPressEnter": "Se intentó pegar en {target} · envíalo tú mismo",
   "send.stopped.error": "No se pudo pegar · está listo en el portapapeles",
   "send.stopped.focusLost": "El foco cambió justo antes de pegar, así que se detuvo · está listo en el portapapeles",

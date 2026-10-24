@@ -44,6 +44,8 @@ export function onNewCaptureRequest(fn: () => void): void {
 
 /** Stops the fetch watcher of each editor's last send (a resend replaces it). */
 const fetchWatchers = new WeakMap<Electron.WebContents, () => void>()
+/** The window title seen when an editor's last send stopped with targetChanged (only for its next send). */
+const pendingConfirms = new WeakMap<Electron.WebContents, { hwnd: number; pid: number; title: string }>()
 
 /** The editor's target state from an EditorInit alone (self-test, older callers): identities read now. */
 function stateFromInit(init: EditorInit): EditorTargets {
@@ -173,8 +175,18 @@ export function installEditorIpc(): void {
     } else if (opts.pinTarget === false) {
       saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' }).catch(() => undefined)
     }
-    const result = await sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, ctx, { ...opts, clipboardOnly: choice.kind === 'clipboard' || opts.clipboardOnly })
+    // "Ask once" (plan §3 phase 2): after a targetChanged stop, the next send to that same window is the user's
+    // answer — for exactly the title it showed at the stop. A further change stops again.
+    const pending = pendingConfirms.get(e.sender)
+    pendingConfirms.delete(e.sender)
+    const clipboardOnly = choice.kind === 'clipboard' || opts.clipboardOnly
+    const acceptTitle = !clipboardOnly && pending && ctx.identity && pending.hwnd === ctx.identity.hwnd && pending.pid === ctx.identity.pid ? pending.title : undefined
+    const result = await sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, ctx, { ...opts, clipboardOnly }, { acceptTitle })
     const status = result.status
+    if (status?.stoppedAt?.reason === 'targetChanged' && ctx.identity) {
+      const seen = liveWindow(ctx.identity.hwnd)
+      if (seen) pendingConfirms.set(e.sender, { hwnd: ctx.identity.hwnd, pid: seen.pid, title: seen.title })
+    }
     if (status?.sendId && status.reached.includes('saved')) {
       fetchWatchers.get(e.sender)?.()
       const sender = e.sender

@@ -79,16 +79,30 @@ test('status: steps in order, each once; a stop records step and reason', () => 
 
 test('Enter only after target, input and paste were all confirmed, and never after a stop', () => {
   const ok = { sendId: 'x', reached: ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'] as const }
-  assert.equal(mayPressEnter({ ...ok, reached: [...ok.reached] }, true), true)
-  assert.equal(mayPressEnter({ ...ok, reached: [...ok.reached] }, false), false)
-  assert.equal(mayPressEnter({ sendId: 'x', reached: ['saved', 'clipboard', 'targetVerified', 'pasted'] }, true), false)
-  assert.equal(mayPressEnter({ ...ok, reached: [...ok.reached], stoppedAt: { step: 'pasted', reason: 'focusLost' } }, true), false)
+  const ai = { kind: 'claude-code' as const, sameKindNow: true, confirmed: false }
+  assert.equal(mayPressEnter({ ...ok, reached: [...ok.reached] }, true, ai), true)
+  assert.equal(mayPressEnter({ ...ok, reached: [...ok.reached] }, false, ai), false)
+  assert.equal(mayPressEnter({ sendId: 'x', reached: ['saved', 'clipboard', 'targetVerified', 'pasted'] }, true, ai), false)
+  assert.equal(mayPressEnter({ ...ok, reached: [...ok.reached], stoppedAt: { step: 'pasted', reason: 'focusLost' } }, true, ai), false)
 })
 
-test('log element: type and flags only — no name, value or title can get in', () => {
-  const e = elementForLog(field({ isPassword: true, className: 'x'.repeat(200) }), 500)
+test('Enter never into a plain shell, a picked messenger / page, a retitled terminal or a merely confirmed target', () => {
+  const st = { sendId: 'x', reached: ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'] as ('saved' | 'clipboard' | 'targetVerified' | 'inputVerified' | 'pasted')[] }
+  assert.equal(mayPressEnter(st, true, { kind: 'terminal', sameKindNow: true, confirmed: false }), false, 'shell would run it')
+  assert.equal(mayPressEnter(st, true, { kind: 'unknown', sameKindNow: true, confirmed: false }), false, 'a person could get it')
+  assert.equal(mayPressEnter(st, true, { kind: 'claude-code', sameKindNow: false, confirmed: false }), false, 'tab is a shell now')
+  assert.equal(mayPressEnter(st, true, { kind: 'chat', sameKindNow: true, confirmed: true }), false, 'confirmed title change')
+  for (const k of ['claude-code', 'claude-desktop', 'codex', 'cursor', 'vscode', 'chat'] as const) {
+    assert.equal(mayPressEnter(st, true, { kind: k, sameKindNow: true, confirmed: false }), true, k)
+  }
+})
+
+test('log element: type and flags only — no name, value or title can get in; page class names are not logged', () => {
+  const e = elementForLog(field({ isPassword: true, className: 'x'.repeat(200), frameworkId: 'Win32' }), 500)
   assert.deepEqual(Object.keys(e ?? {}).sort(), ['className', 'controlType', 'frameworkId', 'isPassword', 'readOnly', 'samePid'])
   assert.equal(e?.className.length, 64)
   assert.equal(e?.isPassword, true)
+  assert.equal(elementForLog(field({ className: 'secret-user-name-css-class', frameworkId: 'Chrome' }), 500)?.className, '(web)')
+  assert.equal(elementForLog(field({ className: 'Chrome_RenderWidgetHostHWND', frameworkId: 'Chrome' }), 500)?.className, 'Chrome_RenderWidgetHostHWND')
   assert.equal(elementForLog(null, 1), undefined)
 })

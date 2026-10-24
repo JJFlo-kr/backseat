@@ -17,6 +17,9 @@ const TERMINALS = new Set([
   'tabby.exe'
 ])
 const BROWSERS = new Set(['chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'arc.exe', 'whale.exe'])
+/** Tab titles of account pages (sign-in, billing, settings …) in the languages Backseat speaks. */
+const ACCOUNT_PAGE =
+  /billing|payment|checkout|subscri|pricing|upgrade|invoice|sign[ -]?in|sign[ -]?up|log[ -]?in|register|account|settings|password|결제|구독|요금|로그인|가입|계정|설정|비밀번호|ログイン|登録|支払|設定|パスワード|登录|注册|支付|设置|密码|登入|註冊|付款|密碼|anmelden|registrieren|zahlung|konto|einstellungen|passwort|iniciar sesión|registr|pago|cuenta|configuración|contraseña|cadastr|pagamento|configurações|senha|connexion|inscription|paiement|compte|paramètres|mot de passe/i
 
 function agentInTitle(title: string): { kind: AgentKind; name: string } | null {
   const t = title.toLowerCase()
@@ -83,7 +86,9 @@ export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {
   }
   if (BROWSERS.has(proc)) {
     const lower = title.toLowerCase()
-    if (lower.includes('claude') || lower.includes('chatgpt') || lower.includes('gemini') || lower.includes('copilot')) {
+    const aiChat = lower.includes('claude') || lower.includes('chatgpt') || lower.includes('gemini') || lower.includes('copilot')
+    // An AI vendor's billing, sign-in or settings page is a form, not a chat: never an automatic target.
+    if (aiChat && !ACCOUNT_PAGE.test(title)) {
       return { ...base, kind: 'chat', label: t('agents.webChat', { title: title.slice(0, 30) }), method: 'paste-image', confidence: 0.7 }
     }
   }

@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target} : copié dans le presse-papiers. Collez avec Ctrl+V.",
   "send.failed": "Échec de l'envoi : {error}",
   "send.imageNotice": "[Annotations Backseat incluses]",
-  "send.pasted": "Collé dans {target} et touche Enter pressée",
+  "send.pasted": "Collage tenté dans {target} et touche Enter pressée",
   "send.pastedPressEnter": "Tentative de collage dans {target} · envoyez-le vous-même",
   "send.stopped.error": "Collage impossible · le contenu est prêt dans le presse-papiers",
   "send.stopped.focusLost": "Le focus a changé juste avant le collage, donc le collage a été arrêté · le contenu est prêt dans le presse-papiers",

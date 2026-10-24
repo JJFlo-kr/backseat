@@ -294,7 +294,7 @@
   "send.clipboard.target": "{target}: copied to the clipboard. Paste it with Ctrl+V.",
   "send.failed": "Send failed: {error}",
   "send.imageNotice": "[Backseat annotations included]",
-  "send.pasted": "Pasted into {target} and pressed Enter",
+  "send.pasted": "Tried to paste into {target} and pressed Enter",
   "send.pastedPressEnter": "Tried to paste into {target} · submit it yourself",
   "send.stopped.error": "Could not paste · it is ready on the clipboard",
   "send.stopped.focusLost": "The focus moved just before pasting, so it stopped · it is ready on the clipboard",
