@@ -28,15 +28,23 @@ npm run dist       # 설치 파일 만들기 → dist\Backseat Setup <버전>.ex
 | 스크롤 캡처 (긴 페이지를 자동 스크롤해 이어붙임) | 선택 화면에서 `S` 후 창 클릭 — 진행 중 `Esc`로 중단 |
 | 편집기 도구 | 펜 P · 텍스트 T · 화살표 A · 사각형 R · 번호 N · 블러 B · 자르기 C (되돌리기 가능) |
 | 전/후 비교 (트레이 "마지막 영역 다시 캡처"로 찍었을 때) | O — 겹치기 / 와이프 / 차이, 브리프에 한 줄로 기록 |
+| 색 고르기 | 툴바의 색 버튼 → 팔레트(선명·차분·파스텔·모노), 최근 색 6개, 직접 선택·hex, 스포이트(화면에서 색 집기) |
+| 텍스트 꾸미기 (텍스트 도구일 때 셋째 줄) | 글자 효과(배경 상자·윤곽선·효과 없음) · 배경 상자 색/자동/불투명도 · ⇄ 반전 · 윤곽선 색 · 그림자 · 둘째 줄의 **B** *I* |
+| 텍스트 입력 | Enter 완료 · Shift+Enter 줄바꿈 · Esc 취소 · 더블클릭으로 다시 편집 |
+| 전송 대상 바꾸기 | 대상 바 클릭 또는 Ctrl+T → ↑↓ Enter. "이 창을 기본 대상으로 고정"을 켜면 다음부터 그 창이 우선(트레이에서 해제) |
 | 녹음 시작/정지 | M (말하면서 그리면 발화가 주석에 자동으로 붙는다) |
 | 타임라인 열기 / 재생 / 라이브 | L · Space · End |
 | 되돌리기 / 다시 실행 | Ctrl+Z · Ctrl+Shift+Z |
 | **전송** (작업하던 에이전트에게) | Enter |
 | 저장 / 복사 / 녹화 내보내기 | Ctrl+S · Ctrl+C · Ctrl+E |
 
-전송하면 `Pictures\Backseat\sessions\<id>\` 에 세션 패키지가 생기고(annotated.png, brief.md, strokes.json,
-transcript.json, audio.webm, meta.json), 캡처 직전에 쓰고 있던 창(터미널의 Claude Code, Claude 앱, Cursor,
-VS Code, 브라우저 채팅)에 브리프 경로가 든 지시문 또는 이미지를 붙여넣는다. Enter는 사용자가 누른다.
+전송하면 `Pictures\Backseat\sessions\<id>\` 에 세션 패키지가 생기고(annotated.png, screenshot.png, brief.md, strokes.json,
+transcript.json, audio.webm, meta.json), 캡처 직전에 쓰고 있던 창(터미널의 Claude Code, Claude 앱, ChatGPT/Codex 앱, Cursor,
+VS Code, 브라우저 채팅, 그 밖의 앱 창)에 브리프 경로가 든 지시문 또는 이미지를 붙여넣는다. Enter는 사용자가 누른다.
+
+AI가 화면 원래 내용과 사용자가 그린 것을 헷갈리지 않도록, annotated.png 의 Backseat 글자에는 왼쪽 위 보라색 "B" 표시가,
+번호 원에는 보라색 테두리가 붙고, 주석 없는 원본은 screenshot.png 로 함께 저장된다(블러는 원본에도 적용). brief.md 맨 위에
+이 사실이 한 줄로 적힌다.
 
 ## 에이전트 연결 (MCP)
 
@@ -66,8 +74,8 @@ transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-
 
 ## 검증
 
-- `npm test` — 정렬·전사 그룹화·스크롤 스티칭·클라우드 STT 어댑터(모의 서버) 단위 테스트
-- `npm run selftest` — 캡처, 창 열거, 선택창·편집기 렌더링, 타임라인 스크럽, undo/redo, 자르기(좌표·meta), 전/후 비교, 스크롤 캡처(자체 긴 페이지 창), 클라우드 STT(로컬 모의 서버), 클립보드, 세션 패키지, 브리프 검증.
+- `npm test` — 정렬·전사 그룹화·스크롤 스티칭·클라우드 STT 어댑터(모의 서버)·팔레트·전송 대상 판별 단위 테스트
+- `npm run selftest` — 캡처, 창 열거, 선택창·편집기 렌더링, 타임라인 스크럽, undo/redo, 자르기(좌표·meta), 전/후 비교, 스크롤 캡처(자체 긴 페이지 창), 클라우드 STT(로컬 모의 서버), 텍스트 꾸미기(여러 줄·배경색·윤곽선·그림자·굵게/기울임), 색 팝오버·스포이트, 전송 대상 메뉴, 클립보드, 세션 패키지(screenshot.png 포함), 브리프 검증.
   `--selftest-wav=<wav>` 를 주면 STT와 음성 레인까지 확인한다.
 - `node scripts/mcp-check.mjs <sessionsRoot>` — MCP 서버를 공식 클라이언트로 검증(ask 왕복 포함)
 

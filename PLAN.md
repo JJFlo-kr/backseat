@@ -309,10 +309,11 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - [ ] `audioOffsetMs` 미세 조정 — 실측 오차가 작아 보류
 
 ## 16. 전체 검증 방법 (현재 기준)
-1. `npm test` — 단위 테스트 33개 (정렬 18, 전사 그룹화 5, 스크롤 스티칭 4, 클라우드 STT 어댑터 6 — 모의 HTTP 서버 포함)
-2. `npm run selftest -- --selftest-wav=<한국어 wav> --selftest-shots=<dir>` — 캡처·창 열거·전경 창·대상 판별·선택창·편집기(스트로크 2개, 타임라인, 스크럽, undo/redo)·**자르기(캔버스 크기·주석 좌표·meta.rectPx 이동, undo 복원, 브리프 자르기 줄)**·**전/후 비교(O 키, 겹치기/와이프/차이 레이어 픽셀, 브리프 한 줄, Esc 해제)**·마이크 녹음→STT·음성 레인 주입·**스크롤 캡처(자체 긴 페이지 창을 실제 휠로 스크롤해 이어붙인 높이·폭)**·**클라우드 STT(로컬 모의 서버: 멀티파트·Bearer 키·verbose_json 파싱, 키 없으면 네트워크 전 거부)**·클립보드·브리프(6종 주석 + 🗣)·세션 패키지(audio/transcript/requestId) 검증, 스크린샷 10장(selector, editor, editor-timeline, editor-scrub, editor-crop-drag, editor-crop, editor-compare-{overlay,wipe,diff}, editor-speech) + scroll.png
-3. `node scripts/mcp-check.mjs <sessionsRoot>` — MCP 툴 7개, ask 왕복
-4. 사람이 확인할 것: 실제 터미널 창에 붙여넣기, 실제 마이크 발화의 정렬 품질, 설치 파일 실행, 실제 브라우저·터미널에서의 스크롤 캡처(고정 헤더·가상 스크롤 페이지), 실제 OpenAI 키로 클라우드 STT 한 번
+1. `npm test` — 단위 테스트 48개 (정렬·전사 그룹화·스크롤 스티칭·클라우드 STT 어댑터(모의 HTTP 서버)·팔레트·전송 대상 판별, 19절)
+2. `npm run selftest -- --selftest-wav=<한국어 wav> --selftest-shots=<dir>` — 캡처·창 열거·전경 창·대상 판별·선택창·편집기(스트로크 2개, 타임라인, 스크럽, undo/redo)·**자르기(캔버스 크기·주석 좌표·meta.rectPx 이동, undo 복원, 브리프 자르기 줄)**·**전/후 비교(O 키, 겹치기/와이프/차이 레이어 픽셀, 브리프 한 줄, Esc 해제)**·마이크 녹음→STT·음성 레인 주입·**스크롤 캡처(자체 긴 페이지 창을 실제 휠로 스크롤해 이어붙인 높이·폭)**·**클라우드 STT(로컬 모의 서버: 멀티파트·Bearer 키·verbose_json 파싱, 키 없으면 네트워크 전 거부)**·**텍스트 꾸미기(여러 줄·배경색·윤곽선·그림자·굵게/기울임·재편집)**·**색 팝오버(팔레트·최근 색·스포이트 대체 경로)**·**전송 대상 메뉴(Ctrl+T, 고정)**·**툴바 3줄이 820px에 들어가는지**·클립보드·브리프(6종 주석 + 🗣)·세션 패키지(audio/transcript/requestId/screenshot.png) 검증, 스크린샷 17장(selector, editor, editor-timeline, editor-scrub, editor-crop, editor-compare-{overlay,wipe,diff}, editor-speech, editor-text-typed, editor-text, editor-text-live, editor-text-edit, editor-text-edit2, editor-colors, editor-colors-textbg, editor-target-menu) + scroll.png
+3. `node scripts/mcp-check.mjs <sessionsRoot> [mcp-server.js]` — MCP 툴 7개, includeOriginal, ask 왕복. **sessionsRoot는 자가 테스트의 임시 폴더를 쓸 것**(실제 폴더에 쓰면 떠 있는 트레이 앱이 ask 요청을 받아 캡처를 띄울 수 있음). 두 번째 인자로 설치판 `resources\app.asar.unpacked\out\main\mcp-server.js`를 검사
+4. 설치판: `npm run dist` 후 `dist\win-unpacked\Backseat.exe --selftest --selftest-no-stt --selftest-no-scroll`
+5. 사람이 확인할 것: 실제 터미널 창에 붙여넣기, 실제 마이크 발화의 정렬 품질, 설치 파일 실행, 실제 브라우저·터미널에서의 스크롤 캡처(고정 헤더·가상 스크롤 페이지), 실제 OpenAI 키로 클라우드 STT 한 번
 
 ## 17. M5 (2026-10-23)
 - [x] 자르기 도구(C): 편집기에서 드래그한 영역만 남긴다. 문서(`Doc`)에 `crop`(원본 px 기준 사각형)이 들어가 히스토리 1단계로 되돌릴 수 있고, base/cmp/ink 캔버스가 원본 이미지(`orig`)에서 다시 그려진다. 모든 주석 좌표는 자른 원점만큼 이동하고 완전히 바깥인 주석은 제거(번호 뱃지 재번호, 발화 링크 인덱스 재매핑). 내보낼 때 `meta.rectDip/rectPx`는 잘린 영역 기준으로 다시 계산하고 `meta.crop`에 원본 기준 사각형을 남긴다. brief.md에 "자르기: 원본 캡처의 (x,y) w×h px만 남김" 한 줄.
@@ -331,3 +332,64 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 - [ ] 미해결: 앱 시작 후 **첫** Ctrl+Shift+A에서 선택 창이 흰 화면으로 남고, 단축키를 한 번 더 눌러(취소) 없앤 뒤부터는 정상.
   - 의심: src/main/selector.ts 가 did-finish-load 에서 바로 show() 하는데, 렌더러 콜드 스타트(4K@200%에서 JPEG 약 3MB 전달)에는 첫 페인트 전에 창이 떠서 흰 상태로 멈춤. 렌더러 로그가 없어 확정 못 함.
   - 다음 단계: userData/backseat.log 파일 로거로 렌더러 console·render-process-gone 기록, 선택 창은 ready-to-show 에서 표시하고 3초 안에 안 뜨면 강제 표시+로그, electron . --capture 로 띄운 뒤 3초 후 화면을 찍어 재현. 임시 우회: 앱을 켠 직후 한 번 캡처를 열었다 취소.
+
+
+## 19. 사용 피드백 2라운드 (2026-10-24)
+
+### 19.1 설치판이 기본 실행 방식
+- README 첫 절을 "설치와 실행(기본)"으로: 설치 파일 → 시작 메뉴/바탕화면 Backseat → 트레이. 개발 실행은 아래로.
+- MCP 서버: 일반 Node는 app.asar 안을 못 읽는다. main 빌드에서 `@modelcontextprotocol/sdk`·`zod`를 외부화하지 않고 묶고(`externalizeDepsPlugin({ exclude })`), `out/main/mcp-server.js`와 `out/main/chunks/**`를 `asarUnpack`으로 풀어 `resources\app.asar.unpacked\out\main\mcp-server.js`를 `node`로 실행. 트레이 "에이전트 연결 설정(MCP) 복사"가 현재 설치 경로로 `.mcp.json` 조각을 클립보드에 넣는다.
+
+### 19.2 로그인 시 자동 시작
+- `config.launchAtLogin`(설치판 기본 true, 개발 실행 false) → 시작 시와 트레이 체크박스 토글 때 `app.setLoginItemSettings({ openAtLogin, path: process.execPath })`. 개발 실행(`electron .`)은 등록하지 않고 메뉴 항목을 비활성("설치판에서만").
+
+### 19.3 텍스트 배경 이름 — 후보와 참고 제품
+| 후보 (라벨 / 선택지) | 쓰는 곳 |
+|---|---|
+| 글자 효과: 배경 상자 / 윤곽선 / 효과 없음 | Canva "효과(Effects)" 패널의 배경·윤곽선·없음, PowerPoint "텍스트 효과" |
+| 텍스트 배경: 켜기/끄기 (A 버튼 토글) | 인스타그램 스토리·카카오톡 사진 편집의 글자 배경 토글 |
+| 채우기 / 윤곽선 | Snagit 텍스트·콜아웃 속성(Fill, Outline), PowerPoint "도형 채우기 / 텍스트 윤곽선" |
+| 획(Stroke) | Photoshop 레이어 스타일 "획" |
+| 텍스트 외곽선 / 그림자 / 배경색 | ShareX 주석 도구 텍스트 옵션 |
+| 말풍선 / 라벨 | Snagit 콜아웃, Snipaste 텍스트 상자 |
+- 선택: **"글자 효과" + "배경 상자 / 윤곽선 / 효과 없음"**. "배경"만 쓰면 이미지 배경과 헷갈리고, "채우기"는 글자색과 헷갈림. 각 버튼에 "가" 미리보기 칩과 설명 툴팁.
+(위 명칭은 각 제품의 일반적인 UI 표기 기준이며, 판·메뉴 위치는 버전마다 다를 수 있음)
+
+### 19.4 캡처 원본과 Backseat 주석 구분 (AI용 태그)
+- 세션 패키지에 주석 없는 원본 `screenshot.png`(블러는 적용된 상태 — 민감정보 보호) 추가. 편집기가 `ExportPayload.basePngDataUrl`로 넘긴다.
+- annotated.png 안의 Backseat 글자는 왼쪽 위에 보라(#6E56CF) "B" 표시, 번호 원은 보라 바깥 테두리 — 화면 원래 글자·아이콘과 구분되는 고정 표식.
+- brief.md: 맨 위 `> 주의:` 한 줄(그린 것은 사용자 추가, 원본은 screenshot.png), 주석 섹션 이름 "Backseat 주석(사용자 추가)", 해석 가이드는 최대 3줄로 한 번만, 시간 구간은 음성이 있을 때만, 색은 여러 색을 썼을 때만, "전체 전사" 중복 섹션 제거(transcript.json 안내 한 줄). 음성이 있는 브리프에서 특히 짧아진다(전사 중복·주석별 시간 제거); 음성 없는 브리프는 주의 줄만큼 늘고 나머지는 비슷.
+- MCP `backseat_latest/get/wait/ask`: 이미지 앞에 "이 이미지의 주석은 사용자가 Backseat로 그린 것" 안내, `includeOriginal: true`면 screenshot.png도 붙인다. 채팅 앱 붙여넣기 문구 앞에 `[Backseat 주석 포함]`.
+
+### 19.5 텍스트 배경색과 흔한 텍스트 기능
+참고한 앱의 공통 기능:
+| 기능 | 쓰는 곳 |
+|---|---|
+| 글자 배경(상자) 켜기·색 바꾸기 | 인스타그램 스토리(A 버튼으로 배경 순환), 카카오톡 사진 편집, Snagit 콜아웃 채우기 |
+| 배경 투명도 | Snagit·PowerPoint(채우기 투명도), Canva(효과 → 배경 투명도) |
+| 글자색 ↔ 배경색 반전 | 인스타그램 스토리(배경 토글 시 글자/배경 색 뒤바뀜) |
+| 윤곽선 색 | PowerPoint 텍스트 윤곽선, Photoshop 획, ShareX 텍스트 외곽선 |
+| 그림자 | Snagit·Canva·PowerPoint 그림자 효과, ShareX 텍스트 그림자 |
+| 굵게·기울임 | iOS 마크업 텍스트, Snipaste, PowerPoint |
+| 여러 줄 | 모든 앱 (Snipaste·Snagit은 Enter=줄바꿈, 카톡/인스타는 줄바꿈 후 완료 버튼) |
+- 구현: 텍스트 도구일 때 세 번째 줄 `#textbar`(글자 효과 · 배경색+자동+불투명도 · ⇄ 반전 · 윤곽선 색 · 그림자), 두 번째 줄에 B/I. Enter = 완료, Shift+Enter = 줄바꿈(빠른 메모가 주 용도라 완료를 Enter에 둠). 정렬 옵션은 넣지 않음(왼쪽 정렬).
+- `Annotation.text`에 optional `bg, bgOpacity, outline, shadow, bold, italic` — 없으면 1라운드 모양 그대로라 기존 패키지 호환.
+
+### 19.6 색 팔레트
+참고: Excalidraw(5색 빠른 선택 + 확장 팔레트 + 최근 색 + hex 입력), tldraw(12색 고정 큐레이션 팔레트), Figma(문서 색·최근 색·스포이트), Canva(문서 색·기본 팔레트·+ 직접 선택), Notion(10색 이름 붙은 차분한 색), Snagit(빠른 스타일 + 스포이트).
+- 색 버튼 하나(현재 색 점 + ▾) → 팝오버: 팔레트 탭 4종(선명 = Radix 계열 12색, 차분 = tldraw/Excalidraw 계열 12색, 파스텔 12색, 모노 9단계), 최근 사용 6색, 직접 선택(`<input type=color>`), hex 입력, 스포이트(Chromium `EyeDropper` API; 없으면 캡처 화면 클릭으로 픽셀 읽기).
+- 펜·도형·텍스트 색, 배경 상자 색, 윤곽선 색이 같은 팝오버를 쓴다. 마지막 탭과 최근 색은 localStorage.
+
+### 19.7 전송 대상 오판 (사용자 신고)
+- 증상: 캡처 직전 창이 ChatGPT 앱(Codex)인데 전송이 Claude 앱으로 감. 사용 방식(대상 창에 포커스를 두고 단축키)은 맞았다.
+- 원인: `classifyTarget`이 `ChatGPT.exe`를 몰라 null → "직전 대상" 폴백이 이전의 Claude 앱을 씀. 게다가 `lastTarget`에 "(직전 대상)" 접미사가 붙은 객체를 저장해 라벨이 누적됨.
+- 수정: ChatGPT.exe·Codex.exe → Codex(이미지 붙여넣기), Zed·Windsurf(경로), Slack·Discord(채팅). 모르는 앱이라도 실제 앱 창이면 "창: <제목> (<프로세스>)" 대상으로 쓰고, 직전 대상 폴백은 전경 창이 없음/바탕화면/작업표시줄/우리 창일 때만. 직전 대상은 원본을 저장하고 표시용 라벨에만 접미사 한 번.
+- 대상 선택 메뉴: 편집기 대상 바 클릭 또는 Ctrl+T → 맨 위 "자동: …"(기본 선택), 그다음 알려진 에이전트·채팅 앱, 나머지 열린 창(최대 12). 고른 창은 이번 전송에만 적용. "이 창을 기본 대상으로 고정"을 켜면 `config.pinnedTargetProcess/Title`에 저장되어 자동 판별보다 우선(그 창이 없으면 자동 판별), 트레이 "기본 대상 고정 해제"로 해제.
+- 단위 테스트 `tests/agents.test.ts`: ChatGPT.exe → codex, 모르는 앱 → 창 대상, 바탕화면/작업표시줄/빈 제목/우리 프로세스 → null, 후보 정렬·12개 상한, 고정 매칭.
+
+### 19.8 검증 (2026-10-24)
+- `npx tsc --noEmit` 0, `npm test` 48개 통과, `npm run build` OK
+- 자가 테스트(음성 WAV 포함, 스크롤 제외 — 사용자가 작업 중이라 실제 마우스를 움직이지 않음) `ok:true`, 경고·오류 0. 스크린샷으로 텍스트 꾸미기·색 팝오버·대상 메뉴·B 표시 확인
+- 설치판: `dist\win-unpacked\Backseat.exe --selftest --selftest-no-stt --selftest-no-scroll` ok, node_modules가 없는 폴더로 복사한 설치판 mcp-server.js로 mcp-check `MCP_OK`
+- 사람이 확인할 것: 설치 파일 실행 후 시작 메뉴·바탕화면 아이콘, 재부팅 뒤 자동 시작, ChatGPT(Codex) 앱 앞에서 캡처 → 전송, Ctrl+T 대상 메뉴로 다른 창에 보내기·고정, 스포이트(EyeDropper)로 화면 밖 색 집기, 실제 AI가 screenshot.png/B 표시를 구분하는지
+- 테스트용 한국어 WAV: Windows TTS(Heami) 기본 속도로 "이 로그인 버튼…"을 만들면 Whisper가 "1호구인"으로 들을 때가 있다 → Rate -2, "화면 위쪽에 있는 로그인 버튼이 너무 작아요. 로그인 버튼을 한 1.5배 키워 주세요."
