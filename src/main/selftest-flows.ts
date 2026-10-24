@@ -68,10 +68,10 @@ export async function runFlowsSelfTest(shotsDir: string | undefined): Promise<vo
   const ensureIpc = (): void => {
     // the chip menu lists fake windows, never the real ones on this machine (they would be in the screenshots)
     ipcMain.removeHandler(IPC.editorTargets)
-    ipcMain.handle(IPC.editorTargets, (): SendTargetView[] => (baseInit().candidates ?? []).map((c) => ({
+    ipcMain.handle(IPC.editorTargets, (): SendTargetView[] => [CLAUDE, ...(baseInit().candidates ?? []).map((c): SendTargetView => ({
       source: 'picked', label: c.label, kind: c.kind, estimated: false, method: c.method,
       identity: { hwnd: c.hwnd, pid: 0, processStartMs: 0, title: c.title, process: c.process }
-    })))
+    }))])
     ipcMain.removeHandler(IPC.editorSend)
     ipcMain.handle(IPC.editorSend, async (_e, payload: ExportPayload, opts: SendOptions = {}): Promise<SendResult> => {
       sent.push({ annotations: payload.annotations.map((a) => a.kind), memo: payload.memo, transcript: Boolean(payload.transcript), audio: Boolean(payload.audio), opts })

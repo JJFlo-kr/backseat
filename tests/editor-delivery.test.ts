@@ -186,3 +186,13 @@ test('phase 2: the picked or pinned window is not open: the chip names it and as
   assert.deepEqual(chipView(v, ko), { label: 'Codex · ChatGPT 앱 · 열려 있지 않음', state: '보낼 곳을 다시 고르세요', tone: 'warn' })
   assert.equal(chipView(v, ko, { expired: true }).label, 'Codex · ChatGPT 앱 · 열려 있지 않음', 'the name wins over the generic note')
 })
+
+test('phase 2: another agent fetched it (expected=false comes without the fetched step)', () => {
+  const by = { agentId: 'a2', name: 'Cursor', cwd: 'D:\other', at: 'now', tool: 'backseat_get', expected: false }
+  const v = deliveryView(status(['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'], { fetchedBy: by, target: CLAUDE }), {}, ko)
+  assert.equal(v.headline, '다른 에이전트가 자료를 가져갔어요 · Cursor')
+  assert.equal(v.tone, 'warn')
+  assert.ok(!v.steps.some((s) => s.step === 'fetched'), 'no fetched step for the expected agent')
+  const merged = mergeUpdate(status(['saved', 'pasted'], { target: CLAUDE }), status(['saved', 'pasted'], { fetchedBy: by }))
+  assert.equal(merged?.fetchedBy?.expected, false)
+})

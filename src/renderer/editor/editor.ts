@@ -1773,6 +1773,7 @@ function renderDelivery(): void {
       b.classList.remove('primary-action')
     }
     actionBtns.confirm.hidden = true
+    actionBtns.resend.hidden = false
     return
   }
   const v = deliveryView(s, lastDeliveryCtx, t)
@@ -1791,6 +1792,7 @@ function renderDelivery(): void {
     b.classList.toggle('primary-action', k === v.primary)
   }
   actionBtns.confirm.hidden = v.primary !== 'confirm' // only after a title change
+  actionBtns.resend.hidden = v.primary === 'confirm' // there a resend goes to that window too: one button, not two
 }
 
 /** Anything 보내기 would send changed (annotations, links, memo, recording). */
@@ -1918,6 +1920,9 @@ function methodRowHint(m: SendTargetView['method']): string {
     case 'clipboard': return t('editor.target.hintClipboard')
   }
 }
+
+/** editor.targets() answers [the current target, ...other windows]; the menu's first row already is the current one. */
+const candidatesOf = (views: SendTargetView[]): SendTargetView[] => views.slice(1)
 
 /** Picked windows that turned out closed: not offered again in this editor. */
 const goneHwnds = new Set<number>()
@@ -2073,7 +2078,7 @@ function openTargetMenu(refresh = true): void {
   window.addEventListener('resize', closeTargetMenu)
   if (refresh && window.backseat.editor.targets) {
     window.backseat.editor.targets().then((views) => {
-      targetViews = views
+      targetViews = candidatesOf(views)
       if (!targetMenuOpen()) return
       const active = menuActive
       closeTargetMenu()
@@ -3167,7 +3172,7 @@ window.backseat.editor.onInit((data) => {
   pinChecked = startPinned()
   mustPickTarget = data.sendTarget?.source === 'none' && data.sendTarget.unavailable !== undefined
   showTarget()
-  window.backseat.editor.targets?.().then((views) => { targetViews = views }, () => undefined)
+  window.backseat.editor.targets?.().then((views) => { targetViews = candidatesOf(views) }, () => undefined)
   newCaptureBtn.hidden = typeof window.backseat.editor.newCapture !== 'function'
   if (data.request) {
     askBar.textContent = t('editor.ask.label', { agent: data.request.agent || t('editor.target.agentFallback'), question: data.request.question })

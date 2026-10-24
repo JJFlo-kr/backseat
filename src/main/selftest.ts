@@ -278,10 +278,11 @@ export async function runSelfTest(): Promise<void> {
     // candidates instead, so the menu checks below see a known list. A send to one still goes through main,
     // which never saw those windows alive and answers targetExpired.
     ipcMain.removeHandler(IPC.editorTargets)
-    ipcMain.handle(IPC.editorTargets, () => FAKE_CANDIDATES.map((c) => ({
+    // (main's answer is [the current target, ...other windows])
+    ipcMain.handle(IPC.editorTargets, () => [{ source: 'foreground-agent', label: target.label, kind: target.kind, estimated: true, method: target.method }, ...FAKE_CANDIDATES.map((c) => ({
       source: 'picked', label: c.label, kind: c.kind, estimated: false, method: c.method,
       identity: { hwnd: c.hwnd, pid: 0, processStartMs: 0, title: c.title, process: c.process }
-    })))
+    }))])
     await waitLoad(ed)
     // Wait until the renderer has processed editor:init and drawn the image (debug hook).
     const tReady = Date.now()

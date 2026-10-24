@@ -155,9 +155,10 @@ export function deliveryView(s: DeliveryStatus, ctx: DeliveryContext, t: Transla
       primary: onClipboard ? 'copy' : 'resend'
     }
   }
+  // Another agent than the one this was sent to fetched it: main reports fetchedBy without the 'fetched' step.
+  const by = s.fetchedBy
+  if (by && !by.expected) return { steps, headline: t('editor.delivery.fetchedOther', { name: by.name }), detail: '', tone: 'warn', primary: null }
   if (reached.has('fetched')) {
-    const by = s.fetchedBy
-    if (by && !by.expected) return { steps, headline: t('editor.delivery.fetchedOther', { name: by.name }), detail: '', tone: 'warn', primary: null }
     return { steps, headline: by?.name ? t('editor.delivery.fetchedBy', { name: by.name }) : t('editor.delivery.fetched'), detail: '', tone: 'ok', primary: null }
   }
   if (s.fetchTimedOut) {
