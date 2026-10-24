@@ -74,6 +74,42 @@ body { display: flex; flex-direction: column; }
   font-size: 12px;
 }
 #toolbar2 select option { background: #2a2a30; color: #e6e6e6; }
+.seg { display: inline-flex; gap: 2px; }
+.seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 5px 0 3px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #3a3a42;
+  color: #e6e6e6;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.seg button:hover { background: #46464f; }
+.seg button.active { outline: 2px solid #E5484D; outline-offset: -2px; }
+.seg button:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 1px; }
+.fx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: #E5484D;
+  background: #8a8a92 conic-gradient(#9c9ca4 25%, #6e6e76 0 50%, #9c9ca4 0 75%, #6e6e76 0) 0 0 / 6px 6px;
+}
+.fx { position: relative; isolation: isolate; }
+.fx-plate::before { content: ""; position: absolute; inset: 2px 1px; z-index: -1; border-radius: 3px; background: rgba(255,255,255,.85); }
+.fx-plate { color: #B3262B; }
+.fx-outline { -webkit-text-stroke: 0.6px rgba(0,0,0,.85); text-shadow: 1px 0 rgba(0,0,0,.6), -1px 0 rgba(0,0,0,.6), 0 1px rgba(0,0,0,.6), 0 -1px rgba(0,0,0,.6); }
 .dot-box { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; }
 .width-dot { display: block; border-radius: 50%; background: #E5484D; width: 3px; height: 3px; }
 .btn:focus-visible, .swatch:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 1px; }

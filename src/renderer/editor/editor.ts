@@ -100,7 +100,7 @@ const widthInput = byId<HTMLInputElement>('width')
 const widthDot = byId<HTMLElement>('width-dot')
 const fontSelect = byId<HTMLSelectElement>('font')
 const sizeSelect = byId<HTMLSelectElement>('font-size')
-const styleSelect = byId<HTMLSelectElement>('text-style')
+const styleBtns = Array.from(byId('text-style').querySelectorAll<HTMLButtonElement>('[data-text-style]'))
 
 let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
@@ -839,6 +839,11 @@ function commitPendingText(): void {
 }
 
 const isToolbarControl = (n: EventTarget | null): boolean =>
+  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range') ||
+  (n instanceof HTMLElement && n.closest('#toolbar2') !== null)
+
+/** Controls that need the real mouse-down (focus / drag): selects and sliders. */
+const isNativeToolbarControl = (n: EventTarget | null): boolean =>
   n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range')
 
 /** Open the text input at (left, top) in wrap CSS px; `orig` = existing annotation being edited. */
@@ -1607,7 +1612,11 @@ function syncToolbar(): void {
   widthDot.style.background = color
   fontSelect.value = fontFamily ?? ''
   sizeSelect.value = String(fontSizeCss)
-  styleSelect.value = textStyle
+  styleBtns.forEach((b) => {
+    const on = b.dataset.textStyle === textStyle
+    b.classList.toggle('active', on)
+    b.setAttribute('aria-checked', String(on))
+  })
   wrap.classList.toggle('text-tool', tool === 'text')
   wrap.classList.toggle('eraser-tool', tool === 'eraser')
   if (tool !== 'text') wrap.classList.remove('over-text')
@@ -1644,7 +1653,7 @@ widthInput.addEventListener('input', () => setWidth(Number(widthInput.value) || 
 widthInput.addEventListener('change', () => widthInput.blur())
 
 /** A font / size / style pick applies to the open text box too, and hands focus back to it. */
-function textPropChanged(sel: HTMLSelectElement): void {
+function textPropChanged(sel: HTMLElement): void {
   if (textSession) {
     textSession.font = fontFamily
     textSession.sizeCss = fontSizeCss
@@ -1663,14 +1672,17 @@ sizeSelect.addEventListener('change', () => {
   fontSizeCss = Number(sizeSelect.value) || fontSizeCss
   textPropChanged(sizeSelect)
 })
-styleSelect.addEventListener('change', () => {
-  const v = styleSelect.value
-  if (isTextStyle(v)) textStyle = v
-  textPropChanged(styleSelect)
+styleBtns.forEach((b) => {
+  b.addEventListener('mousedown', (ev) => ev.preventDefault()) // keep focus in the open text box
+  b.addEventListener('click', () => {
+    const v = b.dataset.textStyle ?? ''
+    if (isTextStyle(v)) textStyle = v
+    textPropChanged(b)
+  })
 })
 // keep focus (e.g. in the text box) when clicking toolbar buttons; selects and sliders need the mouse
 for (const bar of [byId('toolbar'), byId('toolbar2')]) {
-  bar.addEventListener('mousedown', (e) => { if (!isToolbarControl(e.target)) e.preventDefault() })
+  bar.addEventListener('mousedown', (e) => { if (!isNativeToolbarControl(e.target)) e.preventDefault() })
 }
 
 const hotkeys = new Hotkeys([

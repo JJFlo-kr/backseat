@@ -62,11 +62,12 @@
           <option value="32">32</option>
           <option value="48">48</option>
         </select>
-        <select id="text-style" title="글자 배경">
-          <option value="plate" selected>판</option>
-          <option value="outline">외곽선</option>
-          <option value="plain">없음</option>
-        </select>
+        <span class="lbl">글자 효과</span>
+        <div id="text-style" class="seg" role="radiogroup" aria-label="글자 효과" title="글자를 화면 위에서 잘 읽히게 하는 효과">
+          <button type="button" role="radio" aria-checked="true" class="active" data-text-style="plate" title="글자 뒤에 반투명 상자를 깔아 어떤 화면 위에서도 읽히게 합니다 (Snagit·Canva·인스타 스토리의 텍스트 배경)"><span class="fx fx-plate">가</span>배경 상자</button>
+          <button type="button" role="radio" aria-checked="false" data-text-style="outline" title="글자 둘레에 어두운 테두리를 둘러 배경과 분리합니다 (PowerPoint·Photoshop의 윤곽선/획)"><span class="fx fx-outline">가</span>윤곽선</button>
+          <button type="button" role="radio" aria-checked="false" data-text-style="plain" title="글자만 그립니다"><span class="fx fx-plain">가</span>효과 없음</button>
+        </div>
       </div>
     </div>
 
