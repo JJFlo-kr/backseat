@@ -59,6 +59,8 @@ export async function sendToTarget(
     else await clipboardImageAndText(pkg.annotatedPng, imageLine)
 
     // Get out of the way, then hand focus to the agent window and paste.
+    // Codex review F05: a pinned (always-on-top) editor comes back after the paste, without stealing focus.
+    const keepVisible = editorWin?.isAlwaysOnTop() ?? false
     editorWin?.hide()
     await sleep(120)
     const focused = await focusWindow(target.hwnd)
@@ -79,6 +81,7 @@ export async function sendToTarget(
       await sleep(150)
       sendEnter()
     }
+    if (keepVisible) editorWin?.showInactive()
     return {
       ok: true,
       delivered: 'pasted',

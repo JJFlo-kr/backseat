@@ -12,7 +12,11 @@ export class History<T> {
   private undoStack: Command<T>[] = []
   private redoStack: Command<T>[] = []
 
-  constructor(private readonly limit = 100) {}
+  private readonly limit: number
+
+  constructor(limit = 100) {
+    this.limit = limit
+  }
 
   commit(label: string, before: T, after: T): void {
     this.undoStack.push({ label, before, after })

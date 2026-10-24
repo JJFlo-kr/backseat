@@ -429,3 +429,37 @@ footer {
 }
 
 #comparebar[hidden] { display: none; }
+
+/* "Recognition failed" question before 전송 (Codex review F12) */
+.choice {
+  position: fixed;
+  z-index: 1100;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  padding: 16px 18px 14px;
+  background: #1f1f23;
+  color: #e6e6e6;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+}
+.choice p {
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+.choice-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.choice-buttons button.primary {
+  background: #6e56cf;
+  border-color: #6e56cf;
+  color: #fff;
+}

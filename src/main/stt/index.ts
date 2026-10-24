@@ -31,17 +31,30 @@ interface PendingJob {
   resolve: (r: TranscribeResult) => void
   onProgress?: (p: SttProgress) => void
   req: TranscribeRequest
+  /** The worker the job was posted to: only its error/exit/stop settles the job. */
+  worker: Worker
   /** Kept separately: the PCM buffer is transferred to the worker and becomes detached. */
   sampleCount: number
 }
 const pending = new Map<number, PendingJob>()
 
+/** Settles every job posted to worker `w` as failed, exactly once. */
+function failJobs(w: Worker, error: string): void {
+  for (const [id, p] of pending) {
+    if (p.worker !== w) continue
+    pending.delete(id)
+    p.onProgress?.({ stage: 'error', message: error })
+    p.resolve({ ok: false, error })
+  }
+}
+
 function getWorker(): Worker {
   if (worker) return worker
-  worker = new Worker(join(__dirname, 'stt-worker.js'), {
+  const w = new Worker(join(__dirname, 'stt-worker.js'), {
     workerData: { cacheDir: modelCacheDir(), model: sttModel() }
   })
-  worker.on('message', (msg: WorkerOut) => {
+  worker = w
+  w.on('message', (msg: WorkerOut) => {
     const p = pending.get(msg.id)
     if (!p) return
     if (msg.type === 'progress') {
@@ -62,17 +75,15 @@ function getWorker(): Worker {
       p.resolve({ ok: false, error: msg.message })
     }
   })
-  worker.on('error', (err: Error) => {
-    for (const [id, p] of pending) {
-      pending.delete(id)
-      p.resolve({ ok: false, error: err.message })
-    }
-    worker = null
+  w.on('error', (err: Error) => {
+    failJobs(w, err.message)
+    if (worker === w) worker = null
   })
-  worker.on('exit', () => {
-    worker = null
+  w.on('exit', (code: number) => {
+    failJobs(w, t('stt.workerExited', { code }))
+    if (worker === w) worker = null
   })
-  return worker
+  return w
 }
 
 export type SttBackend = 'local' | 'openai'
@@ -115,9 +126,10 @@ export function transcribeLocal(req: TranscribeRequest, onProgress?: (p: SttProg
   return new Promise((resolve) => {
     const id = nextId++
     const pcm = req.pcm16k
-    pending.set(id, { resolve, onProgress, req, sampleCount: pcm.length })
     try {
-      getWorker().postMessage({ type: 'transcribe', id, pcm, language: req.language }, [pcm.buffer as ArrayBuffer])
+      const w = getWorker()
+      pending.set(id, { resolve, onProgress, req, worker: w, sampleCount: pcm.length })
+      w.postMessage({ type: 'transcribe', id, pcm, language: req.language }, [pcm.buffer as ArrayBuffer])
     } catch (err) {
       pending.delete(id)
       resolve({ ok: false, error: err instanceof Error ? err.message : String(err) })
@@ -126,6 +138,9 @@ export function transcribeLocal(req: TranscribeRequest, onProgress?: (p: SttProg
 }
 
 export function stopStt(): void {
-  void worker?.terminate()
+  const w = worker
   worker = null
+  if (!w) return
+  failJobs(w, t('stt.stopped'))
+  void w.terminate()
 }
