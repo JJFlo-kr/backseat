@@ -268,6 +268,29 @@ function plateColor(textColor: string): string {
   return brightness(textColor) > 0.6 ? 'rgba(20,20,24,0.78)' : 'rgba(255,255,255,0.85)'
 }
 
+/** Violet "made in Backseat" mark so an AI can tell typed text / numbered badges from real screen content. */
+const TAG_COLOR = '#6E56CF'
+
+/** Small rounded square with a white bold "B", centred just inside the box's top-left corner (x, y). s = size in image px. */
+function drawTag(ctx: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+  const cx = x + s * 0.25
+  const cy = y + s * 0.25
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(cx - s / 2, cy - s / 2, s, s, s * 0.28)
+  ctx.fillStyle = TAG_COLOR
+  ctx.fill()
+  ctx.lineWidth = s / 10
+  ctx.strokeStyle = '#fff'
+  ctx.stroke()
+  ctx.fillStyle = '#fff'
+  ctx.font = `bold ${Math.round(s * 0.7)}px system-ui, "Malgun Gothic", sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('B', cx, cy + s * 0.04)
+  ctx.restore()
+}
+
 function drawText(ctx: CanvasRenderingContext2D, a: TextAnn): void {
   const m = measureText(a)
   ensureFont(m.font, a.text)
@@ -290,6 +313,7 @@ function drawText(ctx: CanvasRenderingContext2D, a: TextAnn): void {
   ctx.fillStyle = a.color
   ctx.fillText(a.text, a.x, a.y)
   ctx.restore()
+  drawTag(ctx, a.x - m.pad, a.y - m.ascent - m.pad, Math.max(9 * (init?.meta.scaleFactor ?? 1), a.fontSize * 0.42))
 }
 
 /** Draw the first `count` points of a stroke (all when undefined). */
@@ -357,7 +381,15 @@ function drawBadge(ctx: CanvasRenderingContext2D, a: BadgeAnn, no: number): void
   ctx.fillStyle = a.color
   ctx.fill()
   ctx.lineWidth = Math.max(1, a.size / 16)
+  const stroke = ctx.lineWidth
   ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+  ctx.stroke()
+  // violet outer ring = Backseat mark
+  const ring = Math.max(1.5, a.size / 9)
+  ctx.beginPath()
+  ctx.arc(a.x, a.y, r + ring / 2 + stroke, 0, Math.PI * 2)
+  ctx.lineWidth = ring
+  ctx.strokeStyle = TAG_COLOR
   ctx.stroke()
   ctx.fillStyle = '#fff'
   ctx.font = `bold ${Math.round(a.size * 0.58)}px system-ui, "Malgun Gothic", sans-serif`
@@ -710,6 +742,17 @@ function flatten(): string {
   const ctx = ctxOf(out)
   ctx.drawImage(base, 0, 0)
   drawAll(ctx, null) // always the full picture, even while scrubbed
+  return out.toDataURL('image/png')
+}
+
+/** The original capture with only the blur (privacy) annotations applied: no other annotations, no tags. */
+function flattenBase(): string {
+  const out = document.createElement('canvas')
+  out.width = base.width
+  out.height = base.height
+  const ctx = ctxOf(out)
+  ctx.drawImage(base, 0, 0)
+  for (const a of annotations) if (a.kind === 'blur') drawBlur(ctx, a)
   return out.toDataURL('image/png')
 }
 
@@ -1240,6 +1283,7 @@ function buildPayload(): ExportPayload | null {
   commitPendingText()
   const payload: ExportPayload = {
     pngDataUrl: flatten(),
+    basePngDataUrl: flattenBase(),
     memo: memoInput.value.trim(),
     annotations: [...annotations],
     meta: exportMeta(),
@@ -1791,7 +1835,7 @@ window.backseat.editor.onInit((data) => {
       /** Crop programmatically (image px of the current canvas); same path as a pointer drag. */
       crop: (x: number, y: number, w: number, h: number) => applyCropSelection({ x, y, width: w, height: h }),
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
-      payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations } : null }
+      payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
     }
   }
   afterChange()

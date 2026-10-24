@@ -35,9 +35,11 @@ export async function sendToTarget(
     sessionDir = pkg.dir
     if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
     const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, Boolean(target?.mcp))
+    // Chat UIs get the image itself: say up front that the drawn marks are the user's Backseat annotations.
+    const imageLine = `[Backseat 주석 포함] ${line}`
 
     if (!target || target.method === 'clipboard' || !target.hwnd || !win32Available()) {
-      await clipboardImageAndText(pkg.annotatedPng, line)
+      await clipboardImageAndText(pkg.annotatedPng, imageLine)
       const viaMcp = target?.mcp ? ' · 에이전트는 backseat_latest/backseat_wait로 받을 수 있음' : ''
       return {
         ok: true,
@@ -48,7 +50,7 @@ export async function sendToTarget(
     }
 
     if (target.method === 'paste-path') await clipboardText(line)
-    else await clipboardImageAndText(pkg.annotatedPng, line)
+    else await clipboardImageAndText(pkg.annotatedPng, imageLine)
 
     // Get out of the way, then hand focus to the agent window and paste.
     editorWin?.hide()

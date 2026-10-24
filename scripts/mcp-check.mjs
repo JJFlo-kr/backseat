@@ -31,6 +31,9 @@ const kinds = latest.content.map((c) => c.type).join('+')
 const text = latest.content.find((c) => c.type === 'text')?.text ?? ''
 console.log('LATEST', kinds, 'brief chars', text.length, 'has🗣', text.includes('🗣'))
 
+const withOrig = await client.callTool({ name: 'backseat_latest', arguments: { includeOriginal: true } })
+console.log('LATEST+ORIGINAL', withOrig.content.map((c) => c.type).join('+'), '(expect text+text+image+text+image when the latest session has screenshot.png)')
+
 const agents = await client.callTool({ name: 'backseat_agents', arguments: {} })
 console.log('AGENTS', JSON.parse(agents.content[0].text).length)
 

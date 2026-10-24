@@ -291,6 +291,12 @@ export interface ManualLink {
 export interface ExportPayload {
   /** Flattened image (base + annotations) as PNG data URL, device pixels. */
   pngDataUrl: string
+  /**
+   * The capture WITHOUT Backseat's annotations (same size and crop as pngDataUrl), saved as
+   * screenshot.png so an agent can tell the original screen apart from what the user drew.
+   * Blur (privacy) boxes are still applied. Optional: older callers / tests may omit it.
+   */
+  basePngDataUrl?: string
   /** One-line memo for the whole image, may be empty. */
   memo: string
   annotations: Annotation[]

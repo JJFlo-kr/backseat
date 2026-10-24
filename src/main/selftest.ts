@@ -607,6 +607,7 @@ export async function runSelfTest(): Promise<void> {
     step = 'clipboard'
     const payload: ExportPayload = {
       pngDataUrl: init.imageDataUrl,
+      basePngDataUrl: init.imageDataUrl,
       memo: '자가 테스트 메모',
       annotations: [
         {
@@ -643,19 +644,30 @@ export async function runSelfTest(): Promise<void> {
     for (const needle of ['③ 화살표', '④ 사각형', '⑤ 번호 1', '⑥ 블러']) {
       if (!brief.includes(needle)) errors.push(`brief missing ${needle}`)
     }
+    if (!brief.includes('Backseat 주석(사용자 추가)')) errors.push('brief lacks the Backseat annotation heading')
+    if (!brief.split('\n').some((l) => l.startsWith('> 주의:'))) errors.push('brief lacks the 주의 line')
+    if (brief.includes('screenshot.png')) errors.push('brief mentions screenshot.png without a screenshot')
+    if (brief.includes('## 전체 전사')) errors.push('brief still has the 전체 전사 section')
+    const shotBrief = buildBrief(payload, 'crop.png', null, { screenshotFileName: 'screenshot.png' })
+    if (!shotBrief.includes('원본(주석 없음): screenshot.png')) errors.push('brief lacks the screenshot reference line')
     report.briefLines = brief.split('\n').length
 
     // Session package (what "전송" writes before delivering).
     step = 'package'
     const pkg = await writeSessionPackage(payload, target, join(dirname(out), 'sessions'))
-    for (const f of [pkg.annotatedPng, pkg.briefMd, pkg.strokesJson, pkg.metaJson]) {
+    if (!pkg.screenshotPng) errors.push('package has no screenshot.png despite basePngDataUrl')
+    for (const f of [pkg.annotatedPng, pkg.briefMd, pkg.strokesJson, pkg.metaJson, ...(pkg.screenshotPng ? [pkg.screenshotPng] : [])]) {
       try {
         await access(f)
       } catch {
         errors.push(`package file missing: ${f}`)
       }
     }
-    const metaBack = JSON.parse(await readFile(pkg.metaJson, 'utf8')) as { target?: { label?: string } }
+    const pkgBrief = await readFile(pkg.briefMd, 'utf8')
+    if (!pkgBrief.includes('원본(주석 없음): screenshot.png') || !pkgBrief.includes('원래 화면은 screenshot.png')) errors.push('package brief does not reference screenshot.png')
+    if (pkgBrief.includes('## 전체 전사')) errors.push('package brief still has the 전체 전사 section')
+    const metaBack = JSON.parse(await readFile(pkg.metaJson, 'utf8')) as { target?: { label?: string }; files?: string[] }
+    if (!metaBack.files?.includes('screenshot.png')) errors.push('meta.json files lacks screenshot.png')
     if (metaBack.target?.label !== target.label) errors.push('meta.json target mismatch')
     report.sessionDir = pkg.dir
     report.instruction = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo)
@@ -672,6 +684,8 @@ export async function runSelfTest(): Promise<void> {
       const pkg2 = await writeSessionPackage(voicePayload, target, join(dirname(out), 'sessions'))
       const brief2 = await readFile(pkg2.briefMd, 'utf8')
       if (!brief2.includes('🗣')) errors.push('brief has no speech lines')
+      if (!brief2.includes('음성:') || !brief2.includes('transcript.json')) errors.push('brief lacks the 음성 line')
+      if (brief2.includes('## 전체 전사')) errors.push('voice brief still has the 전체 전사 section')
       if (!brief2.includes('수동 연결')) errors.push('brief missing the manual link')
       if (!brief2.includes('selftest의 질문')) errors.push('brief missing the agent question')
       if (!pkg2.transcriptJson || !pkg2.audioFile) errors.push('package missing transcript/audio')
