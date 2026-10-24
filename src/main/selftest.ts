@@ -17,7 +17,7 @@ import { buildBrief } from './brief'
 import { captureAllDisplays, cropDip } from './capture'
 import { loadSettings } from './config'
 import { copyToClipboard, createEditorWindow } from './editor'
-import { getForegroundWindow, listTopLevelWindows, win32Available } from './native/win32'
+import { getForegroundWindow, isWindow, listTopLevelWindows, win32Available } from './native/win32'
 import { scrollCapture } from './scroll'
 import { writeSessionPackage } from './sessions'
 import { stopStt, transcribe } from './stt'
@@ -812,7 +812,7 @@ export async function runSelfTest(): Promise<void> {
       step = 'target-menu'
       {
         type TmState = { tool: string; targetMenuOpen: boolean }
-        type SendOpts = { pressEnter?: boolean; targetHwnd?: number; pinTarget?: boolean }
+        type SendOpts = { pressEnter?: boolean; targetHwnd?: number; pinTarget?: boolean; clipboardOnly?: boolean }
         const ts = (): Promise<TmState> => state() as unknown as Promise<TmState>
         const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
         const opts = (): Promise<SendOpts> => js<SendOpts>(`window.__backseat.sendOptions()`)
@@ -851,7 +851,7 @@ export async function runSelfTest(): Promise<void> {
         if (!open1) errors.push('Ctrl+T did not open the target menu')
         else {
           report.targetMenu = open1
-          if (open1.rows !== 1 + FAKE_CANDIDATES.length) errors.push(`target menu rows: ${open1.rows}`)
+          if (open1.rows !== 1 + FAKE_CANDIDATES.length + 1) errors.push(`target menu rows (auto + candidates + clipboard only): ${open1.rows}`)
           if (!open1.first.startsWith('자동: ')) errors.push(`first menu row should be the automatic target: ${open1.first}`)
           if (open1.l < 0 || open1.r > open1.w || open1.b > open1.h || open1.t < open1.barB) errors.push(`target menu is not under the bar / inside the window: ${JSON.stringify(open1)}`)
           if (open1.pin) errors.push('pin checkbox should start unchecked (init.targetPinned is unset)')
@@ -903,6 +903,69 @@ export async function runSelfTest(): Promise<void> {
           await click('#target-menu .tm-item')
           const o3 = await opts()
           if (o3.targetHwnd !== undefined || o3.pinTarget !== undefined) errors.push(`send options not reset: ${JSON.stringify(o3)}`)
+
+          // 6. Codex review F09: the picked window is gone at 전송 time. The fake candidate hwnds are not real windows,
+          // so main must answer targetExpired and send NOTHING (in particular not to the automatic target), and the
+          // editor must ask again instead of falling back. Skipped if the fake hwnd happens to be a real window.
+          step = 'target-expired'
+          const gone = FAKE_CANDIDATES[0]
+          if (isWindow(gone.hwnd)) warnings.push(`target-expired check skipped: hwnd ${gone.hwnd} is a real window`)
+          else {
+            const statusNow = (): Promise<string> => js<string>(`document.getElementById('status').textContent`)
+            const rowCount = (): Promise<number> => js<number>(`document.querySelectorAll('#target-menu .tm-item').length`)
+            await key('T', ['control'])
+            await key('Down')
+            await key('Return')
+            if ((await opts()).targetHwnd !== gone.hwnd) errors.push('target-expired: could not pick the first candidate')
+            await js(`document.getElementById('send').click(); true`)
+            await sleep(800)
+            if (ed.isDestroyed()) errors.push('target-expired: the editor closed, so something was sent')
+            else {
+              const st = await statusNow()
+              report.targetExpired = { status: st, label: await label(), menuOpen: (await ts()).targetMenuOpen, rows: await rowCount() }
+              if (!st.includes(gone.label) || !st.includes('보내지 않았습니다')) errors.push(`target-expired status: ${st}`)
+              if (!(await label()).includes('고른 창이 닫혔습니다')) errors.push(`target-expired label: ${await label()}`)
+              if (!(await ts()).targetMenuOpen) errors.push('target-expired: the target menu did not open again')
+              else if ((await rowCount()) !== FAKE_CANDIDATES.length + 1) errors.push(`target-expired: the closed window is still offered (${await rowCount()} rows)`)
+              await key('Escape')
+              // 전송 again without picking: still nothing sent, the menu opens again
+              await js(`document.getElementById('send').click(); true`)
+              await sleep(300)
+              if (!(await statusNow()).includes('보낼 곳을 먼저 고르세요')) errors.push(`send without a new pick: ${await statusNow()}`)
+              if (!(await ts()).targetMenuOpen) errors.push('send without a new pick did not open the target menu')
+              // the clipboard-only row is the last one
+              await click('#target-menu .tm-item:last-of-type')
+              const oc = await opts()
+              if (oc.clipboardOnly !== true || oc.targetHwnd !== undefined) errors.push(`clipboard-only pick: ${JSON.stringify(oc)}`)
+              if (!(await label()).includes('클립보드에만 복사')) errors.push(`clipboard-only label: ${await label()}`)
+              // back to automatic
+              await key('T', ['control'])
+              await click('#target-menu .tm-item')
+              const o4 = await opts()
+              if (o4.targetHwnd !== undefined || o4.clipboardOnly !== undefined) errors.push(`send options not reset after target-expired: ${JSON.stringify(o4)}`)
+            }
+          }
+        }
+      }
+
+      // Codex review F01: every frame of the exported video, and a real encoded WebM, keeps a blurred area blurred,
+      // including the frames before the blur was drawn. Distances are mean absolute channel differences (0..255).
+      step = 'video-mask'
+      {
+        type Dist = { masked: number; raw: number }
+        type Probe = { rawVsMasked: number; frames: Record<string, Dist>; encoded: Dist[]; encodedError: string; bytes: number }
+        const probe = (await ed.webContents.executeJavaScript('window.__backseat.videoMaskProbe()')) as Probe
+        report.videoMask = { rawVsMasked: probe.rawVsMasked, frames: probe.frames, encodedFrames: probe.encoded.length, encodedWorst: probe.encoded.reduce((w, f) => (f.masked - f.raw > w.masked - w.raw ? f : w), { masked: -1, raw: 1e9 }), encodedError: probe.encodedError, bytes: probe.bytes }
+        if (probe.rawVsMasked < 6) warnings.push(`video-mask: the capture is too plain to tell blurred from raw (${probe.rawVsMasked})`)
+        else {
+          for (const [name, f] of Object.entries(probe.frames)) {
+            if (!(f.masked < f.raw)) errors.push(`video frame "${name}" shows the unblurred capture: ${JSON.stringify(f)}`)
+          }
+          if (probe.frames.start && probe.frames.start.masked > 2) errors.push(`first video frame is not the masked capture: ${JSON.stringify(probe.frames.start)}`)
+          if (probe.encoded.length === 0) errors.push(`video-mask: no frame could be decoded from the recorded WebM ${probe.encodedError}`)
+          probe.encoded.forEach((f, i) => {
+            if (!(f.masked < f.raw)) errors.push(`encoded video frame ${i} shows the unblurred capture: ${JSON.stringify(f)}`)
+          })
         }
       }
 

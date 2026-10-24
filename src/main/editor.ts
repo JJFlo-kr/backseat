@@ -10,10 +10,11 @@ import type {
   ExportPayload,
   SaveResult,
   SendOptions,
+  SendResult,
   TranscribeRequest,
   VideoSave
 } from '../shared/types'
-import { pinParts, rememberTarget } from './agents'
+import { pinParts, rememberTarget, resolveSendTarget } from './agents'
 import { buildBrief } from './brief'
 import { saveSettings } from './config'
 import { briefTranslator, mergedMessages, uiLocale } from './locales'
@@ -110,14 +111,13 @@ export function installEditorIpc(): void {
   ipcMain.handle(IPC.editorSaveVideo, (e, video: VideoSave) =>
     handleSaveVideo(BrowserWindow.fromWebContents(e.sender), video)
   )
-  ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions = {}) => {
-    const detected = targets.get(e.sender) ?? null
-    let chosen = detected
-    // A picked window must be the detected target or one of THIS editor's candidates, and must still exist.
-    if (opts.targetHwnd && opts.targetHwnd !== detected?.hwnd) {
-      const pick = candidateTargets.get(e.sender)?.find((t) => t.hwnd === opts.targetHwnd)
-      if (pick && isWindow(pick.hwnd)) chosen = pick
+  ipcMain.handle(IPC.editorSend, (e, payload: ExportPayload, opts: SendOptions = {}): Promise<SendResult> | SendResult => {
+    const dest = resolveSendTarget(targets.get(e.sender) ?? null, candidateTargets.get(e.sender) ?? [], opts, isWindow)
+    if (dest.kind === 'expired') {
+      // Nothing is written or sent: another window would be a destination the user did not choose.
+      return { ok: false, delivered: 'file-only', targetExpired: true, message: t('send.targetExpired', { target: dest.label || '?' }) }
     }
+    const chosen = dest.kind === 'target' ? dest.target : null
     if (chosen?.hwnd) rememberTarget(chosen)
     if (opts.pinTarget === true && chosen?.hwnd && chosen.process) {
       const p = pinParts(chosen)

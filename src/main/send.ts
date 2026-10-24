@@ -47,9 +47,11 @@ export async function sendToTarget(
         ok: true,
         delivered: 'clipboard',
         sessionDir,
-        message: target
-          ? t(target.mcp ? 'send.clipboard.targetMcp' : 'send.clipboard.target', { target: target.label })
-          : t('send.clipboard.noTarget')
+        message: opts.clipboardOnly
+          ? t('send.clipboard.chosen')
+          : target
+            ? t(target.mcp ? 'send.clipboard.targetMcp' : 'send.clipboard.target', { target: target.label })
+            : t('send.clipboard.noTarget')
       }
     }
 

@@ -177,3 +177,32 @@ export function instructionLine(briefPath: string, pngPath: string, memo: string
   }
   return head + tr('agents.instruction.paths', { brief: briefPath, image: pngPath })
 }
+
+// ---------- the target a send goes to ----------
+
+export type SendTarget =
+  | { kind: 'target'; target: AgentTarget | null }
+  /** The user asked for clipboard only: no window is focused or pasted into. */
+  | { kind: 'clipboard' }
+  /** The window the user picked is gone (or was never offered): do NOT substitute another one. */
+  | { kind: 'expired'; label: string }
+
+/**
+ * Resolve 전송's destination. Without a pick the detected (automatic / pinned) target is used. A picked
+ * window must be the detected target or one of this editor's candidates and must still exist; when it does
+ * not, the result is 'expired' — never the automatic target, which is a different window the user did not
+ * choose (Codex review F09).
+ */
+export function resolveSendTarget(
+  detected: AgentTarget | null,
+  candidates: readonly AgentTarget[],
+  opts: { targetHwnd?: number; clipboardOnly?: boolean },
+  isWindow: (hwnd: number) => boolean
+): SendTarget {
+  if (opts.clipboardOnly) return { kind: 'clipboard' }
+  if (!opts.targetHwnd) return { kind: 'target', target: detected }
+  const pick = opts.targetHwnd === detected?.hwnd ? detected : candidates.find((c) => c.hwnd === opts.targetHwnd)
+  if (!pick) return { kind: 'expired', label: '' }
+  if (!isWindow(pick.hwnd)) return { kind: 'expired', label: pick.label }
+  return { kind: 'target', target: pick }
+}

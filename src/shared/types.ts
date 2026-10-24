@@ -356,14 +356,21 @@ export interface SendOptions {
   targetHwnd?: number
   /** Also make that window the default target from now on (config pinnedTargetProcess/Title); false = unpin. */
   pinTarget?: boolean
+  /** The user chose "clipboard only" in the target menu: write the package and copy, paste nowhere. */
+  clipboardOnly?: boolean
 }
 
 export interface SendResult {
   ok: boolean
-  /** pasted: delivered into the target window; clipboard: only copied; file-only: package written, nothing else. */
+  /** pasted: delivered into the target window; clipboard: only copied; file-only: package written (if sessionDir), nothing else. */
   delivered: 'pasted' | 'clipboard' | 'file-only'
   /** Session package directory. */
   sessionDir?: string
+  /**
+   * The window picked in the target menu has closed (or is not one of this editor's candidates). Nothing was
+   * written or sent; the editor asks the user to pick again instead of falling back to another window.
+   */
+  targetExpired?: boolean
   /** Short human message for the status bar. */
   message: string
   error?: string

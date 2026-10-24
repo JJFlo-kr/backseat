@@ -616,10 +616,14 @@ function drawAnnotationAt(ctx: CanvasRenderingContext2D, a: Annotation, t: numbe
   }
 }
 
-/** Draw the whole document: live (t = null) or as it looked at time t. Badges are numbered by array order. */
-function drawAll(ctx: CanvasRenderingContext2D, t: number | null): void {
+/**
+ * Draw the whole document: live (t = null) or as it looked at time t. Badges are numbered by array order.
+ * skipBlur: the blurs are already in the background (maskedBase), as in video frames.
+ */
+function drawAll(ctx: CanvasRenderingContext2D, t: number | null, skipBlur = false): void {
   let badgeNo = 0
   for (let i = 0; i < annotations.length; i++) {
+    if (skipBlur && annotations[i].kind === 'blur') continue
     if (textSession && textSession.index === i) continue // being edited: the text box shows it
     if (erasing?.hits.has(i)) continue // swept by the eraser: already gone visually, committed on pointerup
     const a = moveDrag && moveDrag.index === i ? moveDrag.ann : annotations[i]
@@ -895,15 +899,22 @@ function flatten(): string {
   return flattenCanvas().toDataURL('image/png')
 }
 
-/** The original capture with only the blur (privacy) annotations applied: no other annotations, no tags. */
-function flattenBase(): string {
+/**
+ * The original capture with only the blur (privacy) annotations applied: no other annotations, no tags.
+ * The common background of every export that shows the capture over time (screenshot.png, video frames).
+ */
+function maskedBase(): HTMLCanvasElement {
   const out = document.createElement('canvas')
   out.width = base.width
   out.height = base.height
   const ctx = ctxOf(out)
   ctx.drawImage(base, 0, 0)
   for (const a of annotations) if (a.kind === 'blur') drawBlur(ctx, a)
-  return out.toDataURL('image/png')
+  return out
+}
+
+function flattenBase(): string {
+  return maskedBase().toDataURL('image/png')
 }
 
 // ---------- document changes (one history command each) ----------
@@ -1537,6 +1548,11 @@ async function save(): Promise<void> {
 
 async function send(): Promise<void> {
   if (busy || !init) return
+  if (mustPickTarget) {
+    setStatus(t('editor.status.pickTarget'), true)
+    openTargetMenu()
+    return
+  }
   busy = true
   setStatus(t('editor.status.sending'))
   let closing = false
@@ -1547,7 +1563,16 @@ async function send(): Promise<void> {
     setStatus(t('editor.status.sending'))
     const r = await window.backseat.editor.send(payload, sendOptions())
     setStatus(r.message, !r.ok)
-    if (r.ok && r.delivered === 'clipboard') {
+    if (r.targetExpired) {
+      // The picked window closed: drop it from the menu and make the user choose again (or the clipboard).
+      const gone = chosenTarget?.hwnd
+      if (initData && gone) initData.candidates = (initData.candidates ?? []).filter((c) => c.hwnd !== gone)
+      chosenTarget = null
+      mustPickTarget = true
+      targetNote = t('editor.target.expiredNote')
+      showTarget()
+      openTargetMenu()
+    } else if (r.ok && r.delivered === 'clipboard') {
       // nothing was pasted anywhere: keep the editor open so the user sees what happened
       targetNote = t('editor.target.clipboardNote')
       showTarget()
@@ -1575,6 +1600,17 @@ let chosenTarget: AgentTarget | null = null
 let pinChecked = false
 /** One-off message replacing the target label (e.g. after a clipboard-only send). */
 let targetNote = ''
+/** The picked window closed: 전송 waits until the user picks again (never falls back to another window). */
+let mustPickTarget = false
+
+/** The target menu's last row: write the package and copy it, paste nowhere. */
+function clipboardOnlyTarget(): AgentTarget {
+  return { kind: 'unknown', label: t('editor.target.clipboardOnly'), hwnd: 0, title: '', process: '', method: 'clipboard', confidence: 1 }
+}
+
+function isClipboardOnly(tg: AgentTarget | null): boolean {
+  return tg !== null && tg.hwnd === 0 && tg.method === 'clipboard'
+}
 
 function showTarget(): void {
   const label = targetBtn.querySelector<HTMLElement>('.tb-label')
@@ -1599,13 +1635,14 @@ function showTarget(): void {
     { label: target.label }
   )
   hint.textContent = methodHint(target.method)
-  targetBtn.title = `${menuTitle}\n${target.title} (${target.process})`
+  targetBtn.title = isClipboardOnly(target) ? menuTitle : `${menuTitle}\n${target.title} (${target.process})`
 }
 
 /** What 전송 passes to the main process: the picked window and / or a changed pin state. */
 function sendOptions(): SendOptions {
   const o: SendOptions = { pressEnter: false }
-  if (chosenTarget) o.targetHwnd = chosenTarget.hwnd
+  if (isClipboardOnly(chosenTarget)) o.clipboardOnly = true
+  else if (chosenTarget) o.targetHwnd = chosenTarget.hwnd
   if (pinChecked !== (initData?.targetPinned === true)) o.pinTarget = pinChecked
   return o
 }
@@ -1656,6 +1693,7 @@ function pickMenuRow(i: number): void {
   if (!row) return
   chosenTarget = row.target
   targetNote = ''
+  mustPickTarget = false
   closeTargetMenu()
   showTarget()
 }
@@ -1738,6 +1776,11 @@ function openTargetMenu(): void {
     }
     addRow(tg, kindChip(tg), tg.kind !== 'unknown', tg.title.slice(0, 40) || tg.process, methodRowHint(tg.method), chosenTarget?.hwnd === tg.hwnd)
   }
+  const clipSep = document.createElement('div')
+  clipSep.className = 'tm-sep'
+  list.append(clipSep)
+  const clip = clipboardOnlyTarget()
+  addRow(clip, t('editor.target.chipClipboard'), false, clip.label, methodRowHint('clipboard'), isClipboardOnly(chosenTarget))
   const foot = document.createElement('div')
   foot.className = 'tm-foot'
   const pin = document.createElement('label')
@@ -1792,56 +1835,77 @@ async function copy(): Promise<void> {
   }
 }
 
-/**
- * Replay the session into a WebM: deterministic sampling via drawAnnotationAt(t),
- * one frame per animation frame, encoder backpressure handled by MediaRecorder.
- */
-async function exportVideo(): Promise<void> {
-  if (busy || !init) return
-  if (annotations.length === 0) { setStatus(t('editor.video.noAnnotations')); return }
-  commitPendingText()
+/** The replayed time span of the exported video: a little before the first and after the last annotation. */
+function videoRange(): { start: number; end: number } {
   const first = Math.min(...annotations.map((a) => a.tStart))
-  const start = Math.max(0, first - 400)
-  const end = sessionEnd(annotations) + 700
+  return { start: Math.max(0, first - 400), end: sessionEnd(annotations) + 700 }
+}
+
+/** readsOften: a CPU-backed canvas for getImageData; MediaRecorder's canvas must stay GPU-backed (it records nothing otherwise). */
+function videoCanvas(readsOften = false): { c: HTMLCanvasElement; cctx: CanvasRenderingContext2D; scale: number } {
   const scale = Math.min(1, 1280 / base.width)
   const c = document.createElement('canvas')
   c.width = Math.round(base.width * scale)
   c.height = Math.round(base.height * scale)
-  const cctx = ctxOf(c)
-  const frame = (t: number): void => {
-    cctx.setTransform(scale, 0, 0, scale, 0, 0)
-    cctx.drawImage(base, 0, 0)
-    drawAll(cctx, t)
-  }
-  const mime =
-    ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ??
-    'video/webm'
+  return { c, cctx: ctxOf(c, readsOften), scale }
+}
+
+/**
+ * One frame of the exported video: the annotations as they looked at time t over the MASKED capture.
+ * Blurs are privacy masks, not drawings: they cover their area in every frame, also before the moment
+ * they were drawn (Codex review F01), so they live in `masked` and are skipped as timed annotations.
+ */
+function drawVideoFrame(cctx: CanvasRenderingContext2D, masked: HTMLCanvasElement, scale: number, t: number): void {
+  cctx.setTransform(scale, 0, 0, scale, 0, 0)
+  cctx.drawImage(masked, 0, 0)
+  drawAll(cctx, t, true)
+}
+
+const videoMime = (): string =>
+  ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm'
+
+/**
+ * Replay [start, end] into a WebM: deterministic sampling via drawVideoFrame(t),
+ * one frame per animation frame, encoder backpressure handled by MediaRecorder.
+ */
+async function recordVideo(start: number, end: number): Promise<Blob> {
+  const { c, cctx, scale } = videoCanvas()
+  const masked = maskedBase()
+  const mime = videoMime()
+  await loadDocFonts()
+  const stream = c.captureStream(30)
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4_000_000 })
+  const chunks: Blob[] = []
+  rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+  const stopped = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
+  drawVideoFrame(cctx, masked, scale, start)
+  rec.start(200)
+  const wall = performance.now()
+  await new Promise<void>((resolve) => {
+    const loop = (): void => {
+      const t = start + (performance.now() - wall)
+      drawVideoFrame(cctx, masked, scale, Math.min(t, end))
+      if (t >= end) resolve()
+      else requestAnimationFrame(loop)
+    }
+    requestAnimationFrame(loop)
+  })
+  rec.stop()
+  await stopped
+  return new Blob(chunks, { type: mime })
+}
+
+async function exportVideo(): Promise<void> {
+  if (busy || !init) return
+  if (annotations.length === 0) { setStatus(t('editor.video.noAnnotations')); return }
+  commitPendingText()
+  const { start, end } = videoRange()
   busy = true
   setStatus(t('editor.video.exporting', { seconds: ((end - start) / 1000).toFixed(1) }))
   try {
-    await loadDocFonts()
-    const stream = c.captureStream(30)
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4_000_000 })
-    const chunks: Blob[] = []
-    rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
-    const stopped = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
-    frame(start)
-    rec.start(200)
-    const wall = performance.now()
-    await new Promise<void>((resolve) => {
-      const loop = (): void => {
-        const t = start + (performance.now() - wall)
-        frame(Math.min(t, end))
-        if (t >= end) resolve()
-        else requestAnimationFrame(loop)
-      }
-      requestAnimationFrame(loop)
-    })
-    rec.stop()
-    await stopped
-    const blob = new Blob(chunks, { type: mime })
+    const blob = await recordVideo(start, end)
     const bytes = new Uint8Array(await blob.arrayBuffer())
-    const r = await window.backseat.editor.saveVideo({ bytes, mimeType: mime, durationMs: end - start })
+    const r = await window.backseat.editor.saveVideo({ bytes, mimeType: blob.type, durationMs: end - start })
     if (r.ok) setStatus(t('editor.video.saved', { path: r.path ?? '' }))
     else if (r.canceled) setStatus(t('editor.video.canceled'))
     else setStatus(t('editor.video.failed', { error: r.error ?? t('editor.status.unknownError') }), true)
@@ -1849,6 +1913,114 @@ async function exportVideo(): Promise<void> {
     setStatus(t('editor.video.failed', { error: errText(err) }), true)
   } finally {
     busy = false
+  }
+}
+
+/**
+ * Self-test probe for the video's privacy masking (Codex review F01). Puts a temporary blur on the most
+ * detailed 64 px block of the capture, renders video frames before / during / after the blur's draw time and
+ * a short real WebM recording, and returns how far the blurred area of each frame is from the masked capture
+ * and from the raw capture (mean absolute channel difference, 0..255). Restores the document afterwards.
+ */
+async function videoMaskProbe(): Promise<unknown> {
+  const { c, cctx, scale } = videoCanvas(true)
+  // The most detailed block: there the blur changes the pixels the most, so a leak is measurable.
+  const B = 64
+  const img = baseCtx.getImageData(0, 0, base.width, base.height).data
+  let best = { x: 0, y: 0, v: -1 }
+  for (let y = 0; y + B <= base.height; y += B / 2) {
+    for (let x = 0; x + B <= base.width; x += B / 2) {
+      let sum = 0
+      let sq = 0
+      for (let yy = y; yy < y + B; yy += 2) {
+        for (let xx = x; xx < x + B; xx += 2) {
+          const v = img[(yy * base.width + xx) * 4 + 1]
+          sum += v
+          sq += v * v
+        }
+      }
+      const n = (B / 2) * (B / 2)
+      const variance = sq / n - (sum / n) ** 2
+      if (variance > best.v) best = { x, y, v: variance }
+    }
+  }
+  const saved = annotations
+  const last = Math.max(0, ...annotations.map((a) => a.tEnd))
+  const blur: BlurAnn = { kind: 'blur', x: best.x, y: best.y, w: B, h: B, strength: 14, tStart: last + 2000, tEnd: last + 2600 }
+  annotations = [...saved, blur]
+  try {
+    const ref = (src: CanvasImageSource): Uint8ClampedArray => {
+      const r = videoCanvas(true)
+      r.cctx.setTransform(scale, 0, 0, scale, 0, 0)
+      r.cctx.drawImage(src, 0, 0)
+      return r.cctx.getImageData(0, 0, r.c.width, r.c.height).data
+    }
+    const maskedCanvas = document.createElement('canvas')
+    maskedCanvas.width = base.width
+    maskedCanvas.height = base.height
+    const mctx = ctxOf(maskedCanvas)
+    mctx.drawImage(base, 0, 0)
+    drawBlur(mctx, blur)
+    const refMasked = ref(maskedCanvas)
+    const refRaw = ref(base)
+    const rx = Math.round(best.x * scale) + 2
+    const ry = Math.round(best.y * scale) + 2
+    const rw = Math.max(1, Math.round(B * scale) - 4)
+    const dist = (data: Uint8ClampedArray, other: Uint8ClampedArray): number => {
+      let d = 0
+      let n = 0
+      for (let y = ry; y < ry + rw; y++) {
+        for (let x = rx; x < rx + rw; x++) {
+          const i = (y * c.width + x) * 4
+          d += Math.abs(data[i] - other[i]) + Math.abs(data[i + 1] - other[i + 1]) + Math.abs(data[i + 2] - other[i + 2])
+          n += 3
+        }
+      }
+      return Math.round((d / n) * 10) / 10
+    }
+    const sample = (data: Uint8ClampedArray): { masked: number; raw: number } => ({ masked: dist(data, refMasked), raw: dist(data, refRaw) })
+    const { start, end } = videoRange()
+    const frames: Record<string, { masked: number; raw: number }> = {}
+    const times: [string, number][] = [['start', start], ['beforeBlur', blur.tStart - 1], ['duringBlur', (blur.tStart + blur.tEnd) / 2], ['end', end]]
+    const masked = maskedBase()
+    for (const [name, t] of times) {
+      drawVideoFrame(cctx, masked, scale, t)
+      frames[name] = sample(cctx.getImageData(0, 0, c.width, c.height).data)
+    }
+    // A short real recording of the very beginning, decoded again frame by frame.
+    const blob = await recordVideo(start, start + 700)
+    const encoded: { masked: number; raw: number }[] = []
+    const video = document.createElement('video')
+    video.muted = true
+    video.src = URL.createObjectURL(blob)
+    const grab = (): void => {
+      cctx.setTransform(1, 0, 0, 1, 0, 0)
+      cctx.drawImage(video, 0, 0, c.width, c.height)
+      encoded.push(sample(cctx.getImageData(0, 0, c.width, c.height).data))
+    }
+    let encodedError = ''
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => resolve(), 5000)
+      video.onerror = () => {
+        window.clearTimeout(timer)
+        reject(new Error(`video decode failed: ${video.error?.code ?? '?'} ${video.error?.message ?? ''} (${blob.size} bytes, ${blob.type})`))
+      }
+      video.onended = () => { window.clearTimeout(timer); resolve() }
+      video.onloadeddata = () => {
+        grab()
+        const onFrame = (): void => {
+          grab()
+          if (!video.ended) video.requestVideoFrameCallback(onFrame)
+        }
+        video.requestVideoFrameCallback(onFrame)
+        void video.play()
+      }
+    }).catch((err: unknown) => { encodedError = errText(err) })
+    URL.revokeObjectURL(video.src)
+    return { block: { x: best.x, y: best.y, size: B, variance: Math.round(best.v) }, rawVsMasked: dist(refRaw, refMasked), frames, encoded, encodedError, bytes: blob.size }
+  } finally {
+    annotations = saved
+    render()
   }
 }
 
@@ -2443,6 +2615,8 @@ window.backseat.editor.onInit((data) => {
       /** The SendOptions 전송 would pass right now (nothing is sent). */
       sendOptions: () => sendOptions(),
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
+      /** Codex review F01: how far the blurred area of video frames is from the masked / raw capture. */
+      videoMaskProbe: () => videoMaskProbe(),
       payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
     }
   }
