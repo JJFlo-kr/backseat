@@ -11,7 +11,7 @@ import { basename, join } from 'path'
 import {
   readRegistry,
   registerAgent,
-  unregisterAgent,
+  unregisterAgentSync,
   type RegistryEntry
 } from './registry'
 import { BUNDLES } from '../../shared/bundles'
@@ -151,14 +151,18 @@ async function waitForPackage(root: string, timeoutMs: number, requestId?: strin
         if (h.timer) clearInterval(h.timer)
         resolve(v)
       }
-      const check = async (): Promise<void> => {
-        if (done) return
-        const now = await listSessionDirs(root)
-        for (const id of now) {
+      const scan = async (): Promise<void> => {
+        // The app publishes a package by renaming its finished staging folder (.writing-<id>), so a listed
+        // folder is complete. Folders from before 0.4.1 were written in place: a read error means "not yet".
+        for (const id of await listSessionDirs(root)) {
+          if (done) return
           if (seen.has(id)) continue
-          // The package is written file by file; meta.json is written last, brief.md before it.
-          if (!existsSync(join(root, id, 'brief.md'))) continue
-          const p = await loadPackage(root, id)
+          let p: Loaded | null
+          try {
+            p = await loadPackage(root, id)
+          } catch {
+            continue
+          }
           if (!p) continue
           if (requestId && p.meta.requestId !== requestId) {
             seen.add(id)
@@ -168,6 +172,26 @@ async function waitForPackage(root: string, timeoutMs: number, requestId?: strin
           return
         }
         if (Date.now() > deadline) finish(null)
+      }
+      // Watcher events and the timer both ask for a scan: never two at once, and never an unhandled rejection.
+      let running = false
+      let again = false
+      const check = async (): Promise<void> => {
+        if (done) return
+        if (running) {
+          again = true
+          return
+        }
+        running = true
+        try {
+          do {
+            again = false
+            await scan().catch((err: unknown) => process.stderr.write(`backseat-mcp: scan failed: ${String(err)}
+`))
+          } while (again && !done)
+        } finally {
+          running = false
+        }
       }
       try {
         h.watcher = watch(root, { recursive: true }, () => void check())
@@ -330,7 +354,8 @@ export async function createServer(): Promise<McpServer> {
   )
 
   const cleanup = (): void => {
-    if (me) void unregisterAgent(root, me.id)
+    // 'exit' handlers cannot wait for asynchronous work.
+    if (me) unregisterAgentSync(root, me.id)
   }
   process.on('exit', cleanup)
   process.on('SIGINT', () => {

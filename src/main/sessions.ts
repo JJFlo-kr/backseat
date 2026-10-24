@@ -1,12 +1,21 @@
 // Session package: one folder per send with everything an agent (or a later
 // backseat-mcp) needs. Layout documented in PLAN.md §5.
+//
+// A package is written into a hidden staging folder (<root>/.writing-<id>) and published with one
+// directory rename once every file is complete, so readers (backseat-mcp, latest.txt users) only
+// ever see whole packages. Ids are unique per send (time + milliseconds + random) and a published
+// folder is never written again.
 import { app } from 'electron'
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { randomBytes } from 'crypto'
+import { existsSync } from 'fs'
+import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { AgentTarget, CompareSource, ExportPayload } from '../shared/types'
 import { alignSegments } from '../shared/align'
 import { buildBrief } from './brief'
+import { renameRetry, writeFileAtomic } from './fsutil'
 import { briefTranslator } from './locales'
+
 
 export interface SessionPackage {
   id: string
@@ -21,6 +30,10 @@ export interface SessionPackage {
   transcriptJson?: string
 }
 
+export function sessionsRoot(): string {
+  return join(app.getPath('pictures'), 'Backseat', 'sessions')
+}
+
 function audioExt(mime: string): string {
   if (mime.includes('ogg')) return 'ogg'
   if (mime.includes('mp4') || mime.includes('m4a')) return 'm4a'
@@ -32,17 +45,61 @@ export function manualLinks(payload: ExportPayload): Map<number, number | null> 
   return new Map((payload.links ?? []).map((l) => [l.segmentIndex, l.annotationIndex]))
 }
 
-export function sessionsRoot(): string {
-  return join(app.getPath('pictures'), 'Backseat', 'sessions')
-}
-
-function stamp(d = new Date()): string {
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+/** 20261025-143012-123-9f3a: sorts by time; the random part keeps editors sending in the same ms apart. */
+function sessionId(d = new Date()): string {
+  const p = (n: number, w = 2): string => String(n).padStart(w, '0')
+  const date = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+  const time = `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  return `${date}-${time}-${p(d.getMilliseconds(), 3)}-${randomBytes(2).toString('hex')}`
 }
 
 function pngBuffer(dataUrl: string): Buffer {
   return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
+}
+
+/** Write every file of the package into `staging`; the returned paths point at the published folder `dir`. */
+async function writeFiles(
+  staging: string,
+  dir: string,
+  id: string,
+  payload: ExportPayload,
+  target: AgentTarget | null
+): Promise<SessionPackage> {
+  const at = (name: string): string => join(dir, name)
+  const pkg: SessionPackage = {
+    id,
+    dir,
+    annotatedPng: at('annotated.png'),
+    briefMd: at('brief.md'),
+    strokesJson: at('strokes.json'),
+    metaJson: at('meta.json')
+  }
+  const out: [name: string, data: string | Uint8Array][] = []
+  const hasShot = Boolean(payload.basePngDataUrl)
+  out.push(['annotated.png', pngBuffer(payload.pngDataUrl)])
+  out.push(['brief.md', buildBrief(payload, 'annotated.png', target, { ...(hasShot ? { screenshotFileName: 'screenshot.png' } : {}), t: briefTranslator() })])
+  out.push(['strokes.json', JSON.stringify({ annotations: payload.annotations }, null, 2)])
+  if (payload.basePngDataUrl) {
+    pkg.screenshotPng = at('screenshot.png')
+    out.push(['screenshot.png', pngBuffer(payload.basePngDataUrl)])
+  }
+  if (payload.audio) {
+    const name = `audio.${audioExt(payload.audio.mimeType)}`
+    pkg.audioFile = at(name)
+    out.push([name, Buffer.from(payload.audio.bytes)])
+  }
+  if (payload.transcript) {
+    pkg.transcriptJson = at('transcript.json')
+    const alignment = alignSegments(payload.annotations, payload.transcript.segments, { manual: manualLinks(payload) })
+    out.push(['transcript.json', JSON.stringify({ ...payload.transcript, alignment, manualLinks: payload.links ?? [] }, null, 2)])
+  }
+  const files = [...out.map(([name]) => name), 'meta.json']
+  out.push([
+    'meta.json',
+    JSON.stringify({ id, memo: payload.memo, requestId: payload.meta.request?.requestId, meta: payload.meta, target, files }, null, 2)
+  ])
+  await Promise.all(out.map(([name, data]) => (typeof data === 'string' ? writeFile(join(staging, name), data, 'utf8') : writeFile(join(staging, name), data))))
+  return pkg
 }
 
 export async function writeSessionPackage(
@@ -50,62 +107,31 @@ export async function writeSessionPackage(
   target: AgentTarget | null,
   root = sessionsRoot()
 ): Promise<SessionPackage> {
-  const id = stamp()
-  const dir = join(root, id)
-  await mkdir(dir, { recursive: true })
-  const pkg: SessionPackage = {
-    id,
-    dir,
-    annotatedPng: join(dir, 'annotated.png'),
-    briefMd: join(dir, 'brief.md'),
-    strokesJson: join(dir, 'strokes.json'),
-    metaJson: join(dir, 'meta.json')
+  await mkdir(root, { recursive: true })
+  for (let attempt = 0; ; attempt++) {
+    const id = sessionId()
+    const dir = join(root, id)
+    const staging = join(root, `.writing-${id}`)
+    try {
+      await mkdir(staging) // exclusive: fails with EEXIST instead of sharing a folder
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST' && attempt < 8) continue
+      throw err
+    }
+    try {
+      if (existsSync(dir)) throw Object.assign(new Error(`session ${id} exists`), { code: 'EEXIST' })
+      const pkg = await writeFiles(staging, dir, id, payload, target)
+      await renameRetry(staging, dir, true)
+      // Pointer for tools that just want "the latest" (replaced atomically as well).
+      await writeFileAtomic(join(root, 'latest.txt'), dir).catch((err: unknown) => console.error('[backseat] latest.txt not updated:', err))
+      return pkg
+    } catch (err) {
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined)
+      // Another writer published the same id in the meantime: take a new one.
+      if (existsSync(dir) && attempt < 8) continue
+      throw err
+    }
   }
-  const files = ['annotated.png', 'brief.md', 'strokes.json', 'meta.json']
-  const hasShot = Boolean(payload.basePngDataUrl)
-  const writes: Promise<void>[] = [
-    writeFile(pkg.annotatedPng, pngBuffer(payload.pngDataUrl)),
-    writeFile(pkg.briefMd, buildBrief(payload, 'annotated.png', target, { ...(hasShot ? { screenshotFileName: 'screenshot.png' } : {}), t: briefTranslator() }), 'utf8'),
-    writeFile(pkg.strokesJson, JSON.stringify({ annotations: payload.annotations }, null, 2), 'utf8')
-  ]
-  if (payload.basePngDataUrl) {
-    pkg.screenshotPng = join(dir, 'screenshot.png')
-    files.push('screenshot.png')
-    writes.push(writeFile(pkg.screenshotPng, pngBuffer(payload.basePngDataUrl)))
-  }
-  if (payload.audio) {
-    const name = `audio.${audioExt(payload.audio.mimeType)}`
-    pkg.audioFile = join(dir, name)
-    files.push(name)
-    writes.push(writeFile(pkg.audioFile, Buffer.from(payload.audio.bytes)))
-  }
-  if (payload.transcript) {
-    pkg.transcriptJson = join(dir, 'transcript.json')
-    files.push('transcript.json')
-    const alignment = alignSegments(payload.annotations, payload.transcript.segments, { manual: manualLinks(payload) })
-    writes.push(
-      writeFile(
-        pkg.transcriptJson,
-        JSON.stringify({ ...payload.transcript, alignment, manualLinks: payload.links ?? [] }, null, 2),
-        'utf8'
-      )
-    )
-  }
-  writes.push(
-    writeFile(
-      pkg.metaJson,
-      JSON.stringify(
-        { id, memo: payload.memo, requestId: payload.meta.request?.requestId, meta: payload.meta, target, files },
-        null,
-        2
-      ),
-      'utf8'
-    )
-  )
-  await Promise.all(writes)
-  // Pointer for tools (and the future MCP server) that just want "the latest".
-  await writeFile(join(root, 'latest.txt'), dir, 'utf8')
-  return pkg
 }
 
 /**
