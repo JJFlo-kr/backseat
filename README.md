@@ -3,10 +3,20 @@
 화면을 캡처하고, 그 위에 그리면서 말하고, 그대로 AI 코딩 에이전트에게 보내는 Windows 도구.
 "backseat driver"에서 이름을 땄다. AI가 운전(코딩)하고, 사용자는 뒷좌석에서 화면을 가리키며 지시한다.
 
+## 설치와 실행 (기본)
+
+1. `dist\Backseat Setup <버전>.exe` 를 한 번 실행해 설치한다. 시작 메뉴와 바탕화면에 **Backseat** 가 생긴다.
+2. Backseat 를 누르면 화면 오른쪽 아래 트레이에 아이콘이 뜬다. 창은 없다 — `Ctrl+Shift+A` 로 캡처한다.
+3. 설치판은 **Windows에 로그인하면 자동으로 켜진다**. 끄려면 트레이 아이콘 우클릭 → "로그인 시 자동 시작" 체크 해제.
+4. 새 버전 설치 파일을 실행하면 덮어써서 업데이트된다(설정과 세션은 그대로).
+
+개발 폴더에서 직접 돌릴 때(코드를 고칠 때만):
+
 ```sh
 npm install
 npm run build
-npm start          # 트레이 상주
+npm start          # 트레이 상주 (개발 실행은 로그인 자동 시작을 등록하지 않는다)
+npm run dist       # 설치 파일 만들기 → dist\Backseat Setup <버전>.exe
 ```
 
 ## 쓰는 법
@@ -30,11 +40,16 @@ VS Code, 브라우저 채팅)에 브리프 경로가 든 지시문 또는 이미
 
 ## 에이전트 연결 (MCP)
 
-`out/main/mcp-server.js` 가 stdio MCP 서버다. Claude Code라면 프로젝트의 `.mcp.json` 에:
+Backseat 안에 stdio MCP 서버(`mcp-server.js`)가 들어 있다. **트레이 우클릭 → "에이전트 연결 설정(MCP) 복사"** 를 누르면
+지금 설치된 위치를 가리키는 설정이 클립보드에 들어간다. Claude Code라면 프로젝트의 `.mcp.json` 에 그대로 붙여넣는다.
+Node.js(`node`)가 있어야 한다.
 
-```json
-{ "mcpServers": { "backseat": { "command": "node", "args": ["D:/backseat/out/main/mcp-server.js"] } } }
-```
+- 설치판(기본 설치 위치):
+  ```json
+  { "mcpServers": { "backseat": { "command": "node", "args": ["C:/Users/<사용자>/AppData/Local/Programs/Backseat/resources/app.asar.unpacked/out/main/mcp-server.js"] } } }
+  ```
+  서버 파일은 MCP SDK·zod까지 묶은 상태로 `app.asar` 밖(`app.asar.unpacked`)에 풀려 있어서 일반 Node로 실행된다.
+- 개발 폴더: `{ "command": "node", "args": ["D:/backseat/out/main/mcp-server.js"] }`
 
 툴: `backseat_register`, `backseat_latest`(브리프 + 이미지), `backseat_list`, `backseat_get`, `backseat_wait`(다음 전송까지 대기),
 `backseat_ask`(질문을 띄우고 사용자가 그려서 답할 때까지 대기). `integrations/claude-code/SKILL.md` 를 `.claude/skills/backseat/` 에 복사하면 `/backseat` 스킬이 된다.

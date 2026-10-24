@@ -52,7 +52,9 @@
       "node_modules/@huggingface/transformers/**",
       "node_modules/onnxruntime-common/**",
       "node_modules/sharp/**",
-      "node_modules/@img/**"
+      "node_modules/@img/**",
+      "out/main/mcp-server.js",
+      "out/main/chunks/**"
     ],
     "win": {
       "target": [

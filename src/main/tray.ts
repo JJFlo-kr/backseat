@@ -1,7 +1,7 @@
-import { app, Menu, nativeImage, shell, Tray } from 'electron'
+import { app, clipboard, Menu, nativeImage, shell, Tray } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { loadSettings, saveSettings, configPath } from './config'
+import { loadSettings, saveSettings, configPath, mcpServerPath } from './config'
 import { sessionsRoot } from './sessions'
 
 let tray: Tray | null = null
@@ -28,6 +28,12 @@ function trayIcon(): Electron.NativeImage {
   return nativeImage.createEmpty()
 }
 
+/** Put a ready-to-paste .mcp.json snippet pointing at this install's MCP server on the clipboard. */
+function copyMcpConfig(): void {
+  const snippet = { mcpServers: { backseat: { command: 'node', args: [mcpServerPath().replaceAll('\\', '/')] } } }
+  clipboard.writeText(JSON.stringify(snippet, null, 2))
+}
+
 function buildMenu(actions: TrayActions): Menu {
   const s = loadSettings()
   return Menu.buildFromTemplate([
@@ -48,6 +54,7 @@ function buildMenu(actions: TrayActions): Menu {
       click: (item) => void saveSettings({ pressEnter: item.checked })
     },
     { type: 'separator' },
+    { label: '에이전트 연결 설정(MCP) 복사', click: copyMcpConfig },
     { label: '세션 폴더 열기', click: () => void shell.openPath(sessionsRoot()) },
     { label: '설정 파일 열기', click: () => void shell.openPath(configPath()) },
     { type: 'separator' },

@@ -67,6 +67,13 @@ export function loadSettings(): Settings {
   return cached
 }
 
+/** Where the MCP server lives: unpacked next to app.asar when installed, out/main in a dev checkout. */
+export function mcpServerPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'mcp-server.js')
+    : join(app.getAppPath(), 'out', 'main', 'mcp-server.js')
+}
+
 /** The cloud STT key is environment-only on purpose: config.json is plain text next to the sessions. */
 export function sttApiKey(): string {
   return process.env.BACKSEAT_STT_API_KEY ?? ''
