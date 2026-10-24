@@ -89,7 +89,7 @@ transformers.js(ONNX)로 Whisper를 로컬에서 돌린다. 기본 모델 `onnx-
 ## 주의
 
 - 프로젝트를 Claude 앱의 임시 폴더처럼 가상화된 AppData 아래에 두면 Electron 샌드박스와 Vite 빌드가 깨진다. D:\backseat 같은 일반 폴더에서 작업할 것.
-- 설계와 진행 상황은 [PLAN.md](PLAN.md).
+- 설계와 진행 상황은 [PLAN.md](PLAN.md). AI 에이전트용 안내는 [AGENTS.md](AGENTS.md), 다른 AI(Codex 등)에게 점검받는 방법은 [docs/codex-review.md](docs/codex-review.md).
 
 ## 후원
 
