@@ -38,7 +38,7 @@ unless a task says otherwise; code, identifiers and comments are English.
 | `src/main/config.ts`, `tray.ts`, `about.ts`, `requests.ts` | Settings (`%APPDATA%\backseat\config.json`), tray menu, About window, `backseat_ask` request watcher. |
 | `src/main/selftest.ts` | Headless end-to-end self-test (see below). |
 | `src/preload/index.ts` | `contextBridge` API (`window.backseat`). Additive changes only. |
-| `src/renderer/editor/*` | Annotation editor (vanilla TS + Canvas 2D, ~2k lines in `editor.ts`), timeline, color picker, hotkeys registry, undo history. |
+| `src/renderer/editor/*` | Annotation editor (vanilla TS + Canvas 2D, ~2.4k lines in `editor.ts`), timeline, color picker, hotkeys registry, undo history. |
 | `src/renderer/selector/*`, `about/*` | Region/window selector overlay, About window. |
 | `tests/*.test.ts` | Node built-in test runner; imports need `.ts` extensions (Node 24 strips types). |
 | `integrations/claude-code/` | `/backseat` skill and `mcp.json` template. |
