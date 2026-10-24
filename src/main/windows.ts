@@ -1,4 +1,5 @@
-import { BrowserWindow, type BrowserWindowConstructorOptions, type WebContents } from 'electron'
+import { app, BrowserWindow, nativeImage, type BrowserWindowConstructorOptions, type WebContents } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 
 export type Page = 'selector' | 'editor' | 'about'
@@ -12,6 +13,22 @@ export function loadPage(win: BrowserWindow, page: Page): Promise<void> {
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) return win.loadURL(`${devUrl}/${page}/index.html`)
   return win.loadFile(join(__dirname, `../renderer/${page}/index.html`))
+}
+
+let iconCache: Electron.NativeImage | null = null
+
+/** App icon for our windows' title bar and taskbar button (installed builds also get it from the exe). */
+export function appIcon(): Electron.NativeImage | undefined {
+  if (iconCache) return iconCache.isEmpty() ? undefined : iconCache
+  const candidates = [join(app.getAppPath(), 'resources', 'icon.png'), join(process.resourcesPath ?? '', 'icon.png')]
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      iconCache = nativeImage.createFromPath(p)
+      if (!iconCache.isEmpty()) return iconCache
+    }
+  }
+  iconCache = nativeImage.createEmpty()
+  return undefined
 }
 
 export function baseWebPreferences(): BrowserWindowConstructorOptions['webPreferences'] {

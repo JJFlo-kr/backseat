@@ -4,7 +4,7 @@ import { join } from 'path'
 import { IPC } from '../shared/ipc'
 import { APP_NAME, APP_TAGLINE, ISSUES_URL, LICENSE_NAME, REPO_URL, SUPPORT_URL } from '../shared/links'
 import type { AboutInfo } from '../shared/types'
-import { baseWebPreferences, loadPage, watchRendererErrors } from './windows'
+import { appIcon, baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
 let aboutWin: BrowserWindow | null = null
 let ipcInstalled = false
@@ -53,6 +53,7 @@ function installIpc(): void {
 export function createAboutWindow(errors?: string[]): BrowserWindow {
   installIpc()
   const win = new BrowserWindow({
+    icon: appIcon(),
     width: 420,
     height: 360,
     show: false,

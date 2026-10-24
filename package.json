@@ -1,6 +1,6 @@
 {
   "name": "backseat",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "AI 소통기 Backseat - point, talk, let the AI drive",
   "main": "./out/main/index.js",
@@ -9,7 +9,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "icon": "node scripts/gen-icon.cjs",
+    "icon": "node scripts/render-logo.cjs --sheet=icon-sheet.png resources/logo.svg design/logo/render",
     "capture": "electron-vite build && electron . --capture",
     "selftest": "electron-vite build && electron . --selftest",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"tests/**/*.test.ts\"",

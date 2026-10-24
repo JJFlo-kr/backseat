@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Backseat concept B: a bold pointing hand rising from behind a seat back -->
+  <defs>
+    <clipPath id="b-clip"><rect width="256" height="256" rx="56"/></clipPath>
+    <!-- local frame: +x is the pointing direction, origin at the centre of the fist -->
+    <g id="b-hand">
+      <rect x="-46" y="-38" width="88" height="84" rx="36"/>
+      <rect x="0" y="-38" width="112" height="34" rx="17"/>
+      <rect x="18" y="2" width="44" height="34" rx="17"/>
+      <rect x="-30" y="-64" width="58" height="30" rx="15"/>
+    </g>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#E5484D"/>
+  <g clip-path="url(#b-clip)">
+    <!-- seat back seen from behind, cut by the bottom edge -->
+    <rect x="24" y="196" width="208" height="120" rx="42" fill="#FFFFFF"/>
+    <!-- forearm rising from the seat -->
+    <rect x="58" y="130" width="50" height="140" rx="22" fill="#E5484D" stroke="#E5484D" stroke-width="14"/>
+    <rect x="58" y="130" width="50" height="140" rx="22" fill="#FFFFFF"/>
+    <!-- hand, tilted slightly up: red halo first, then white -->
+    <g transform="translate(96 116) rotate(-16)" stroke-linejoin="round">
+      <use href="#b-hand" fill="#E5484D" stroke="#E5484D" stroke-width="14"/>
+      <use href="#b-hand" fill="#FFFFFF"/>
+      <!-- crease between thumb and index finger -->
+      <line x1="-8" y1="-36" x2="26" y2="-36" stroke="#E5484D" stroke-width="6" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

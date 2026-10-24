@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Backseat concept E: chunky emoji-style snapping hand with one bold spark -->
+  <defs>
+    <clipPath id="e-clip"><rect width="256" height="256" rx="56"/></clipPath>
+    <!-- four-point spark centred on the origin -->
+    <path id="e-spark" d="M0 -46 L11 -11 L46 0 L11 11 L0 46 L-11 11 L-46 0 L-11 -11 Z"/>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#E5484D"/>
+  <g clip-path="url(#e-clip)" fill="#FFFFFF">
+    <!-- wrist running off the bottom edge -->
+    <rect x="58" y="180" width="70" height="100" rx="26"/>
+    <!-- palm -->
+    <rect x="40" y="104" width="112" height="104" rx="44"/>
+    <!-- index finger up -->
+    <rect x="44" y="34" width="38" height="96" rx="19"/>
+    <!-- thumb + middle finger pinched into one chunky loop, tips at the spark -->
+    <path d="M96 116 V102 a28 28 0 0 1 28 -28 H140 a30 30 0 0 1 30 30 V128 a30 30 0 0 1 -30 30 H120 Z"/>
+  </g>
+  <!-- the gap between index and middle, so the index finger stands on its own -->
+  <rect x="82" y="60" width="9" height="62" rx="4.5" fill="#E5484D"/>
+  <!-- spark at the snap point -->
+  <g transform="translate(190 70)" stroke-linejoin="round">
+    <use href="#e-spark" fill="#E5484D" stroke="#E5484D" stroke-width="16"/>
+    <use href="#e-spark" fill="#FFFFFF"/>
+  </g>
+</svg>

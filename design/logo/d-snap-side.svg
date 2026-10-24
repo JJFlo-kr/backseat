@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Backseat concept D: side view of a hand mid-snap, with snap ticks at the fingertips -->
+  <defs>
+    <clipPath id="d-clip"><circle cx="128" cy="128" r="128"/></clipPath>
+  </defs>
+  <circle cx="128" cy="128" r="128" fill="#E5484D"/>
+  <g clip-path="url(#d-clip)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- wrist and palm (back of hand to the left) -->
+    <rect x="58" y="176" width="62" height="100" rx="24" fill="#FFFFFF"/>
+    <rect x="52" y="108" width="96" height="100" rx="36" fill="#FFFFFF"/>
+    <!-- curled ring + little finger: knuckle bump on the palm's front edge -->
+    <rect x="112" y="160" width="46" height="38" rx="19" fill="#FFFFFF"/>
+    <!-- index finger, straight up, leaning back slightly -->
+    <line x1="74" y1="104" x2="66" y2="42" stroke="#E5484D" stroke-width="44"/>
+    <line x1="76" y1="124" x2="66" y2="42" stroke="#FFFFFF" stroke-width="30"/>
+    <!-- middle finger bent over and down onto the thumb -->
+    <path d="M108 122 L140 82 L174 104" fill="none" stroke="#E5484D" stroke-width="42"/>
+    <path d="M108 122 L140 82 L174 104" fill="none" stroke="#FFFFFF" stroke-width="28"/>
+    <!-- thumb rising to meet it, tip to tip -->
+    <line x1="124" y1="166" x2="170" y2="126" stroke="#E5484D" stroke-width="44"/>
+    <line x1="124" y1="166" x2="170" y2="126" stroke="#FFFFFF" stroke-width="30"/>
+  </g>
+  <!-- snap ticks radiating from the contact point (~176,114) -->
+  <g stroke="#FFFFFF" stroke-width="12" stroke-linecap="round">
+    <line x1="194" y1="80" x2="208" y2="58"/>
+    <line x1="210" y1="108" x2="236" y2="102"/>
+    <line x1="204" y1="138" x2="224" y2="154"/>
+  </g>
+</svg>

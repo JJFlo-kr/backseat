@@ -1,3 +1,5 @@
+<p align="center"><img src="resources/logo.svg" width="112" alt="Backseat logo"></p>
+
 # Backseat (AI 소통기)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

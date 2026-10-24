@@ -18,7 +18,7 @@ import { saveSettings } from './config'
 import { isWindow } from './native/win32'
 import { sendToTarget } from './send'
 import { transcribe } from './stt'
-import { baseWebPreferences, loadPage, watchRendererErrors } from './windows'
+import { appIcon, baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
 let ipcInstalled = false
 /** Delivery target per editor window (several editors can be open at once). */
@@ -165,6 +165,7 @@ export function createEditorWindow(init: EditorInit, errors?: string[]): Browser
   const height = Math.round(clamp(dipH + 40 + 36 + 56 + 110, 520, wa.height * 0.92))
 
   const win = new BrowserWindow({
+    icon: appIcon(),
     width,
     height,
     x: Math.round(wa.x + (wa.width - width) / 2),

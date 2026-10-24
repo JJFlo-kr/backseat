@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Backseat concept C: a car seat from behind with a pointer rising from it -->
+  <defs>
+    <clipPath id="c-clip"><circle cx="128" cy="128" r="128"/></clipPath>
+    <!-- arrow cursor, tip at the origin, pointing up-right -->
+    <path id="c-cursor" d="M0 0 L0 108 L-26 84 L-44 122 L-62 114 L-44 77 L-80 77 Z"/>
+  </defs>
+  <circle cx="128" cy="128" r="128" fill="#E5484D"/>
+  <g clip-path="url(#c-clip)" fill="#FFFFFF">
+    <!-- headrest on two posts -->
+    <rect x="70" y="72" width="64" height="36" rx="14"/>
+    <rect x="82" y="104" width="10" height="30"/>
+    <rect x="112" y="104" width="10" height="30"/>
+    <!-- seat back: wide shoulders, slight taper -->
+    <path d="M66 132 H138 a28 28 0 0 1 28 28 L170 270 H34 L38 160 a28 28 0 0 1 28 -28 Z"/>
+  </g>
+  <g transform="translate(208 40)" stroke-linejoin="round">
+    <use href="#c-cursor" fill="#E5484D" stroke="#E5484D" stroke-width="18"/>
+    <use href="#c-cursor" fill="#FFFFFF"/>
+  </g>
+</svg>
