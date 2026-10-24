@@ -12,6 +12,7 @@ import { dirname, join } from 'path'
 import { IPC } from '../shared/ipc'
 import type { AgentTarget, Annotation, CaptureMeta, CompareInfo, EditorInit, ExportPayload, Transcript } from '../shared/types'
 import { classifyTarget, instructionLine } from './agents'
+import { createAboutWindow } from './about'
 import { buildBrief } from './brief'
 import { captureAllDisplays, cropDip } from './capture'
 import { loadSettings } from './config'
@@ -22,6 +23,7 @@ import { writeSessionPackage } from './sessions'
 import { stopStt, transcribe } from './stt'
 import { wavToFloat16k } from './stt/wav'
 import { createSelectorWindow, selectorInitFor } from './selector'
+import { loadPage } from './windows'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -1062,6 +1064,39 @@ export async function runSelfTest(): Promise<void> {
       } finally {
         mock.close()
       }
+    }
+
+    // About window: loads without renderer errors, shows the version and the three link buttons.
+    step = 'about'
+    {
+      const about = createAboutWindow(errors)
+      await Promise.all([waitLoad(about), loadPage(about, 'about')])
+      type AboutState = { version: string; buttons: string[]; links: string[]; ready: boolean }
+      let state = null as AboutState | null
+      for (let i = 0; i < 40; i++) {
+        await sleep(100)
+        state = (await about.webContents.executeJavaScript(`({
+          ready: document.body.dataset.ready === '1',
+          version: document.getElementById('version')?.textContent ?? '',
+          buttons: ['btn-repo', 'btn-support', 'btn-issues'].map((id) => document.getElementById(id)?.textContent?.trim() ?? ''),
+          links: ['link-license', 'link-notices'].map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
+        })`)) as AboutState
+        if (state?.ready) break
+      }
+      about.show()
+      if (!state?.ready) errors.push('about window never became ready')
+      else {
+        if (!state.version.includes(app.getVersion())) errors.push(`about version "${state.version}" lacks ${app.getVersion()}`)
+        if (state.buttons.some((b) => !b)) errors.push(`about buttons missing: ${JSON.stringify(state.buttons)}`)
+        if (state.links.some((b) => !b)) errors.push(`about doc links missing: ${JSON.stringify(state.links)}`)
+        report.about = state
+      }
+      if (shotsDir) {
+        await sleep(200)
+        await shot(about, join(shotsDir, 'about.png'), warnings)
+        report.aboutShot = join(shotsDir, 'about.png')
+      }
+      about.destroy()
     }
 
     // Clipboard + brief: the two export paths the editor uses.

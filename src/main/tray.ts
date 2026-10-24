@@ -2,6 +2,8 @@ import { app, clipboard, Menu, nativeImage, shell, Tray } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { applyLoginItem, loadSettings, saveSettings, configPath, mcpServerPath } from './config'
+import { SUPPORT_URL } from '../shared/links'
+import { showAbout } from './about'
 import { sessionsRoot } from './sessions'
 
 let tray: Tray | null = null
@@ -72,6 +74,9 @@ function buildMenu(actions: TrayActions): Menu {
     { label: '에이전트 연결 설정(MCP) 복사', click: copyMcpConfig },
     { label: '세션 폴더 열기', click: () => void shell.openPath(sessionsRoot()) },
     { label: '설정 파일 열기', click: () => void shell.openPath(configPath()) },
+    { type: 'separator' },
+    { label: '후원하기 ☕', click: () => void shell.openExternal(SUPPORT_URL) },
+    { label: '정보…', click: showAbout },
     { type: 'separator' },
     { label: '종료', click: () => app.quit() }
   ])

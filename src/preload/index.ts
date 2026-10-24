@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type {
+  AboutInfo,
   BackseatApi,
   CopyResult,
   EditorInit,
@@ -55,6 +56,17 @@ const api: BackseatApi = {
     },
     close() {
       ipcRenderer.send(IPC.editorClose)
+    }
+  },
+  about: {
+    getInfo(): Promise<AboutInfo> {
+      return ipcRenderer.invoke(IPC.aboutInfo)
+    },
+    open(url: string): Promise<void> {
+      return ipcRenderer.invoke(IPC.aboutOpen, url)
+    },
+    openDoc(doc: 'license' | 'notices'): Promise<void> {
+      return ipcRenderer.invoke(IPC.aboutOpenDoc, doc)
     }
   }
 }

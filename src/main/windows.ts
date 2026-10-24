@@ -1,7 +1,7 @@
 import { BrowserWindow, type BrowserWindowConstructorOptions, type WebContents } from 'electron'
 import { join } from 'path'
 
-export type Page = 'selector' | 'editor'
+export type Page = 'selector' | 'editor' | 'about'
 
 export function preloadPath(): string {
   return join(__dirname, '../preload/index.js')

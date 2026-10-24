@@ -72,12 +72,21 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Backseat"
+      "shortcutName": "Backseat",
+      "license": "LICENSE"
     },
     "extraResources": [
       {
         "from": "resources/tray.png",
         "to": "tray.png"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
       }
     ]
   }
