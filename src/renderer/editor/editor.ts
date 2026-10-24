@@ -1,13 +1,22 @@
 import type {
-  EditorInit, ExportPayload, Annotation, AgentTarget, AgentKind, Point, Transcript, Rect, CompareMode, CaptureMeta, SendOptions
+  EditorInit, ExportPayload, Annotation, AgentTarget, AgentKind, Point, Transcript, Rect, CompareMode, CaptureMeta, SendOptions,
+  SendTargetView, DeliveryStatus, PreflightReport
 } from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { linksAt, type Doc } from './doc'
-import { runSend, type SttOutcome, type TranscriptChoice } from './sendflow'
+import { runSend, type SttOutcome } from './sendflow'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
 import { ColorPicker, colorButton, setColorButton } from './colorpicker'
+import {
+  type Tool, type TextStyle, type ToolPrefs, isDrawTool, isTextStyle, defaultPrefs, loadPrefs, savePrefs,
+  nearest, PREFS_KEY, DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH, TEXT_SIZES, BADGE_SIZES, BLUR_STRENGTHS, DEFAULT_BADGE_SIZE, DEFAULT_BLUR
+} from './prefs'
+import {
+  preflight, summaryParts, voiceMissing, chipView, viewFromAgent, initialTarget, deliveryView, statusOf, mergeUpdate,
+  type DeliveryAction, type DeliveryContext
+} from './delivery'
 import { normalizeHex } from '../../shared/palette'
 import { t, setMessages, applyDom, isLocale, getLocale, type Locale } from '../../shared/i18n'
 import '@fontsource/noto-sans-kr/500.css'
@@ -18,8 +27,6 @@ import '@fontsource/jua/400.css'
 import '@fontsource/do-hyeon/400.css'
 import '@fontsource/black-han-sans/400.css'
 
-type Tool = 'pen' | 'text' | 'arrow' | 'rect' | 'badge' | 'blur' | 'crop' | 'eraser'
-type TextStyle = 'outline' | 'plate' | 'plain'
 type DragTool = 'arrow' | 'rect' | 'badge' | 'blur'
 type StrokeAnn = Extract<Annotation, { kind: 'stroke' }>
 type ArrowAnn = Extract<Annotation, { kind: 'arrow' }>
@@ -48,22 +55,8 @@ const BUNDLED_FONTS: ReadonlySet<string> = new Set([
 /** Gothic faces are bundled bold; the display / handwriting faces only have a regular cut. */
 const BOLD_FONTS: ReadonlySet<string> = new Set(['Noto Sans KR', 'Nanum Gothic', ...Object.keys(LAZY_FONT_CSS)])
 const ERASE_TOLERANCE = 6 // CSS px around the eraser path
-const BADGE_SIZE = 22 // CSS px diameter
-const BLUR_BLOCK = 14 // CSS px per pixelation block
 const MIN_DRAG = 3 // image px
 const AUDIO_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
-
-
-function isTool(v: string | undefined): v is Tool {
-  return (
-    v === 'pen' || v === 'text' || v === 'arrow' || v === 'rect' || v === 'badge' || v === 'blur' ||
-    v === 'crop' || v === 'eraser'
-  )
-}
-
-function isTextStyle(v: string): v is TextStyle {
-  return v === 'plate' || v === 'outline' || v === 'plain'
-}
 
 const sameRect = (a: Rect, b: Rect): boolean =>
   a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
@@ -93,22 +86,53 @@ const diffLabel = byId<HTMLElement>('cmp-diff')
 const cmpCtx = ctxOf(cmp, true)
 const memoInput = byId<HTMLInputElement>('memo')
 const statusEl = byId<HTMLElement>('status')
-const targetBar = byId<HTMLElement>('targetbar')
+const toolbar = byId<HTMLElement>('toolbar')
+const toolbar2 = byId<HTMLElement>('toolbar2')
 const targetBtn = byId<HTMLButtonElement>('target-btn')
 const undoBtn = byId<HTMLButtonElement>('undo')
 const redoBtn = byId<HTMLButtonElement>('redo')
-const timelineBtn = byId<HTMLButtonElement>('timeline-toggle')
+const timelineBtn = byId<HTMLButtonElement>('timeline-toggle') // a ⋯ menu item
+const compareItem = byId<HTMLButtonElement>('compare-item')
+const pinItem = byId<HTMLButtonElement>('pin')
+const moreBtn = byId<HTMLButtonElement>('more')
+const moreMenu = byId<HTMLElement>('more-menu')
 const micBtn = byId<HTMLButtonElement>('mic')
 const player = byId<HTMLAudioElement>('player')
 const baseCtx = ctxOf(base, true) // blur and the compare diff read it back
 const inkCtx = ctxOf(ink)
+/** Tool buttons of row 1 and their ⋯ menu items (crop, eraser, and the row-1 tools that did not fit). */
 const toolBtns = document.querySelectorAll<HTMLButtonElement>('[data-tool]')
+const optEls = Array.from(toolbar2.querySelectorAll<HTMLElement>('[data-opt]'))
 const widthInput = byId<HTMLInputElement>('width')
 const widthDot = byId<HTMLElement>('width-dot')
+const badgeSizeBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-badge-size]'))
+const badgeNext = byId<HTMLElement>('badge-next')
+const blurBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-blur]'))
+const cropApplyBtn = byId<HTMLButtonElement>('crop-apply')
+const cropCancelBtn = byId<HTMLButtonElement>('crop-cancel')
+const textMoreBtn = byId<HTMLButtonElement>('text-more')
 const fontSelect = byId<HTMLSelectElement>('font')
 const sizeSelect = byId<HTMLSelectElement>('font-size')
 const styleBtns = Array.from(byId('text-style').querySelectorAll<HTMLButtonElement>('[data-text-style]'))
 const textBar = byId<HTMLElement>('textbar')
+const askBar = byId<HTMLElement>('askbar')
+const sendBar = byId<HTMLElement>('sendbar')
+const summaryEl = byId<HTMLElement>('summary')
+const summaryText = byId<HTMLElement>('summary-text')
+const voiceLinksBtn = byId<HTMLButtonElement>('voice-links')
+const voiceMissingEl = byId<HTMLElement>('voice-missing')
+const summaryChanged = byId<HTMLElement>('summary-changed')
+const deliveryEl = byId<HTMLElement>('delivery')
+const stepsEl = byId<HTMLOListElement>('steps')
+const deliveryHeadline = byId<HTMLElement>('delivery-headline')
+const deliveryDetail = byId<HTMLElement>('delivery-detail')
+const actionBtns: Record<DeliveryAction, HTMLButtonElement> = {
+  resend: byId('resend'),
+  retarget: byId('retarget'),
+  copy: byId('copy-direct'),
+  confirm: byId('confirm-target')
+}
+const newCaptureBtn = byId<HTMLButtonElement>('new-capture')
 const boldBtn = byId<HTMLButtonElement>('text-bold')
 const italicBtn = byId<HTMLButtonElement>('text-italic')
 const colorBtn = colorButton({ id: 'color', label: '', title: '' }) // titles are set in applyColorTitles() once the language is known
@@ -128,7 +152,6 @@ function setColorTitle(btn: HTMLButtonElement, title: string): void {
 }
 /** The colour buttons are created in code (module scope runs before the language arrives): name them after init. */
 function applyColorTitles(): void {
-  setColorTitle(colorBtn, t('editor.toolbar.colorTip'))
   setColorTitle(bgBtn, t('editor.text.plateColor'))
   setColorTitle(outlineBtn, t('editor.text.outlineColor'))
 }
@@ -137,18 +160,22 @@ let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
 let t0 = 0
 let tool: Tool = 'pen'
-const DEFAULT_COLOR = '#E5484D'
-const LS_COLOR = 'backseat.color'
-/** The last pen colour the user picked (localStorage; storage may be unavailable). */
-function loadColor(): string {
+/** Each tool's last options and the last drawing tool (prefs.ts); loaded in the init handler. */
+let prefs: ToolPrefs = defaultPrefs(DEFAULT_FONT)
+/** The self-test keeps its own key so it never changes what the user's editor remembers. */
+let prefsKey = PREFS_KEY
+function prefsStore(): Storage | null {
   try {
-    return normalizeHex(localStorage.getItem(LS_COLOR) ?? '') ?? DEFAULT_COLOR
+    return window.localStorage
   } catch {
-    return DEFAULT_COLOR
+    return null
   }
 }
-let color = loadColor()
-let widthCss = 3
+// The working values of the selected tool (the drawing code reads these); setTool() swaps them per tool.
+let color = prefs.pen.color
+let widthCss = DEFAULT_WIDTH
+let badgeSizeCss = DEFAULT_BADGE_SIZE
+let blurCss = DEFAULT_BLUR
 let fontFamily: string | undefined = DEFAULT_FONT // undefined = system UI font
 let fontSizeCss = 24
 let textStyle: TextStyle = 'plate'
@@ -180,6 +207,10 @@ let moveDrag: { index: number; orig: TextAnn; ann: TextAnn; start: Point; moved:
 let erasing: { hits: Set<number>; last: Point } | null = null
 /** In-progress crop drag (image px). */
 let cropDrag: { start: Point; cur: Point } | null = null
+/** A dragged crop waiting for 적용 (Enter) or 취소 (Esc), image px. */
+let cropPending: Rect | null = null
+/** The text tool's 세부 (details) row is open. */
+let textDetailsOpen = false
 /** Debug/self-test: how many pointer events the ink canvas saw. */
 const pointerCounts = { down: 0, move: 0, up: 0, cancel: 0 }
 
@@ -221,8 +252,10 @@ async function togglePin(): Promise<void> {
   try {
     pinned = await window.backseat.editor.pin()
     document.body.classList.toggle('pinned', pinned)
+    pinItem.setAttribute('aria-checked', String(pinned))
     setStatus(pinned ? t('editor.status.pinned') : t('editor.status.unpinned'))
     layout()
+    fitToolbar()
   } catch (err) {
     setStatus(t('editor.status.pinFailed', { error: err instanceof Error ? err.message : String(err) }), true)
   }
@@ -639,9 +672,10 @@ function render(): void {
     const prev = buildShape(shape.tool, shape.start, shape.cur, shape.tStart, now(), init.meta.scaleFactor, true)
     if (prev) drawAnnotation(inkCtx, prev, prev.kind === 'badge' ? prev.n : undefined)
   }
-  if (cropDrag && init) {
+  const cropSel = cropDrag ? normRect(cropDrag.start, cropDrag.cur) : cropPending
+  if (cropSel && init) {
     // Dim everything outside the future crop; dashed outline on it.
-    const r = normRect(cropDrag.start, cropDrag.cur)
+    const r = cropSel
     inkCtx.save()
     inkCtx.fillStyle = 'rgba(0,0,0,0.55)'
     inkCtx.beginPath()
@@ -662,12 +696,26 @@ function layout(): void {
   const cssH = base.height / init.meta.scaleFactor
   const availW = Math.max(50, stage.clientWidth - 32 - 2)
   const availH = Math.max(50, stage.clientHeight - 32 - 2)
+  const prev = view
   view = Math.min(1, availW / cssW, availH / cssH)
   for (const c of [base, cmp, ink]) {
     c.style.width = `${cssW * view}px`
     c.style.height = `${cssH * view}px`
   }
+  // A row opening or closing (세부, comparison, send bar) resizes the image under an open text box.
+  if (textSession && view !== prev) placeTextBox(textSession)
 }
+
+/** Keep an open text box on its anchor and at its size after the image was re-laid-out. */
+function placeTextBox(sess: TextSession): void {
+  const k = (cssPx(1) * view) // image px -> wrap CSS px
+  sess.box.style.left = `${sess.at.x * k}px`
+  sess.box.style.top = `${sess.at.y * k}px`
+  styleTextBox(sess)
+}
+
+/** CSS px (at view 1) per image px. */
+const cssPx = (imgPx: number): number => imgPx / (init?.meta.scaleFactor ?? 1)
 
 // ---------- crop ----------
 
@@ -845,9 +893,10 @@ function diffPercent(): number {
   return diffCache
 }
 
+/** The comparison bar shows only while comparing; it is turned on from ⋯ or with O. */
 function syncCompareUi(): void {
-  compareBar.hidden = compareImg === null
-  compareBtn.classList.toggle('active', cmpOn)
+  compareBar.hidden = compareImg === null || !cmpOn
+  compareItem.setAttribute('aria-checked', String(cmpOn))
   compareModeBtns.forEach((b) => b.classList.toggle('active', b.dataset.cmpMode === cmpMode))
   opacityInput.parentElement?.classList.toggle('off', cmpMode !== 'overlay')
   wipeInput.parentElement?.classList.toggle('off', cmpMode !== 'wipe')
@@ -955,7 +1004,8 @@ function afterChange(): void {
   redoBtn.disabled = !history.canRedo
   undoBtn.title = history.undoLabel ? t('editor.history.undoTip', { label: history.undoLabel }) : hotkeys.label('undo')
   redoBtn.title = history.redoLabel ? t('editor.history.redoTip', { label: history.redoLabel }) : hotkeys.label('redo')
-  timelineBtn.classList.toggle('has-items', annotations.length > 0 || transcript !== null)
+  syncBadgeNext()
+  contentChanged()
 }
 
 function commit(label: string, next: readonly Annotation[]): void {
@@ -974,6 +1024,7 @@ function commitLinks(label: string, nextLinks: ReadonlyMap<number, number | null
 
 function undo(): void {
   if (drawing || shape || cropDrag || moveDrag || erasing) return
+  if (cropPending) { cancelPendingCrop(); return } // first undo drops the waiting crop selection
   commitPendingText()
   const prev = history.undo()
   if (prev === undefined) return
@@ -983,6 +1034,7 @@ function undo(): void {
 
 function redo(): void {
   if (drawing || shape || cropDrag || moveDrag || erasing) return
+  cancelPendingCrop()
   commitPendingText()
   const next = history.redo()
   if (next === undefined) return
@@ -1132,8 +1184,6 @@ function startText(p: Point, e: PointerEvent): void {
   openTextBox(e.clientX - rect.left, e.clientY - rect.top, p, -1, null, '')
 }
 
-const SIZE_CHOICES = [14, 18, 24, 32, 48]
-
 /** Edit annotations[index] in place: the toolbar adopts its font / size / colour / style / effects. */
 function startEditText(index: number): void {
   const a = annotations[index]
@@ -1149,7 +1199,7 @@ function startEditText(index: number): void {
   textBold = a.bold
   textItalic = a.italic === true
   const css = a.fontSize / init.meta.scaleFactor
-  fontSizeCss = SIZE_CHOICES.reduce((best, v) => (Math.abs(v - css) < Math.abs(best - css) ? v : best), SIZE_CHOICES[0])
+  fontSizeCss = nearest(css, TEXT_SIZES)
   textbarPin = true // the text bar shows (and the image is re-laid-out) before the box is positioned
   syncToolbar()
   const r = ink.getBoundingClientRect()
@@ -1316,14 +1366,16 @@ function buildShape(
       const h = Math.abs(b.y - a.y)
       if (!preview && (w < MIN_DRAG || h < MIN_DRAG)) return null
       if (kind === 'rect') return { kind, x, y, w, h, color, width, tStart, tEnd }
-      return { kind, x, y, w, h, strength: BLUR_BLOCK * scale, tStart, tEnd }
+      return { kind, x, y, w, h, strength: blurCss * scale, tStart, tEnd }
     }
     case 'badge': {
-      const n = annotations.reduce((c, x) => c + (x.kind === 'badge' ? 1 : 0), 0) + 1
-      return { kind, x: a.x, y: a.y, n, color, size: BADGE_SIZE * scale, tStart, tEnd }
+      return { kind, x: a.x, y: a.y, n: nextBadgeNo(), color, size: badgeSizeCss * scale, tStart, tEnd }
     }
   }
 }
+
+/** Badges number themselves in creation order (renumbered on undo / erase / crop). */
+const nextBadgeNo = (): number => annotations.reduce((c, x) => c + (x.kind === 'badge' ? 1 : 0), 0) + 1
 
 function shapeLabel(k: DragTool): string {
   switch (k) {
@@ -1366,6 +1418,7 @@ ink.addEventListener('pointerdown', (e) => {
     return
   }
   if (tool === 'crop') {
+    cropPending = null // a new drag replaces the waiting selection
     cropDrag = { start: p, cur: p }
     ink.setPointerCapture(e.pointerId)
     render()
@@ -1435,14 +1488,40 @@ function endStroke(): void {
   drawing = null
   commit(t('editor.history.pen'), [...annotations, done])
 }
-function endCrop(commitIt: boolean, at?: Point): void {
+/** End a crop drag: the selection waits for 적용 / Enter (or 취소 / Esc); a tiny drag drops it. */
+function endCrop(keep: boolean, at?: Point): void {
   if (!cropDrag) return
   const c = cropDrag
   cropDrag = null
   if (at) c.cur = at
   const r = normRect(c.start, c.cur)
-  if (commitIt && r.width >= MIN_DRAG && r.height >= MIN_DRAG) applyCropSelection(r)
-  else render() // drop the preview
+  cropPending = keep && r.width >= MIN_DRAG && r.height >= MIN_DRAG ? r : null
+  syncCropButtons()
+  render()
+  if (cropPending) setStatus(t('editor.status.cropPending'))
+}
+
+/** 적용 / Enter: crop, then back to the drawing tool the user had (cropping is a one-off). */
+function applyPendingCrop(): void {
+  const r = cropPending
+  cropPending = null
+  syncCropButtons()
+  if (!r) return
+  applyCropSelection(r)
+  if (tool === 'crop') setTool(prefs.tool)
+}
+
+function cancelPendingCrop(): void {
+  if (!cropPending && !cropDrag) return
+  cropDrag = null
+  cropPending = null
+  syncCropButtons()
+  render()
+}
+
+function syncCropButtons(): void {
+  cropApplyBtn.disabled = cropPending === null
+  cropCancelBtn.disabled = cropPending === null
 }
 
 ink.addEventListener('pointerup', (e) => {
@@ -1542,7 +1621,19 @@ async function save(): Promise<void> {
   }
 }
 
-async function send(): Promise<void> {
+/**
+ * 보내기. No question first when everything is ready (request 2): the send bar shows what will go, and
+ * afterwards the steps main confirmed. A recording without text stops it: the send bar offers 다시 변환 /
+ * 음성 없이 보내기 instead of sending the image as if the spoken part were in it (Codex review F12).
+ */
+/** How this send differs from a plain 보내기: without the failed voice part, or into the window whose title changed. */
+interface SendExtra {
+  withoutVoice?: boolean
+  confirmTarget?: boolean
+}
+
+async function send(extra: SendExtra = {}): Promise<void> {
+  const withoutVoice = extra.withoutVoice === true
   if (busy || !init) return
   if (mustPickTarget) {
     setStatus(t('editor.status.pickTarget'), true)
@@ -1550,7 +1641,7 @@ async function send(): Promise<void> {
     return
   }
   busy = true
-  setStatus(t('editor.status.sending'))
+  let voiceStopped = false
   try {
     const o = await runSend(
       {
@@ -1558,7 +1649,11 @@ async function send(): Promise<void> {
           await settleRecording()
           return sttOutcome()
         },
-        chooseOnSttFailure: () => askTranscriptFailure(),
+        chooseOnSttFailure: async () => {
+          if (withoutVoice) return 'image'
+          voiceStopped = true
+          return 'cancel'
+        },
         retryTranscription: async () => {
           await retryTranscription()
           return sttOutcome()
@@ -1566,36 +1661,47 @@ async function send(): Promise<void> {
         deliver: () => {
           const payload = buildPayload()
           if (!payload) throw new Error(t('editor.status.unknownError'))
-          setStatus(t('editor.status.sending'))
-          return window.backseat.editor.send(payload, sendOptions())
+          const target = currentTarget()
+          lastDeliveryCtx = { clipboardOnly: isClipboardOnly(chosenTarget), mcp: target?.method === 'mcp' || target?.source === 'mcp-verified' }
+          lastSentWithoutVoice = withoutVoice
+          sending = true
+          renderSendbar()
+          return window.backseat.editor.send(payload, sendOptions(extra))
         }
       }
     )
     const r = o.result
     if (!r) {
-      setStatus(t('editor.status.sendCanceled'))
+      if (voiceStopped) {
+        setStatus(t('editor.status.voiceMissing'), true)
+        flashSendbar()
+      } else setStatus(t('editor.status.sendCanceled'))
       return
     }
-    setStatus(r.message, !r.ok)
+    lastDelivery = statusOf(r, { clipboardOnly: lastDeliveryCtx.clipboardOnly === true, target: currentTarget() })
+    if (r.error) lastDeliveryCtx.error = r.error
+    dirtySinceSend = false
+    // The send bar tells what happened; the status line only repeats a failure.
+    setStatus(r.ok ? '' : r.message, !r.ok)
     if (r.targetExpired) {
       // The picked window closed: drop it from the menu and make the user choose again (or the clipboard).
-      const gone = chosenTarget?.hwnd
-      if (initData && gone) initData.candidates = (initData.candidates ?? []).filter((c) => c.hwnd !== gone)
+      const gone = chosenTarget?.identity?.hwnd
+      if (gone) goneHwnds.add(gone)
       chosenTarget = null
       mustPickTarget = true
-      targetNote = t('editor.target.expiredNote')
       showTarget()
       openTargetMenu()
-    } else if (r.ok && r.delivered === 'clipboard') {
-      // nothing was pasted anywhere: keep the editor open so the user sees what happened
-      targetNote = t('editor.target.clipboardNote')
-      showTarget()
     }
     // The editor stays open after a send (also a pasted one): resend, another destination or copy in place.
   } catch (err) {
+    lastDelivery = { sendId: '', reached: [], stoppedAt: { step: 'saved', reason: 'error' } }
+    lastDeliveryCtx = { ...lastDeliveryCtx, error: errText(err) }
+    dirtySinceSend = false
     setStatus(t('editor.status.sendFailed', { error: errText(err) }), true)
   } finally {
+    sending = false
     busy = false
+    renderSendbar()
   }
 }
 
@@ -1605,117 +1711,185 @@ function sttOutcome(): SttOutcome {
   return transcript ? 'ok' : 'failed'
 }
 
-/**
- * Codex review F12: the recording has no transcript (recognition failed). Ask before sending instead of
- * reporting success without the spoken instructions. Enter = try again, Esc = cancel.
- */
-function askTranscriptFailure(): Promise<TranscriptChoice> {
-  return new Promise((resolve) => {
-    const box = document.createElement('div')
-    box.id = 'stt-choice'
-    box.className = 'choice'
-    box.setAttribute('role', 'alertdialog')
-    const msg = document.createElement('p')
-    msg.textContent = t('editor.sttChoice.message')
-    const row = document.createElement('div')
-    row.className = 'choice-buttons'
-    const done = (c: TranscriptChoice): void => {
-      window.removeEventListener('keydown', onKey, true)
-      box.remove()
-      resolve(c)
-    }
-    const button = (id: string, label: string, choice: TranscriptChoice, primary = false): HTMLButtonElement => {
-      const b = document.createElement('button')
-      b.id = id
-      b.type = 'button'
-      b.textContent = label
-      if (primary) b.className = 'primary'
-      b.addEventListener('click', () => done(choice))
-      return b
-    }
-    const retry = button('stt-retry', t('editor.sttChoice.retry'), 'retry', true)
-    row.append(retry, button('stt-image', t('editor.sttChoice.imageOnly'), 'image'), button('stt-cancel', t('editor.sttChoice.cancel'), 'cancel'))
-    box.append(msg, row)
-    // Capture phase: Esc must cancel this question, not close the editor.
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel') }
-      else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); e.stopPropagation(); done('retry') }
-    }
-    window.addEventListener('keydown', onKey, true)
-    document.body.append(box)
-    retry.focus()
-  })
-}
-
 /** Run speech recognition again on the current recording (after a failure). */
 async function retryTranscription(): Promise<void> {
-  if (!audioBytes) return
+  if (!audioBytes || recTask) return
   const task = transcribeAudio(audioBytes.slice().buffer as ArrayBuffer, audioStartMs, recGen)
   recTask = task
+  renderSendbar()
   try {
     await task
   } finally {
     if (recTask === task) recTask = null
+    renderSendbar()
   }
 }
 
-function methodHint(m: AgentTarget['method']): string {
-  return m === 'clipboard' ? t('editor.target.hintClipboard') : t('editor.target.hintPaste')
+// ---------- the send bar: what will be sent, then what main could confirm ----------
+
+/** The last send's delivery state (null before the first send) and how to read it. */
+let lastDelivery: DeliveryStatus | null = null
+let lastDeliveryCtx: DeliveryContext = {}
+/** Something 보내기 would send changed after the last send: the bar shows the summary again. */
+let dirtySinceSend = false
+/** 보내기 is between "deliver" and its result. */
+let sending = false
+let lastSentWithoutVoice = false
+
+function voiceState(): PreflightReport['voice'] {
+  if (active || startingMic) return 'recording'
+  if (transcribing || recTask) return 'transcribing'
+  if (!audioBytes) return 'none'
+  return transcript ? 'ready' : 'failed'
 }
 
-// ---------- send target (detected, or picked from the Ctrl+T menu for this send only) ----------
+const currentPreflight = (): PreflightReport => preflight(init !== null, annotations.length, memoInput.value, voiceState())
+
+function renderSendbar(): void {
+  const delivery = sending || (lastDelivery !== null && !dirtySinceSend)
+  summaryEl.hidden = delivery
+  deliveryEl.hidden = !delivery
+  if (delivery) renderDelivery()
+  else renderSummary()
+}
+
+function renderSummary(): void {
+  const r = currentPreflight()
+  summaryText.textContent = summaryParts(r, t).join(' · ')
+  voiceMissingEl.hidden = !voiceMissing(r)
+  voiceLinksBtn.hidden = !(r.voice === 'ready' && transcript !== null && transcript.segments.length > 0)
+  summaryChanged.hidden = !(lastDelivery && dirtySinceSend)
+}
+
+function renderDelivery(): void {
+  const s = sending ? null : lastDelivery
+  if (!s) {
+    stepsEl.replaceChildren()
+    deliveryEl.dataset.tone = 'wait'
+    deliveryHeadline.textContent = t('editor.delivery.sending')
+    deliveryDetail.textContent = ''
+    for (const b of Object.values(actionBtns)) {
+      b.disabled = true
+      b.classList.remove('primary-action')
+    }
+    actionBtns.confirm.hidden = true
+    actionBtns.resend.hidden = false
+    return
+  }
+  const v = deliveryView(s, lastDeliveryCtx, t)
+  stepsEl.replaceChildren(...v.steps.map((st) => {
+    const li = document.createElement('li')
+    li.textContent = st.label
+    li.dataset.step = st.step
+    if (st.state === 'stopped') li.className = 'stopped'
+    return li
+  }))
+  deliveryEl.dataset.tone = v.tone
+  deliveryHeadline.textContent = v.headline
+  deliveryDetail.textContent = v.detail
+  for (const [k, b] of Object.entries(actionBtns) as [DeliveryAction, HTMLButtonElement][]) {
+    b.disabled = false
+    b.classList.toggle('primary-action', k === v.primary)
+  }
+  actionBtns.confirm.hidden = v.primary !== 'confirm' // only after a title change
+  actionBtns.resend.hidden = v.primary === 'confirm' // there a resend goes to that window too: one button, not two
+}
+
+/** Anything 보내기 would send changed (annotations, links, memo, recording). */
+function contentChanged(): void {
+  if (lastDelivery && !sending) dirtySinceSend = true
+  renderSendbar()
+}
+
+function flashSendbar(): void {
+  sendBar.classList.remove('flash')
+  void sendBar.offsetWidth // restart the animation
+  sendBar.classList.add('flash')
+}
+
+window.backseat.editor.onDeliveryUpdate?.((upd) => {
+  const merged = mergeUpdate(lastDelivery, upd)
+  if (!merged) return
+  lastDelivery = merged
+  // Edited since that send: the bar shows the summary, so say it on the status line instead.
+  if (dirtySinceSend) setStatus(deliveryView(merged, lastDeliveryCtx, t).headline)
+  renderSendbar()
+})
+
+memoInput.addEventListener('input', contentChanged)
+voiceLinksBtn.addEventListener('click', () => {
+  if (!timeline.isOpen) timeline.toggle()
+  syncToolbar()
+})
+byId('stt-retry').addEventListener('click', () => void retryTranscription())
+byId('stt-image').addEventListener('click', () => void send({ withoutVoice: true }))
+// 다시 보내기 repeats the last choice: a send the user made without its failed voice part stays without it.
+actionBtns.resend.addEventListener('click', () => void send({ withoutVoice: lastSentWithoutVoice }))
+// The title of the target changed (another tab or chat?): the user says it is the right window, once.
+actionBtns.confirm.addEventListener('click', () => void send({ withoutVoice: lastSentWithoutVoice, confirmTarget: true }))
+actionBtns.retarget.addEventListener('click', () => openTargetMenu())
+actionBtns.copy.addEventListener('click', () => void copy())
+byId('close-editor').addEventListener('click', () => window.backseat.editor.close())
+newCaptureBtn.addEventListener('click', () => {
+  window.backseat.editor.newCapture?.()
+})
+for (const b of [...Object.values(actionBtns), byId('stt-retry'), byId('stt-image'), voiceLinksBtn]) {
+  b.addEventListener('mousedown', (e) => e.preventDefault()) // an open text box keeps the focus
+}
+
+// ---------- send target: the chip, and the menu to pick another window for the next sends ----------
 
 let initData: EditorInit | null = null // the init payload as received (`init` is set once the image is drawn)
-/** The window picked in the target menu; null = the automatic / pinned target main detected. */
-let chosenTarget: AgentTarget | null = null
+/** Candidates as main describes them (editor.targets(), phase 2); null = derived from initData.candidates. */
+let targetViews: SendTargetView[] | null = null
+/** The row picked in the target menu; null = the automatic / pinned target main chose. */
+let chosenTarget: SendTargetView | null = null
 /** State of the "pin as default" checkbox. */
 let pinChecked = false
-/** One-off message replacing the target label (e.g. after a clipboard-only send). */
-let targetNote = ''
-/** The picked window closed: 전송 waits until the user picks again (never falls back to another window). */
+/** The picked window closed: 보내기 waits until the user picks again (never falls back to another window). */
 let mustPickTarget = false
 
 /** The target menu's last row: write the package and copy it, paste nowhere. */
-function clipboardOnlyTarget(): AgentTarget {
-  return { kind: 'unknown', label: t('editor.target.clipboardOnly'), hwnd: 0, title: '', process: '', method: 'clipboard', confidence: 1 }
+function clipboardOnlyView(): SendTargetView {
+  return { source: 'picked', label: t('editor.target.clipboardOnly'), estimated: false, method: 'clipboard' }
 }
 
-function isClipboardOnly(tg: AgentTarget | null): boolean {
-  return tg !== null && tg.hwnd === 0 && tg.method === 'clipboard'
+const isClipboardOnly = (v: SendTargetView | null): boolean => v !== null && v.method === 'clipboard' && !v.identity?.hwnd
+
+/** The target came from the user's pinned default. */
+const startPinned = (): boolean => initData?.targetPinned === true || initData?.sendTarget?.source === 'pinned'
+
+/** Where 보내기 goes right now. */
+function currentTarget(): SendTargetView | null {
+  return chosenTarget ?? (initData ? initialTarget(initData) : null)
 }
 
 function showTarget(): void {
   const label = targetBtn.querySelector<HTMLElement>('.tb-label')
-  const hint = targetBtn.querySelector<HTMLElement>('.hint')
-  if (!label || !hint) return
-  const target = chosenTarget ?? initData?.target ?? null
-  const menuTitle = hotkeys.label('target')
-  if (targetNote) {
-    label.textContent = targetNote
-    hint.textContent = ''
-    targetBtn.title = menuTitle
-    return
-  }
-  if (!target) {
-    label.textContent = t('editor.target.none')
-    hint.textContent = ''
-    targetBtn.title = menuTitle
-    return
-  }
-  label.textContent = t(
-    chosenTarget ? 'editor.target.labelChosen' : initData?.targetPinned ? 'editor.target.labelPinned' : 'editor.target.label',
-    { label: target.label }
-  )
-  hint.textContent = methodHint(target.method)
-  targetBtn.title = isClipboardOnly(target) ? menuTitle : `${menuTitle}\n${target.title} (${target.process})`
+  const state = targetBtn.querySelector<HTMLElement>('.tb-state')
+  if (!label || !state) return
+  const v = currentTarget()
+  const chip = chipView(v, t, { expired: mustPickTarget })
+  label.textContent = chip.label
+  state.textContent = chip.state
+  targetBtn.dataset.tone = chip.tone
+  const lines = [hotkeys.label('target')]
+  if (chip.tone === 'none') lines.unshift(t('editor.chip.noneTip'))
+  const id = v?.identity
+  if (id?.title && !mustPickTarget) lines.push(`${id.title}${id.process ? ` (${id.process})` : ''}`)
+  targetBtn.title = lines.join('\n')
+  targetBtn.setAttribute('aria-label', [chip.label, chip.state].filter(Boolean).join(' · '))
+  requestAnimationFrame(fitToolbar) // the chip's width changed
 }
 
-/** What 전송 passes to the main process: the picked window and / or a changed pin state. */
-function sendOptions(): SendOptions {
+/** What 보내기 passes to the main process: the picked window and / or a changed pin state. */
+function sendOptions(extra: SendExtra = {}): SendOptions {
   const o: SendOptions = { pressEnter: false }
   if (isClipboardOnly(chosenTarget)) o.clipboardOnly = true
-  else if (chosenTarget) o.targetHwnd = chosenTarget.hwnd
-  if (pinChecked !== (initData?.targetPinned === true)) o.pinTarget = pinChecked
+  else if (chosenTarget?.identity?.hwnd) o.targetHwnd = chosenTarget.identity.hwnd
+  if (pinChecked !== startPinned()) o.pinTarget = pinChecked
+  if (extra.withoutVoice) o.withoutVoice = true
+  if (extra.confirmTarget) o.confirmTarget = true
   return o
 }
 
@@ -1732,16 +1906,31 @@ function kindName(k: AgentKind): string {
     case 'unknown': return t('editor.target.kindUnknown')
   }
 }
-function kindChip(tg: AgentTarget): string {
-  if (tg.kind === 'chat') return /^slack/i.test(tg.label) ? 'Slack' : /^discord/i.test(tg.label) ? 'Discord' : kindName('chat')
-  return kindName(tg.kind)
+function kindChip(v: SendTargetView): string {
+  const k = v.kind ?? 'unknown'
+  if (k === 'chat') return /^slack/i.test(v.label) ? 'Slack' : /^discord/i.test(v.label) ? 'Discord' : kindName('chat')
+  return kindName(k)
 }
-function methodRowHint(m: AgentTarget['method']): string {
+function methodRowHint(m: SendTargetView['method']): string {
   switch (m) {
-    case 'paste-path': return t('editor.target.hintPastePath')
+    case 'paste-path':
+    case 'mcp':
+      return t('editor.target.hintPastePath')
     case 'paste-image': return t('editor.target.hintPasteImage')
     case 'clipboard': return t('editor.target.hintClipboard')
   }
+}
+
+/** editor.targets() answers [the current target, ...other windows]; the menu's first row already is the current one. */
+const candidatesOf = (views: SendTargetView[]): SendTargetView[] => views.slice(1)
+
+/** Picked windows that turned out closed: not offered again in this editor. */
+const goneHwnds = new Set<number>()
+
+/** Other windows the user may pick, front-most first. */
+function candidateViews(): SendTargetView[] {
+  const views = targetViews ?? (initData?.candidates ?? []).map((c: AgentTarget) => viewFromAgent(c, 'picked'))
+  return views.filter((v) => v.identity?.hwnd && !goneHwnds.has(v.identity.hwnd))
 }
 
 const targetMenu = document.createElement('div')
@@ -1749,7 +1938,7 @@ targetMenu.id = 'target-menu'
 targetMenu.hidden = true
 targetMenu.setAttribute('role', 'listbox')
 document.body.append(targetMenu) // its aria-label is set in the init handler
-let menuRows: { el: HTMLElement; target: AgentTarget | null }[] = []
+let menuRows: { el: HTMLElement; target: SendTargetView | null }[] = []
 let menuActive = 0
 
 const targetMenuOpen = (): boolean => !targetMenu.hidden
@@ -1763,8 +1952,7 @@ function setMenuActive(i: number): void {
 function pickMenuRow(i: number): void {
   const row = menuRows[i]
   if (!row) return
-  chosenTarget = row.target
-  targetNote = ''
+  chosenTarget = row.target && !isClipboardOnly(row.target) ? { ...row.target, source: 'picked', estimated: false } : row.target
   mustPickTarget = false
   closeTargetMenu()
   showTarget()
@@ -1796,16 +1984,17 @@ function onMenuKey(e: KeyboardEvent): void {
   else if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement)) { stop(); pickMenuRow(menuActive) }
 }
 
-function openTargetMenu(): void {
+/** refresh: ask main for the windows open now and rebuild the menu with them (it opens at once with the last list). */
+function openTargetMenu(refresh = true): void {
   if (!initData) return
   commitPendingText() // the menu and an open text box would fight over the keyboard
   picker.close()
-  const detected = initData.target
-  const cands = initData.candidates ?? []
+  closeMoreMenu()
+  const auto = initialTarget(initData)
   const list = document.createElement('div')
   list.className = 'tm-list'
   menuRows = []
-  const addRow = (tg: AgentTarget | null, chip: string, agent: boolean, text: string, hint: string, current: boolean): void => {
+  const addRow = (tg: SendTargetView | null, chip: string, agent: boolean, text: string, hint: string, current: boolean): void => {
     const el = document.createElement('div')
     el.className = 'tm-item'
     el.setAttribute('role', 'option')
@@ -1830,28 +2019,31 @@ function openTargetMenu(): void {
     menuRows.push({ el, target: tg })
     list.append(el)
   }
-  const pinned = initData.targetPinned === true
+  const pinned = startPinned()
+  const autoChip = chipView(auto, t)
   addRow(
     null, pinned ? t('editor.target.chipPinned') : t('editor.target.chipAuto'), true,
-    detected
-      ? t(pinned ? 'editor.target.rowPinned' : 'editor.target.rowAuto', { label: detected.label })
+    auto && auto.source !== 'none'
+      ? t(pinned ? 'editor.target.rowPinned' : 'editor.target.rowAuto', { label: autoChip.label })
       : t('editor.target.rowAutoNone'),
-    detected ? methodRowHint(detected.method) : '', chosenTarget === null
+    auto && auto.source !== 'none' ? autoChip.state || methodRowHint(auto.method) : '', chosenTarget === null
   )
   let sepDone = false
-  for (const tg of cands) {
-    if (!sepDone && tg.kind === 'unknown') {
+  for (const v of candidateViews()) {
+    if (!sepDone && (v.kind ?? 'unknown') === 'unknown') {
       sepDone = true
       const sep = document.createElement('div')
       sep.className = 'tm-sep'
       list.append(sep)
     }
-    addRow(tg, kindChip(tg), tg.kind !== 'unknown', tg.title.slice(0, 40) || tg.process, methodRowHint(tg.method), chosenTarget?.hwnd === tg.hwnd)
+    const id = v.identity
+    addRow(v, kindChip(v), (v.kind ?? 'unknown') !== 'unknown', id?.title.slice(0, 40) || id?.process || v.label, methodRowHint(v.method),
+      chosenTarget?.identity?.hwnd !== undefined && chosenTarget.identity.hwnd === id?.hwnd)
   }
   const clipSep = document.createElement('div')
   clipSep.className = 'tm-sep'
   list.append(clipSep)
-  const clip = clipboardOnlyTarget()
+  const clip = clipboardOnlyView()
   addRow(clip, t('editor.target.chipClipboard'), false, clip.label, methodRowHint('clipboard'), isClipboardOnly(chosenTarget))
   const foot = document.createElement('div')
   foot.className = 'tm-foot'
@@ -1868,20 +2060,32 @@ function openTargetMenu(): void {
   targetMenu.hidden = false
   targetMenu.style.visibility = 'hidden'
   const a = targetBtn.getBoundingClientRect()
-  const bar = targetBar.getBoundingClientRect()
   const vw = document.documentElement.clientWidth
   const vh = document.documentElement.clientHeight
-  const top = Math.round(bar.bottom + 2)
+  const top = Math.round(toolbar.getBoundingClientRect().bottom + 2)
   list.style.maxHeight = `${Math.max(80, vh - top - 8 - 48)}px` // keep room for the footer row
   const w = targetMenu.offsetWidth
-  targetMenu.style.left = `${Math.round(Math.max(8, Math.min(a.left, vw - w - 8)))}px`
+  targetMenu.style.left = `${Math.round(Math.max(8, Math.min(a.right - w, vw - w - 8)))}px` // right-aligned under the chip
   targetMenu.style.top = `${top}px`
   targetMenu.style.visibility = ''
   targetBtn.setAttribute('aria-expanded', 'true')
-  setMenuActive(Math.max(0, menuRows.findIndex((r) => (r.target?.hwnd ?? null) === (chosenTarget?.hwnd ?? null))))
+  const current = isClipboardOnly(chosenTarget)
+    ? menuRows.length - 1
+    : menuRows.findIndex((r) => (r.target?.identity?.hwnd ?? null) === (chosenTarget?.identity?.hwnd ?? null))
+  setMenuActive(Math.max(0, current))
   document.addEventListener('pointerdown', onMenuPointerDown, true)
   window.addEventListener('keydown', onMenuKey, true)
   window.addEventListener('resize', closeTargetMenu)
+  if (refresh && window.backseat.editor.targets) {
+    window.backseat.editor.targets().then((views) => {
+      targetViews = candidatesOf(views)
+      if (!targetMenuOpen()) return
+      const active = menuActive
+      closeTargetMenu()
+      openTargetMenu(false)
+      if (active < menuRows.length) setMenuActive(active)
+    }, () => undefined)
+  }
 }
 
 function toggleTargetMenu(): void {
@@ -2122,10 +2326,17 @@ const mmss = (ms: number): string => {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
+const micText = micBtn.querySelector<HTMLElement>('.mic-text')
+
 function updateMicUi(): void {
+  const wasRecording = micBtn.classList.contains('recording')
   micBtn.classList.toggle('recording', active !== null)
-  micBtn.textContent = active ? t('editor.mic.stop', { time: mmss(performance.now() - active.startedPerf) }) : t('editor.mic.start')
-  fitToolbar()
+  if (micText) micText.textContent = active ? t('editor.mic.stop', { time: mmss(performance.now() - active.startedPerf) }) : t('editor.mic.label')
+  micBtn.title = hotkeys.label('mic')
+  if (wasRecording !== (active !== null)) {
+    fitToolbar() // the button got wider / narrower
+    renderSendbar()
+  }
 }
 
 function releaseMic(a: ActiveRecording): void {
@@ -2191,7 +2402,11 @@ function stopRecording(): Promise<void> {
     updateMicUi()
     const task = finishRecording(a)
     recTask = task
-    void task.finally(() => { if (recTask === task) recTask = null })
+    renderSendbar() // "음성을 글로 바꾸는 중"
+    void task.finally(() => {
+      if (recTask === task) recTask = null
+      renderSendbar()
+    })
   }
   return recTask ?? Promise.resolve()
 }
@@ -2297,6 +2512,7 @@ async function transcribeAudio(buf: ArrayBuffer, startMs: number, gen: number): 
     if (gen === recGen) setStatus(t('editor.mic.transcribeFailed', { error: errText(err) }), true)
   } finally {
     if (gen === recGen) transcribing = false
+    renderSendbar()
   }
 }
 
@@ -2305,14 +2521,114 @@ window.addEventListener('pagehide', () => { if (active) releaseMic(active) })
 
 // ---------- toolbar & keyboard ----------
 
+/** Copy the working values into the remembered options of `tl` (the tool that owns them). */
+function storeToolVars(tl: Tool): void {
+  switch (tl) {
+    case 'pen':
+    case 'arrow':
+    case 'rect':
+      prefs[tl] = { color, width: widthCss }
+      break
+    case 'badge': prefs.badge = { color, size: badgeSizeCss }; break
+    case 'blur': prefs.blur = { strength: blurCss }; break
+    case 'text':
+      prefs.text = {
+        color, font: fontFamily ?? null, size: fontSizeCss, style: textStyle, bold: textBold ?? null, italic: textItalic,
+        bg: textBg ?? null, bgOpacity: textBgOpacity ?? null, outline: textOutline ?? null, shadow: textShadow
+      }
+      break
+    case 'crop':
+    case 'eraser':
+      break
+  }
+}
+
+/** Load `tl`'s remembered options into the working values. */
+function loadToolVars(tl: Tool): void {
+  switch (tl) {
+    case 'pen':
+    case 'arrow':
+    case 'rect':
+      color = prefs[tl].color
+      widthCss = prefs[tl].width
+      break
+    case 'badge':
+      color = prefs.badge.color
+      badgeSizeCss = prefs.badge.size
+      break
+    case 'blur': blurCss = prefs.blur.strength; break
+    case 'text': {
+      const p = prefs.text
+      color = p.color
+      fontFamily = p.font ?? undefined
+      fontSizeCss = p.size
+      textStyle = p.style
+      textBold = p.bold ?? undefined
+      textItalic = p.italic
+      textBg = p.bg ?? undefined
+      textBgOpacity = p.bgOpacity ?? undefined
+      textOutline = p.outline ?? undefined
+      textShadow = p.shadow
+      void loadFontCss(fontFamily)
+      break
+    }
+    case 'crop':
+    case 'eraser':
+      break
+  }
+}
+
+/** Remember the selected tool's options (and the tool itself) now; a storage that refuses only means nothing is remembered. */
+function persistPrefs(): void {
+  storeToolVars(tool)
+  if (isDrawTool(tool)) prefs.tool = tool
+  savePrefs(prefsStore(), prefs, prefsKey)
+}
+
 function setTool(next: Tool): void {
+  closeMoreMenu()
+  if (next === tool) { syncToolbar(); return }
+  if (next !== 'text') commitPendingText() // its style belongs to the text tool
+  if (tool === 'crop') cancelPendingCrop()
+  storeToolVars(tool)
   tool = next
+  loadToolVars(next)
+  if (next !== 'text') textDetailsOpen = false // 세부 is folded again the next time the text tool is picked
+  if (isDrawTool(next)) {
+    prefs.tool = next
+    savePrefs(prefsStore(), prefs, prefsKey)
+  }
   syncToolbar()
 }
 
-/** Reflect the text props into toolbar row 2's B / I and the text bar; show the bar only for the text tool / an open box. */
+/** Which [data-opt] items of row 2 each tool shows. */
+const TOOL_OPTS: Record<Tool, readonly string[]> = {
+  pen: ['color', 'width'],
+  arrow: ['color', 'width'],
+  rect: ['color', 'width'],
+  badge: ['color', 'badge-size'],
+  blur: ['blur-strength'],
+  text: ['color', 'font', 'effect', 'text-more'],
+  crop: ['crop'],
+  eraser: ['eraser']
+}
+
+const toolName = (tl: Tool): string => t(`editor.tool.${tl}`)
+const rowToolBtn = (tl: Tool): HTMLButtonElement | null => toolbar.querySelector<HTMLButtonElement>(`#tools [data-tool="${tl}"]`)
+const moreToolEl = moreBtn.querySelector<HTMLElement>('.more-tool')
+
+function toggleTextDetails(open = !textDetailsOpen): void {
+  textDetailsOpen = open
+  syncTextBar()
+  textSession?.box.focus()
+}
+
+/** Reflect the text props into the text options and the 세부 row; the row shows only when opened and the text tool is in use. */
 function syncTextBar(): void {
-  const show = tool === 'text' || textSession !== null || textbarPin
+  const show = textDetailsOpen && (tool === 'text' || textSession !== null || textbarPin)
+  textMoreBtn.setAttribute('aria-expanded', String(show))
+  const caret = textMoreBtn.querySelector('.caret')
+  if (caret) caret.textContent = show ? '▾' : '▸'
   if (textBar.hidden === show) {
     textBar.hidden = !show
     layout() // the stage got shorter / taller
@@ -2338,12 +2654,34 @@ function syncTextBar(): void {
   dimGroup(outlineBtn, textStyle !== 'outline')
 }
 
+function syncBadgeNext(): void {
+  badgeNext.textContent = t('editor.opt.badgeNext', { n: nextBadgeNo() })
+}
+
 function syncToolbar(): void {
-  toolBtns.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool))
+  const shown = new Set(TOOL_OPTS[tool])
+  for (const el of optEls) el.hidden = !shown.has(el.dataset.opt ?? '')
+  toolBtns.forEach((b) => {
+    const on = b.dataset.tool === tool
+    if (b.classList.contains('mi')) b.setAttribute('aria-checked', String(on))
+    else b.classList.toggle('active', on)
+  })
+  // ⋯ names the selected tool when it lives there (crop, eraser, or a tool the row had no room for)
+  const btn = rowToolBtn(tool)
+  const inMenu = !btn || btn.classList.contains('collapsed')
+  moreBtn.classList.toggle('active', inMenu)
+  if (moreToolEl && moreToolEl.textContent !== (inMenu ? toolName(tool) : '')) {
+    moreToolEl.textContent = inMenu ? toolName(tool) : ''
+    fitToolbar()
+  }
   setColorButton(colorBtn, color)
+  setColorTitle(colorBtn, t('editor.color.titleFor', { tool: toolName(tool) })) // each tool has its own colour
   widthInput.value = String(widthCss)
   widthDot.style.width = widthDot.style.height = `${widthCss}px`
   widthDot.style.background = color
+  badgeSizeBtns.forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.badgeSize) === badgeSizeCss)))
+  blurBtns.forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.blur) === blurCss)))
+  syncBadgeNext()
   fontSelect.value = fontFamily ?? ''
   sizeSelect.value = String(fontSizeCss)
   styleBtns.forEach((b) => {
@@ -2351,15 +2689,23 @@ function syncToolbar(): void {
     b.classList.toggle('active', on)
     b.setAttribute('aria-checked', String(on))
   })
+  syncCropButtons()
   syncTextBar()
   wrap.classList.toggle('text-tool', tool === 'text')
   wrap.classList.toggle('eraser-tool', tool === 'eraser')
   if (tool !== 'text') wrap.classList.remove('over-text')
   wrap.classList.toggle('crop-tool', tool === 'crop')
-  timelineBtn.classList.toggle('active', timeline.isOpen)
+  timelineBtn.setAttribute('aria-checked', String(timeline.isOpen))
+  fitRow2()
 }
 
-compareBtn.addEventListener('click', () => setCompare(!cmpOn))
+/** Row 2 in a long language: the effect buttons drop their words (the sample glyph and tooltip stay). */
+function fitRow2(): void {
+  toolbar2.classList.remove('tight')
+  if (toolbar2.scrollWidth > toolbar2.clientWidth) toolbar2.classList.add('tight')
+}
+
+compareBtn.addEventListener('click', () => setCompare(false))
 compareModeBtns.forEach((b) => b.addEventListener('click', () => {
   const m = b.dataset.cmpMode
   if (m === 'overlay' || m === 'wipe' || m === 'diff') setCompareMode(m)
@@ -2374,20 +2720,145 @@ wipeInput.addEventListener('input', () => {
 })
 compareBar.addEventListener('mousedown', (e) => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault() })
 
-toolBtns.forEach((b) => b.addEventListener('click', () => setTool(isTool(b.dataset.tool) ? b.dataset.tool : 'pen')))
-/** Pen / arrow / text colour (one shared colour). The open text box follows. */
+/** The selected tool's colour. The open text box follows. */
 function setColor(c: string, refocus = false): void {
   color = c
   refreshTextSession(refocus)
 }
 function setWidth(v: number): void {
-  widthCss = Math.min(24, Math.max(1, Math.round(v)))
+  widthCss = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(v)))
   syncToolbar()
+  persistPrefs()
 }
 widthInput.addEventListener('input', () => setWidth(Number(widthInput.value) || widthCss))
 widthInput.addEventListener('change', () => widthInput.blur())
+function setBadgeSize(v: number): void {
+  badgeSizeCss = nearest(v, BADGE_SIZES)
+  syncToolbar()
+  persistPrefs()
+}
+function setBlurStrength(v: number): void {
+  blurCss = nearest(v, BLUR_STRENGTHS)
+  syncToolbar()
+  persistPrefs()
+}
+badgeSizeBtns.forEach((b) => b.addEventListener('click', () => setBadgeSize(Number(b.dataset.badgeSize))))
+blurBtns.forEach((b) => b.addEventListener('click', () => setBlurStrength(Number(b.dataset.blur))))
 
-/** Push the module-level text props (colour, effects; not font / size) into the open box and, usually, hand focus back to it. */
+/** [ / ]: the selected tool's size option one step down / up. false = not applicable (the key goes on). */
+function stepOption(dir: -1 | 1): boolean {
+  const step = <T extends number>(choices: readonly T[], cur: number): T => {
+    const i = choices.indexOf(nearest(cur, choices))
+    return choices[Math.min(choices.length - 1, Math.max(0, i + dir))]
+  }
+  switch (tool) {
+    case 'pen':
+    case 'arrow':
+    case 'rect':
+      setWidth(widthCss + dir)
+      return true
+    case 'badge': setBadgeSize(step(BADGE_SIZES, badgeSizeCss)); return true
+    case 'blur': setBlurStrength(step(BLUR_STRENGTHS, blurCss)); return true
+    case 'text':
+      fontSizeCss = step(TEXT_SIZES, fontSizeCss)
+      textPropChanged(sizeSelect)
+      return true
+    case 'crop':
+    case 'eraser':
+      return false
+  }
+}
+
+textMoreBtn.addEventListener('click', () => toggleTextDetails())
+byId('text-more-close').addEventListener('click', () => toggleTextDetails(false))
+cropApplyBtn.addEventListener('click', applyPendingCrop)
+cropCancelBtn.addEventListener('click', cancelPendingCrop)
+
+// ---------- ⋯ menu: crop, eraser, views, exports (and row-1 tools the row had no room for) ----------
+
+const moreItems = (): HTMLButtonElement[] =>
+  Array.from(moreMenu.querySelectorAll<HTMLButtonElement>('.mi')).filter((b) => !b.hidden && !b.disabled)
+let moreActive = -1
+
+const moreMenuOpen = (): boolean => !moreMenu.hidden
+
+function setMoreActive(i: number): void {
+  const items = moreItems()
+  if (!items.length) return
+  moreActive = (i + items.length) % items.length
+  items.forEach((b, k) => b.classList.toggle('active', k === moreActive))
+}
+
+function openMoreMenu(): void {
+  commitPendingText()
+  closeTargetMenu()
+  picker.close()
+  moreMenu.querySelectorAll<HTMLElement>('.mi[data-command]').forEach((mi) => {
+    const k = mi.querySelector('kbd')
+    if (k) k.textContent = hotkeys.keyLabel(mi.dataset.command ?? '')
+  })
+  compareItem.disabled = compareImg === null
+  compareItem.title = compareImg ? '' : t('editor.compare.none', { item: t('tray.recaptureLast') })
+  compareItem.setAttribute('aria-checked', String(cmpOn))
+  timelineBtn.setAttribute('aria-checked', String(timeline.isOpen))
+  pinItem.setAttribute('aria-checked', String(pinned))
+  syncToolbar()
+  moreActive = -1
+  moreMenu.querySelectorAll('.mi.active').forEach((b) => b.classList.remove('active'))
+  moreMenu.hidden = false
+  moreMenu.style.visibility = 'hidden'
+  const a = moreBtn.getBoundingClientRect()
+  const vw = document.documentElement.clientWidth
+  const w = moreMenu.offsetWidth
+  moreMenu.style.left = `${Math.round(Math.max(8, Math.min(a.left, vw - w - 8)))}px`
+  moreMenu.style.top = `${Math.round(toolbar.getBoundingClientRect().bottom + 2)}px`
+  moreMenu.style.visibility = ''
+  moreBtn.setAttribute('aria-expanded', 'true')
+  document.addEventListener('pointerdown', onMorePointerDown, true)
+  window.addEventListener('keydown', onMoreKey, true)
+  window.addEventListener('resize', closeMoreMenu)
+}
+
+function closeMoreMenu(): void {
+  if (!moreMenuOpen()) return
+  moreMenu.hidden = true
+  moreBtn.setAttribute('aria-expanded', 'false')
+  document.removeEventListener('pointerdown', onMorePointerDown, true)
+  window.removeEventListener('keydown', onMoreKey, true)
+  window.removeEventListener('resize', closeMoreMenu)
+}
+
+function onMorePointerDown(e: PointerEvent): void {
+  const n = e.target as Node | null
+  if (n && (moreMenu.contains(n) || moreBtn.contains(n))) return
+  closeMoreMenu()
+}
+
+/** Arrows move, Enter runs the item, Esc closes; any other key closes the menu and does its usual job. */
+function onMoreKey(e: KeyboardEvent): void {
+  if (e.isComposing) return
+  const stop = (): void => { e.preventDefault(); e.stopImmediatePropagation() }
+  if (e.key === 'Escape') { stop(); closeMoreMenu() }
+  else if (e.key === 'ArrowDown') { stop(); setMoreActive(moreActive + 1) }
+  else if (e.key === 'ArrowUp') { stop(); setMoreActive(moreActive < 0 ? -1 : moreActive - 1) }
+  else if (e.key === 'Enter') {
+    stop()
+    const item = moreItems()[moreActive]
+    if (item) item.click()
+    else closeMoreMenu()
+  } else closeMoreMenu()
+}
+
+moreBtn.addEventListener('click', () => (moreMenuOpen() ? closeMoreMenu() : openMoreMenu()))
+moreMenu.addEventListener('click', (e) => {
+  if (e.target instanceof Element && e.target.closest('.mi')) closeMoreMenu() // after the item's own command ran
+})
+moreMenu.addEventListener('mousedown', (e) => e.preventDefault()) // an open text box keeps the focus
+
+/**
+ * Push the module-level text props (colour, effects; not font / size) into the open box and, usually, hand focus
+ * back to it. Every option change of the selected tool comes through here, so it is also where they are remembered.
+ */
 function refreshTextSession(refocus = true): void {
   const s = textSession
   if (s) {
@@ -2402,6 +2873,7 @@ function refreshTextSession(refocus = true): void {
     styleTextBox(s)
   }
   syncToolbar()
+  persistPrefs()
   if (refocus) s?.box.focus()
 }
 
@@ -2483,7 +2955,7 @@ window.addEventListener('focus', () => { // back from the popover's native colou
   if (textSession && ae instanceof HTMLInputElement && ae.type === 'color') textSession.box.focus()
 })
 // keep focus (e.g. in the text box) when clicking toolbar buttons; selects and sliders need the mouse
-for (const bar of [byId('toolbar'), byId('toolbar2'), textBar]) {
+for (const bar of [toolbar, toolbar2, textBar]) {
   bar.addEventListener('mousedown', (e) => { if (!isNativeToolbarControl(e.target)) e.preventDefault() })
 }
 
@@ -2548,10 +3020,7 @@ function openPicker(anchor: HTMLButtonElement, title: string, value: string, onP
   })
 }
 
-colorBtn.addEventListener('click', () => openPicker(colorBtn, t('editor.color.title'), color, (c) => {
-  setColor(c, false)
-  try { localStorage.setItem(LS_COLOR, c) } catch { /* storage unavailable */ }
-}))
+colorBtn.addEventListener('click', () => openPicker(colorBtn, t('editor.color.titleFor', { tool: toolName(tool) }), color, (c) => setColor(c, false)))
 bgBtn.addEventListener('click', () => openPicker(bgBtn, t('editor.text.plateColor'), textBg ?? autoPlate(color).hex, (c) => setTextBg(c, false)))
 outlineBtn.addEventListener('click', () => openPicker(outlineBtn, t('editor.text.outlineColor'), textOutline ?? '#000000', (c) => setTextOutline(c, false)))
 
@@ -2560,6 +3029,7 @@ const hotkeys = new Hotkeys([
     id: 'send', label: () => t('editor.hotkey.send'), keys: ['Enter', 'Ctrl+Enter'],
     run: (e) => {
       if (e.code === 'Enter' && textSession) return false // Enter belongs to the open text box
+      if (e.code === 'Enter' && cropPending) { applyPendingCrop(); return } // and to a crop waiting for 적용
       void send()
     }
   },
@@ -2576,8 +3046,8 @@ const hotkeys = new Hotkeys([
   { id: 'blur', label: () => t('editor.hotkey.blur'), keys: ['KeyB'], run: () => setTool('blur') },
   { id: 'crop', label: () => t('editor.hotkey.crop'), keys: ['KeyC'], run: () => setTool('crop') },
   { id: 'eraser', label: () => t('editor.hotkey.eraser'), keys: ['KeyE'], run: () => setTool('eraser') },
-  { id: 'width-down', label: () => t('editor.hotkey.widthDown'), keys: ['BracketLeft'], run: () => setWidth(widthCss - 1) },
-  { id: 'width-up', label: () => t('editor.hotkey.widthUp'), keys: ['BracketRight'], run: () => setWidth(widthCss + 1) },
+  { id: 'width-down', label: () => t('editor.hotkey.widthDown'), keys: ['BracketLeft'], run: () => stepOption(-1) },
+  { id: 'width-up', label: () => t('editor.hotkey.widthUp'), keys: ['BracketRight'], run: () => stepOption(1) },
   { id: 'compare', label: () => t('editor.hotkey.compare'), keys: ['KeyO'], run: () => setCompare(!cmpOn) },
   { id: 'timeline', label: () => t('editor.hotkey.timeline'), keys: ['KeyL'], run: () => { timeline.toggle(); syncToolbar() } },
   { id: 'play', label: () => t('editor.hotkey.play'), keys: ['Space'], run: () => { if (!timeline.isOpen) return false; timeline.togglePlay() } },
@@ -2598,6 +3068,7 @@ const hotkeys = new Hotkeys([
       if (erasing) { endErase(false); return }
       if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first
       if (cropDrag) { endCrop(false); return }
+      if (cropPending) { cancelPendingCrop(); return }
       if (cmpOn) { setCompare(false); return }
       if (scrubT !== null) { timeline.setLive(); return }
       window.backseat.editor.close()
@@ -2607,21 +3078,72 @@ const hotkeys = new Hotkeys([
 hotkeys.install()
 hotkeys.applyTooltips() // binds the click handlers; the titles are refreshed in the init handler once the language is known
 
+/** Row-1 tools that move into ⋯ when the row has no room, least important first (request 3: arrow · number first). */
+const COLLAPSIBLE: readonly Tool[] = ['rect', 'text', 'blur', 'badge', 'pen']
+
 /**
- * Longer languages (de, fr, es, pt-BR) need a little more room than the toolbar has at its usual
- * 820 px: drop to a tighter button style only when the labels do not fit on one line.
+ * Row 1 must stay one line at any window width (the pinned window is 480 px) and in any language: first a
+ * tighter button style, then the least important items fold into ⋯ one by one. 보내기, the target chip, undo /
+ * redo and the recording control always stay.
  */
 function fitToolbar(): void {
-  const bar = byId('toolbar')
-  bar.classList.remove('tight')
-  if (bar.scrollWidth > bar.clientWidth) bar.classList.add('tight')
+  toolbar.classList.remove('tight', 'chip-compact')
+  micBtn.classList.remove('compact')
+  for (const tl of COLLAPSIBLE) rowToolBtn(tl)?.classList.remove('collapsed')
+  const overflows = (): boolean => toolbar.scrollWidth > toolbar.clientWidth
+  const cut = (el: Element | null): boolean => el !== null && el.scrollWidth > el.clientWidth + 1
+  // A cut-off destination ("Codex · Chat…", "guess · la…") may only cost the tighter style and the rectangle.
+  const chipCut = (): boolean => cut(targetBtn.querySelector('.tb-label')) || cut(targetBtn.querySelector('.tb-state'))
+  const steps: { run: () => void; forChip: boolean }[] = [
+    { run: () => toolbar.classList.add('tight'), forChip: true },
+    { run: () => rowToolBtn('rect')?.classList.add('collapsed'), forChip: true },
+    { run: () => rowToolBtn('text')?.classList.add('collapsed'), forChip: false },
+    { run: () => micBtn.classList.add('compact'), forChip: false },
+    { run: () => toolbar.classList.add('chip-compact'), forChip: false },
+    { run: () => rowToolBtn('blur')?.classList.add('collapsed'), forChip: false },
+    { run: () => rowToolBtn('badge')?.classList.add('collapsed'), forChip: false },
+    { run: () => rowToolBtn('pen')?.classList.add('collapsed'), forChip: false }
+  ]
+  const collapsed = (tl: string | undefined): boolean => rowToolBtn(tl as Tool)?.classList.contains('collapsed') === true
+  const sep = toolbar.querySelector<HTMLElement>('#tools .sep')
+  /** ⋯ names the selected tool when it is folded there; that label takes room too, so it is set before each check. */
+  const syncFolded = (): void => {
+    const btn = rowToolBtn(tool)
+    const inMenu = !btn || btn.classList.contains('collapsed')
+    moreBtn.classList.toggle('active', inMenu)
+    if (moreToolEl) moreToolEl.textContent = inMenu ? toolName(tool) : ''
+    // the separator before 텍스트 · 사각형 goes when both folded away
+    if (sep) sep.hidden = collapsed('text') && collapsed('rect')
+  }
+  for (const step of steps) {
+    syncFolded()
+    if (!overflows() && !(step.forChip && chipCut())) break
+    step.run()
+  }
+  syncFolded()
+  moreMenu.querySelectorAll<HTMLElement>('.mi.overflow').forEach((mi) => { mi.hidden = !collapsed(mi.dataset.tool) })
 }
 
 window.addEventListener('resize', () => {
   commitPendingText()
   layout()
   fitToolbar()
+  fitRow2()
 })
+// Rows that open and close (세부, comparison, timeline, send bar wrapping) change the stage: re-fit the image.
+// Row 1 and 2 re-fit whenever their width changes (window resize, pinning); the window resize event alone
+// is not reliable after a programmatic resize.
+let fitRaf = 0
+new ResizeObserver(() => {
+  cancelAnimationFrame(fitRaf)
+  fitRaf = requestAnimationFrame(() => { fitToolbar(); fitRow2() })
+}).observe(toolbar)
+let layoutRaf = 0
+new ResizeObserver(() => {
+  // next frame: resizing the canvases inside the observer callback would re-trigger observers in the same frame
+  cancelAnimationFrame(layoutRaf)
+  layoutRaf = requestAnimationFrame(() => layout())
+}).observe(stage)
 
 // ---------- init ----------
 
@@ -2634,22 +3156,28 @@ window.backseat.editor.onInit((data) => {
   hotkeys.applyTooltips()
   applyColorTitles()
   targetMenu.setAttribute('aria-label', t('editor.target.menuLabel'))
-  requestAnimationFrame(fitToolbar) // after the rest of init has set the labels
-  const localeFont = LOCALE_FONT[getLocale()]
-  if (localeFont && fontFamily === DEFAULT_FONT) fontFamily = localeFont
-  void loadFontCss(fontFamily)
+  requestAnimationFrame(() => { fitToolbar(); fitRow2() }) // after the rest of init has set the labels
+  // The last tool and its options; the text tool starts in the UI language's font. The self-test has its own key.
+  prefsKey = data.debug ? 'backseat.selftest.tools' : PREFS_KEY
+  prefs = loadPrefs(prefsStore(), defaultPrefs(LOCALE_FONT[getLocale()] ?? DEFAULT_FONT), prefsKey)
+  tool = prefs.tool
+  loadToolVars('text') // the text vars also serve a re-edited text
+  loadToolVars(tool)
+  void loadFontCss(prefs.text.font ?? undefined)
   t0 = performance.now()
   document.title = 'Backseat'
   syncToolbar()
+  updateMicUi()
   initData = data
-  pinChecked = data.targetPinned === true
+  pinChecked = startPinned()
+  mustPickTarget = data.sendTarget?.source === 'none' && data.sendTarget.unavailable !== undefined
   showTarget()
+  window.backseat.editor.targets?.().then((views) => { targetViews = candidatesOf(views) }, () => undefined)
+  newCaptureBtn.hidden = typeof window.backseat.editor.newCapture !== 'function'
   if (data.request) {
-    const q = document.createElement('span')
-    q.className = 'ask'
-    q.textContent = t('editor.target.ask', { agent: data.request.agent || t('editor.target.agentFallback'), question: data.request.question })
-    q.title = data.request.question
-    targetBar.appendChild(q)
+    askBar.textContent = t('editor.ask.label', { agent: data.request.agent || t('editor.target.agentFallback'), question: data.request.question })
+    askBar.title = data.request.question
+    askBar.hidden = false
   }
   if (data.debug) {
     // Harness hooks: inject a transcript without a microphone, inspect state (see src/main/selftest.ts).
@@ -2679,11 +3207,19 @@ window.backseat.editor.onInit((data) => {
         meta: init ? exportMeta() : null,
         tool,
         color,
+        width: widthCss,
+        badgeSize: badgeSizeCss,
+        blurStrength: blurCss,
+        fontSize: fontSizeCss,
+        textStyle,
         textBg: textBg ?? null,
         textOutline: textOutline ?? null,
+        textDetails: !textBar.hidden,
         pickerOpen: picker.isOpen(),
         targetMenuOpen: targetMenuOpen(),
+        moreMenuOpen: moreMenuOpen(),
         cropDrag: cropDrag !== null,
+        cropPending: cropPending ? { ...cropPending } : null,
         pointer: { ...pointerCounts },
         compare: { available: compareImg !== null, on: cmpOn, mode: cmpMode, diffPercent: compareImg ? diffPercent() : null }
       }),
@@ -2704,6 +3240,12 @@ window.backseat.editor.onInit((data) => {
       },
       /** A new recording whose recognition failed: same path as a real one, without the microphone (F10 / F12). */
       fakeFailedRecording: () => replaceRecording(new Blob([new Uint8Array([0])], { type: 'audio/webm' }), new Uint8Array([0]), now(), 1000),
+      /** A finished recording with this transcript, without the microphone (voice flow screenshots). */
+      fakeRecording: (tr: Transcript) => {
+        replaceRecording(new Blob([new Uint8Array([0])], { type: 'audio/webm' }), new Uint8Array([0]), tr.audioStartMs, tr.durationMs)
+        transcript = tr
+        afterChange()
+      },
       /** Drop the recording again (self-test cleanup). */
       clearRecording: () => {
         audioBytes = null
@@ -2712,8 +3254,60 @@ window.backseat.editor.onInit((data) => {
         setDoc({ annotations, links: new Map(), crop, linksRev: transcriptRev })
         afterChange()
       },
-      sttChoiceOpen: () => document.getElementById('stt-choice') !== null,
+      /** The send bar offers 다시 변환 / 음성 없이 보내기 (a recording without text). */
+      sttChoiceOpen: () => !summaryEl.hidden && !voiceMissingEl.hidden,
       busy: () => busy,
+      /** Start from the defaults (the self-test's own key is cleared; the user's key is never touched here). */
+      resetPrefs: () => {
+        try { localStorage.removeItem(prefsKey) } catch { /* storage unavailable */ }
+        prefs = defaultPrefs(LOCALE_FONT[getLocale()] ?? DEFAULT_FONT)
+        tool = prefs.tool
+        loadToolVars('text')
+        loadToolVars(tool)
+        textDetailsOpen = false
+        syncToolbar()
+      },
+      /** What the editor remembers (under the self-test's own key) and the row-1 fit. */
+      prefs: () => ({ key: prefsKey, prefs, stored: (() => { try { return localStorage.getItem(prefsKey) } catch { return null } })() }),
+      fit: () => ({
+        tight: toolbar.classList.contains('tight'),
+        collapsed: COLLAPSIBLE.filter((tl) => rowToolBtn(tl)?.classList.contains('collapsed')),
+        micCompact: micBtn.classList.contains('compact'),
+        chipCompact: toolbar.classList.contains('chip-compact')
+      }),
+      /** The send bar as the user sees it. */
+      sendbar: () => ({
+        mode: deliveryEl.hidden ? 'summary' : 'delivery',
+        summary: summaryText.textContent,
+        voiceMissing: !voiceMissingEl.hidden,
+        voiceLinks: !voiceLinksBtn.hidden,
+        changed: !summaryChanged.hidden,
+        steps: Array.from(stepsEl.children).map((li) => `${li.classList.contains('stopped') ? '✕' : '✓'}${li.textContent ?? ''}`),
+        headline: deliveryHeadline.textContent,
+        detail: deliveryDetail.textContent,
+        tone: deliveryEl.dataset.tone ?? '',
+        primary: (Object.keys(actionBtns) as DeliveryAction[]).find((k) => actionBtns[k].classList.contains('primary-action')) ?? null
+      }),
+      /** Show a delivery state as if main had answered 보내기 with it (screens for every step / stop reason). */
+      fakeDelivery: (s: DeliveryStatus, ctx: DeliveryContext = {}) => {
+        lastDelivery = s
+        lastDeliveryCtx = ctx
+        dirtySinceSend = false
+        renderSendbar()
+      },
+      /** A later delivery:update from main (e.g. fetched). */
+      deliveryUpdate: (s: DeliveryStatus) => {
+        const merged = mergeUpdate(lastDelivery, s)
+        if (merged) { lastDelivery = merged; renderSendbar() }
+        return merged !== null
+      },
+      /** Show a target chip as main would describe it. */
+      fakeTarget: (v: SendTargetView | null) => {
+        if (initData) initData.sendTarget = v ?? { source: 'none', label: '', estimated: true, method: 'clipboard' }
+        chosenTarget = null
+        mustPickTarget = false
+        showTarget()
+      },
       /** Codex review F01: how far the blurred area of video frames is from the masked / raw capture. */
       videoMaskProbe: () => videoMaskProbe(),
       payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
@@ -2726,6 +3320,7 @@ window.backseat.editor.onInit((data) => {
     init = data
     setDoc({ annotations: [], links: new Map(), crop: { x: 0, y: 0, width: data.width, height: data.height }, linksRev: transcriptRev })
     render()
+    renderSendbar() // "이미지 1"
     if (data.compare) {
       const prev = new Image()
       prev.onload = () => {

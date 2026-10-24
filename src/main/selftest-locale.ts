@@ -134,6 +134,7 @@ async function runOne(locale: Locale, root: string, report: Record<string, unkno
   }
   const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
   const sf = cap.display.scaleFactor
+  await js(`window.__backseat.resetPrefs(); true`) // the language's default text font, not what an earlier run left
   await js(`window.__backseat.addAnnotations(${JSON.stringify(sampleAnnotations(rectPx.width, rectPx.height, sf))}); true`)
   await js(`document.fonts.ready.then(() => true)`)
   await sleep(500)
@@ -146,10 +147,11 @@ async function runOne(locale: Locale, root: string, report: Record<string, unkno
     if (!loaded.includes(fam)) errors.push(`${locale}: font ${fam} was not loaded for its text annotation`)
   }
 
-  // Layout at 820 px with the text tool (all three toolbar rows) and the compare bar.
+  // Layout at 820 px with the text tool and its 세부 row open (the longest option rows) and the compare bar on.
   const size = ed.getContentSize()
   ed.setContentSize(820, Math.max(size[1], 560))
-  await js(`document.querySelector('[data-tool="text"]').click(); true`)
+  await js(`document.querySelector('[data-tool="text"]').click(); if (document.getElementById('textbar').hidden) document.getElementById('text-more').click();
+    window.__backseat.setCompare(true, 'wipe'); true`)
   await sleep(400)
   const fits = await js<Record<string, { hidden: boolean; fits: boolean; w: number; sw: number }>>(
     `(() => { const fit = (id) => { const e = document.getElementById(id); return e ? { hidden: e.hidden, fits: e.scrollWidth <= e.clientWidth, w: e.clientWidth, sw: e.scrollWidth } : null };
@@ -159,9 +161,19 @@ async function runOne(locale: Locale, root: string, report: Record<string, unkno
   for (const [id, f] of Object.entries(fits)) {
     if (f && !f.hidden && !f.fits) errors.push(`${locale}: #${id} overflows at 820 px (${f.sw} > ${f.w})`)
   }
-  if (fits.textbar?.hidden) errors.push(`${locale}: #textbar hidden with the text tool`)
+  if (fits.textbar?.hidden) errors.push(`${locale}: #textbar hidden after opening 세부`)
+  if (fits.comparebar?.hidden) errors.push(`${locale}: #comparebar hidden while comparing`)
+  r.fold = await js<unknown>(`window.__backseat.fit()`)
   await checkPage(ed, 'editor', locale, keys, errors)
   await shot(ed, join(dir, 'editor.png'), warnings)
+  await js(`window.__backseat.setCompare(false); true`)
+
+  // After 보내기: a stop with its reason and next step, and the action buttons (as main would report it).
+  await js(`window.__backseat.fakeDelivery({ sendId: 'x', reached: ['saved', 'clipboard', 'targetVerified'], stoppedAt: { step: 'inputVerified', reason: 'passwordField' } }); true`)
+  await sleep(200)
+  await checkPage(ed, 'editor+delivery', locale, keys, errors)
+  r.sendbar = await js<unknown>(`window.__backseat.sendbar()`)
+  await shot(ed, join(dir, 'editor-delivery.png'), warnings)
 
   // Timeline open
   await js(`document.getElementById('timeline-toggle').click(); true`)

@@ -5,7 +5,7 @@
  * selector and editor windows briefly to make sure both renderers load without
  * console errors. Exits 0 on success, 1 on failure, printing a JSON report.
  */
-import { app, BrowserWindow, clipboard, nativeImage, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, nativeImage, screen } from 'electron'
 import { access, mkdir, readFile, writeFile } from 'fs/promises'
 import { createServer } from 'http'
 import { dirname, join } from 'path'
@@ -26,6 +26,7 @@ import { createSelectorWindow, selectorInitFor } from './selector'
 import { loadPage } from './windows'
 import { mergedMessages, setBriefLocaleOverride, setLocaleOverride, uiLocale } from './locales'
 import { runLocaleSelfTest } from './selftest-locale'
+import { runFlowsSelfTest } from './selftest-flows'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -129,6 +130,7 @@ const FAKE_CANDIDATES: AgentTarget[] = [
 export async function runSelfTest(): Promise<void> {
   const localeArg = argValue('selftest-locale')
   if (localeArg) return runLocaleSelfTest(localeArg, argValue('selftest-shots'))
+  if (process.argv.includes('--selftest-flows')) return runFlowsSelfTest(argValue('selftest-shots'))
   // The checks below compare Korean text: run in Korean whatever config.json says.
   setLocaleOverride('ko')
   setBriefLocaleOverride('follow')
@@ -272,6 +274,15 @@ export async function runSelfTest(): Promise<void> {
       debug: true
     }
     const ed = createEditorWindow(init, errors)
+    // The chip menu asks main for the windows open right now (editor.targets()); the harness offers its fake
+    // candidates instead, so the menu checks below see a known list. A send to one still goes through main,
+    // which never saw those windows alive and answers targetExpired.
+    ipcMain.removeHandler(IPC.editorTargets)
+    // (main's answer is [the current target, ...other windows])
+    ipcMain.handle(IPC.editorTargets, () => [{ source: 'foreground-agent', label: target.label, kind: target.kind, estimated: true, method: target.method }, ...FAKE_CANDIDATES.map((c) => ({
+      source: 'picked', label: c.label, kind: c.kind, estimated: false, method: c.method,
+      identity: { hwnd: c.hwnd, pid: 0, processStartMs: 0, title: c.title, process: c.process }
+    }))])
     await waitLoad(ed)
     // Wait until the renderer has processed editor:init and drawn the image (debug hook).
     const tReady = Date.now()
@@ -285,6 +296,8 @@ export async function runSelfTest(): Promise<void> {
     }
     report.editorReadyMs = Date.now() - tReady
     if (!ready) errors.push('editor never became ready (init not processed)')
+    // The editor reopens with the last tool and options (self-test key only): start every run from the defaults.
+    else await ed.webContents.executeJavaScript(`window.__backseat.resetPrefs(); true`)
     await sleep(200)
     if (shotsDir) {
       // Draw a stroke through the renderer's own pointer handling, then screenshot.
@@ -379,6 +392,11 @@ export async function runSelfTest(): Promise<void> {
       ed.webContents.sendInputEvent({ type: 'mouseMove', x: cx1, y: cy1, button: 'left' })
       await sleep(40)
       ed.webContents.sendInputEvent({ type: 'mouseUp', x: cx1, y: cy1, button: 'left', clickCount: 1 })
+      await sleep(150)
+      // The dragged area waits for 적용 (or Enter); nothing is cropped yet.
+      const waiting = (await state()) as unknown as { size: [number, number]; cropPending: unknown }
+      if (!waiting.cropPending || waiting.size[0] !== before.size[0]) errors.push(`crop drag should wait for 적용: ${JSON.stringify({ pending: waiting.cropPending, size: waiting.size })}`)
+      await ed.webContents.executeJavaScript(`document.getElementById('crop-apply').click(); true`)
       await sleep(250)
       const after = await state()
       report.cropPointer = (after as unknown as { pointer: unknown; cropDrag: boolean }).pointer
@@ -428,14 +446,15 @@ export async function runSelfTest(): Promise<void> {
       }
       if (!cmpReady) errors.push('compare image never became available')
       else {
-        const barVisible = (await ed.webContents.executeJavaScript(`!document.getElementById('comparebar').hidden`)) as boolean
-        if (!barVisible) errors.push('compare bar hidden although a previous capture exists')
+        // The comparison is folded into ⋯ (enabled there) and its bar shows only while comparing.
+        if ((await ed.webContents.executeJavaScript(`!document.getElementById('comparebar').hidden`)) as boolean) errors.push('compare bar shown before the comparison was turned on')
         // O key toggles it on (through the real hotkey path), buttons switch the mode.
         ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'O' })
         ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'O' })
         await sleep(150)
         const on = await state()
         if (!on.compare.on) errors.push(`O did not turn the comparison on: ${JSON.stringify(on.compare)}`)
+        if (!(await ed.webContents.executeJavaScript(`!document.getElementById('comparebar').hidden`))) errors.push('compare bar hidden while comparing')
         if (on.compare.diffPercent === null || on.compare.diffPercent < 40 || on.compare.diffPercent > 60) errors.push(`compare diff percent off (expected ~50): ${on.compare.diffPercent}`)
         const cmpShots: Record<string, number> = {}
         for (const mode of ['overlay', 'wipe', 'diff']) {
@@ -485,7 +504,9 @@ export async function runSelfTest(): Promise<void> {
           { kind: 'badge', x: Math.round(sz[0] * 0.5), y: Math.round(sz[1] * 0.3), n: 1, color: '#E5484D', size: 22 * sf, ...T },
           { kind: 'badge', x: Math.round(sz[0] * 0.6), y: Math.round(sz[1] * 0.3), n: 2, color: '#2F80ED', size: 22 * sf, ...T }
         ]
-        await ed.webContents.executeJavaScript(`window.__backseat.addAnnotations(${JSON.stringify(styled)}); document.querySelector('[data-tool="text"]').click(); true`)
+        // The text effects beyond the options row live in 세부 (#textbar), folded by default: open it.
+        await ed.webContents.executeJavaScript(`window.__backseat.addAnnotations(${JSON.stringify(styled)}); document.querySelector('[data-tool="text"]').click();
+          if (document.getElementById('textbar').hidden) document.getElementById('text-more').click(); true`)
         await sleep(500) // fonts load lazily, then the canvas repaints
         if ((await count()) !== base0 + styled.length) errors.push(`styled annotations were not added: ${base0} -> ${await count()}`)
         const stPayload = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }
@@ -604,8 +625,9 @@ export async function runSelfTest(): Promise<void> {
         type ColorState = { color: string; textBg: string | null; textOutline: string | null; pickerOpen: boolean; annotations: unknown[]; compare: { on: boolean }; pointer: { down: number } }
         const cs = (): Promise<ColorState> => state() as unknown as Promise<ColorState>
         const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
-        const LS_KEYS = ['backseat.color', 'backseat.recentColors', 'backseat.palette']
+        const LS_KEYS = ['backseat.selftest.tools', 'backseat.recentColors', 'backseat.palette']
         const savedLs = await js<(string | null)[]>(`${JSON.stringify(LS_KEYS)}.map((k) => { try { return localStorage.getItem(k) } catch { return null } })`)
+        const userPrefs = await js<string | null>(`localStorage.getItem('backseat.tools')`)
         const origColor = (await cs()).color
         const tlWasOpen = await js<boolean>(`!document.getElementById('timeline').hidden`)
         if (tlWasOpen) { await js(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
@@ -662,11 +684,13 @@ export async function runSelfTest(): Promise<void> {
           const dot = await js<string>(`document.getElementById('color').dataset.color`)
           const dotCss = await js<string>(`getComputedStyle(document.querySelector('#color .color-btn-dot')).backgroundColor`)
           const recents = await js<string[]>(`JSON.parse(localStorage.getItem('backseat.recentColors') || '[]')`)
-          const savedColor = await js<string | null>(`localStorage.getItem('backseat.color')`)
+          // Each tool remembers its own colour (the self-test's key, never the user's).
+          const savedColor = await js<string | null>(`(() => { const p = JSON.parse(localStorage.getItem('backseat.selftest.tools') || 'null'); return p && p.pen ? p.pen.color : null })()`)
           if (after.color !== picked) errors.push(`pen colour did not change to ${picked}: ${after.color}`)
           if (dot !== picked || dotCss !== 'rgb(68, 101, 233)') errors.push(`colour button dot not updated: ${dot} / ${dotCss}`)
           if (!recents.map((c) => c.toUpperCase()).includes(picked)) errors.push(`recents lack ${picked}: ${JSON.stringify(recents)}`)
-          if (savedColor !== picked) errors.push(`backseat.color not persisted: ${savedColor}`)
+          if (savedColor !== picked) errors.push(`pen colour not remembered: ${savedColor}`)
+          if ((await js<string | null>(`localStorage.getItem('backseat.tools')`)) !== userPrefs) errors.push('the self-test changed the user\'s remembered options')
           if ((await popInfo()).tab !== 'calm') errors.push('차분 tab not selected')
           if (!after.pickerOpen) errors.push('popover closed after a swatch pick (should stay open)')
           const before = await cs()
@@ -682,7 +706,7 @@ export async function runSelfTest(): Promise<void> {
         // 2. layout at 820 px content width: all three rows on one line (text bar shown with the text tool)
         if (!ed.isDestroyed()) {
           const prevSize = ed.getContentSize()
-          await js(`document.querySelector('[data-tool="text"]').click(); true`)
+          await js(`document.querySelector('[data-tool="text"]').click(); if (document.getElementById('textbar').hidden) document.getElementById('text-more').click(); true`)
           ed.setContentSize(820, prevSize[1])
           await sleep(350)
           const f = await fits()
@@ -690,7 +714,18 @@ export async function runSelfTest(): Promise<void> {
           for (const id of ['toolbar', 'toolbar2', 'textbar'] as const) {
             if (!f[id].fits || (id !== 'textbar' && f[id].hidden)) errors.push(`#${id} does not fit on one line at ${f.win}px: ${JSON.stringify(f[id])}`)
           }
-          if (f.textbar.hidden) errors.push('#textbar hidden with the text tool')
+          if (f.textbar.hidden) errors.push('#textbar (세부) hidden after opening it with the text tool')
+          // The pinned reference window is 480 px wide: row 1 still fits by folding tools into ⋯.
+          const minSize = ed.getMinimumSize()
+          ed.setMinimumSize(0, 0)
+          ed.setContentSize(480, prevSize[1])
+          await sleep(350)
+          const narrow = await fits()
+          const fold = await js<{ collapsed: string[] }>(`window.__backseat.fit()`)
+          report.narrowRow = { toolbar: narrow.toolbar, fold }
+          if (!narrow.toolbar.fits) errors.push(`#toolbar overflows at ${narrow.win}px: ${JSON.stringify(narrow.toolbar)}`)
+          if (fold.collapsed.length === 0) errors.push('nothing folded into ⋯ at 480 px')
+          ed.setMinimumSize(minSize[0], minSize[1])
           ed.setContentSize(prevSize[0], prevSize[1])
           await sleep(300)
         }
@@ -817,6 +852,7 @@ export async function runSelfTest(): Promise<void> {
         const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
         const opts = (): Promise<SendOpts> => js<SendOpts>(`window.__backseat.sendOptions()`)
         const label = (): Promise<string> => js<string>(`document.querySelector('#target-btn .tb-label').textContent`)
+        const chipState = (): Promise<string> => js<string>(`document.querySelector('#target-btn .tb-state').textContent`)
         const key = async (keyCode: string, modifiers: ('control' | 'shift')[] = []): Promise<void> => {
           ed.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
           ed.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
@@ -836,6 +872,7 @@ export async function runSelfTest(): Promise<void> {
         }
         await js(`document.querySelector('[data-tool="pen"]').click(); true`)
         const label0 = await label()
+        const state0 = await chipState()
         const tool0 = (await ts()).tool
         const o0 = await opts()
         if (o0.targetHwnd !== undefined || o0.pinTarget !== undefined) errors.push(`initial send options should be plain: ${JSON.stringify(o0)}`)
@@ -867,7 +904,8 @@ export async function runSelfTest(): Promise<void> {
         const label1 = await label()
         const o1 = await opts()
         if ((await ts()).targetMenuOpen) errors.push('Enter did not close the target menu')
-        if (!label1.includes(picked.label) || !label1.includes('(선택)') || label1 === label0) errors.push(`target bar did not change to the pick: ${label1}`)
+        // (the automatic target may have the same name: the state tells them apart)
+        if (!label1.includes(picked.label) || (await chipState()) !== '선택함' || `${label1}|선택함` === `${label0}|${state0}`) errors.push(`target chip did not change to the pick: ${label1} / ${await chipState()}`)
         if (o1.targetHwnd !== picked.hwnd || o1.pinTarget !== undefined) errors.push(`send options after picking: ${JSON.stringify(o1)}`)
         if (ed.isDestroyed()) errors.push('Enter in the target menu closed / sent the editor')
 
@@ -926,6 +964,9 @@ export async function runSelfTest(): Promise<void> {
               // The fake window was never alive, so main never offered it: the message names it or says '?'.
               if (!(st.includes(gone.label) || st.includes('?')) || !st.includes('닫혀서 보내지 않았습니다')) errors.push(`target-expired status: ${st}`)
               if (!(await label()).includes('고른 창이 닫혔습니다')) errors.push(`target-expired label: ${await label()}`)
+              // The send bar says the same in place, with no step shown as done (nothing was written).
+              const bar = await js<{ mode: string; headline: string; steps: string[] }>(`window.__backseat.sendbar()`)
+              if (bar.mode !== 'delivery' || !bar.headline.includes('고른 창이 닫혀서') || bar.steps.some((s) => s.startsWith('✓'))) errors.push(`target-expired send bar: ${JSON.stringify(bar)}`)
               if (!(await ts()).targetMenuOpen) errors.push('target-expired: the target menu did not open again')
               else if ((await rowCount()) !== FAKE_CANDIDATES.length + 1) errors.push(`target-expired: the closed window is still offered (${await rowCount()} rows)`)
               await key('Escape')
@@ -993,26 +1034,23 @@ export async function runSelfTest(): Promise<void> {
         const so = await js<{ clipboardOnly?: boolean }>(`window.__backseat.sendOptions()`)
         if (so.clipboardOnly !== true) errors.push('stt-failure: could not switch to clipboard only; send checks skipped')
         else {
+          // The send bar already warns before 보내기; 보내기 itself sends nothing and points at the two choices.
+          const warned = await js<boolean>(`window.__backseat.sttChoiceOpen()`)
           await js(`document.getElementById('send').click(); true`)
           await sleep(400)
           const asked = await js<boolean>(`window.__backseat.sttChoiceOpen()`)
-          const sttFailure: Record<string, unknown> = { asked, status: await statusNow() }
+          const sttFailure: Record<string, unknown> = { warned, asked, status: await statusNow() }
           report.sttFailure = sttFailure
-          if (!asked) errors.push(`전송 after a failed recognition did not ask first: ${await statusNow()}`)
+          if (!warned) errors.push('the send bar did not warn about the missing voice explanation before 보내기')
+          if (!asked || !(await statusNow()).includes('보내지 않았습니다')) errors.push(`보내기 after a failed recognition did not stop: ${await statusNow()}`)
           else {
             await js(`document.getElementById('stt-retry').click(); true`)
-            await sleep(2500) // one byte of "audio" cannot be decoded: the retry fails and the question comes back
-            if (!(await js<boolean>(`window.__backseat.sttChoiceOpen()`))) errors.push(`after 다시 시도 failed, the question did not come back: ${await statusNow()}`)
-            else {
-              await js(`document.getElementById('stt-cancel').click(); true`)
-              await sleep(200)
-              sttFailure.afterCancel = await statusNow()
-              if (ed.isDestroyed()) errors.push('stt-failure: the editor closed after cancel')
-              else {
-                if (!String(sttFailure.afterCancel).includes('보내지 않았습니다')) errors.push(`cancel status: ${String(sttFailure.afterCancel)}`)
-                if (await js<boolean>(`window.__backseat.busy()`)) errors.push('editor still busy after cancelling 전송')
-              }
-            }
+            await sleep(2500) // one byte of "audio" cannot be decoded: the retry fails and the choice stays
+            sttFailure.afterRetry = await js<unknown>(`window.__backseat.sendbar()`)
+            if (!(await js<boolean>(`window.__backseat.sttChoiceOpen()`))) errors.push(`after 다시 변환 failed, the choice is gone: ${await statusNow()}`)
+            if (ed.isDestroyed()) errors.push('stt-failure: the editor closed')
+            else if (await js<boolean>(`window.__backseat.busy()`)) errors.push('editor still busy after the stopped 보내기')
+            // 음성 없이 보내기 is not pressed here: it would really write a package and fill the clipboard.
           }
         }
         // cleanup: automatic target, no recording

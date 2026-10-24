@@ -126,4 +126,10 @@ export class Hotkeys {
     const label = labelOf(cmd)
     return cmd.keys.length ? `${label} (${bindingLabel(cmd.keys[0])})` : label
   }
+
+  /** The first key of a command as shown to the user ('Ctrl+S'), or '' (menus list it next to the item). */
+  keyLabel(id: string): string {
+    const key = this.byId.get(id)?.keys[0]
+    return key ? bindingLabel(key) : ''
+  }
 }
