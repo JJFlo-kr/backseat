@@ -32,8 +32,42 @@ export interface AlignOptions {
   manual?: ReadonlyMap<number, number | null>
 }
 
-export const DEFAULT_DEICTIC =
-  /이거|이건|이걸|여기|저기|이쪽|저쪽|이 부분|이 버튼|이 글자|요거|요기|\bthis\b|\bhere\b|\bthat\b|\bthere\b/i
+/** Speech languages with a deictic word list (ISO 639-1; zh covers both scripts). */
+export type DeicticLang = 'ko' | 'en' | 'ja' | 'zh' | 'es' | 'pt' | 'de' | 'fr'
+
+/**
+ * Pointing words per language ("this", "here", …): a sentence containing one refers to what the user
+ * is drawing, so it may attach to an annotation further away in time. Scripts written without spaces
+ * between words (ja, zh) and Korean (particles attach to the word: 이거는, 여기에) match anywhere;
+ * the others only as whole words.
+ */
+export const DEICTIC_WORDS: Record<DeicticLang, readonly string[]> = {
+  ko: ['이거', '이건', '이걸', '여기', '저기', '이쪽', '저쪽', '이 부분', '이 버튼', '이 글자', '요거', '요기'],
+  en: ['this', 'here', 'that', 'there'],
+  ja: ['これ', 'ここ', 'それ', 'そこ', 'あそこ', 'この'],
+  zh: ['这个', '这里', '这儿', '那个', '那里', '那儿', '這個', '這裡', '這兒', '那個', '那裡', '那兒'],
+  es: ['esto', 'aquí', 'acá', 'eso', 'ahí', 'allí'],
+  pt: ['isto', 'aqui', 'isso', 'ali'],
+  de: ['das', 'hier', 'dies', 'da', 'dort'],
+  fr: ['ça', 'ici', 'ceci', 'cela', 'là']
+}
+
+const UNSPACED: ReadonlySet<DeicticLang> = new Set(['ko', 'ja', 'zh'])
+const escapeRe = (w: string): string => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * One case-insensitive regex for the given languages (default: all). Whole words are delimited with
+ * Unicode letter classes instead of \b, which treats accented letters (aquí, là, ça) as non-word.
+ */
+export function deicticRegex(langs: readonly DeicticLang[] = Object.keys(DEICTIC_WORDS) as DeicticLang[]): RegExp {
+  const parts = langs.flatMap((l) =>
+    DEICTIC_WORDS[l].map((w) => (UNSPACED.has(l) ? escapeRe(w) : `(?<![\\p{L}\\p{N}])${escapeRe(w)}(?![\\p{L}\\p{N}])`))
+  )
+  return new RegExp(parts.join('|'), 'iu')
+}
+
+/** Every language's pointing words at once: people may speak another language than the UI's. */
+export const DEFAULT_DEICTIC = deicticRegex()
 
 export interface Span {
   start: number
