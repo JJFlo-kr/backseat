@@ -281,3 +281,33 @@ test('the delivery log has steps and verdicts but no window title, memo or clipb
   assert.match(log, /"isPassword":true/)
   for (const secret of [SECRET_TITLE, 'Alice', MEMO, 'brief.md', 'annotated.png']) assert.equal(log.includes(secret), false, secret)
 })
+
+test('a capture with nothing added goes out as the picture alone: no instruction text', async () => {
+  const electron = (await import('electron')) as unknown as { clipboard: { write: (items: { parts: Record<string, unknown> }[]) => Promise<void> } }
+  const written: Record<string, unknown>[] = []
+  const original = electron.clipboard.write
+  electron.clipboard.write = async (items) => {
+    written.push(items[0].parts)
+  }
+  try {
+    const plain = { ...payload, memo: '' }
+    // chat UI: image only
+    const r = await sendToTarget(new FakeBrowserWindow() as never, plain, ctx(browser))
+    assert.equal(r.delivered, 'pasted')
+    assert.ok(written.at(-1)!['image/png'], 'the image is on the clipboard')
+    assert.equal('text/plain' in written.at(-1)!, false, 'no instruction line next to it')
+    // terminal: the image path alone
+    await sendToTarget(new FakeBrowserWindow() as never, plain, ctx(terminal))
+    const line = String(written.at(-1)!['text/plain'])
+    assert.match(line, /annotated\.png"?$/)
+    assert.equal(line.includes('brief'), false, 'no brief, no instructions')
+    // no target: image only as well
+    await sendToTarget(new FakeBrowserWindow() as never, plain, { target: null, identity: null, view: toView(null, 'none', null) })
+    assert.equal('text/plain' in written.at(-1)!, false)
+    // with a memo the instruction line is back
+    await sendToTarget(new FakeBrowserWindow() as never, payload, ctx(browser))
+    assert.match(String(written.at(-1)!['text/plain']), new RegExp(MEMO))
+  } finally {
+    electron.clipboard.write = original
+  }
+})

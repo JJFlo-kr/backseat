@@ -9,7 +9,7 @@ import { BrowserWindow, clipboard, ClipboardItem } from 'electron'
 import { readFile } from 'fs/promises'
 import type { DeliveryStopReason, ExportPayload, SendOptions, SendResult } from '../shared/types'
 import { t } from '../shared/i18n'
-import { classifyTarget, instructionLine } from './agents'
+import { classifyTarget, instructionLine, isPlainCapture, plainPathLine } from './agents'
 import { loadSettings } from './config'
 import { compareIdentity, DeliveryTracker, elementForLog, isChromiumRootPane, judgeInput, mayFocusSoleInput, mayPressEnter, type DeliveryLogEntry } from './delivery'
 import { logDelivery } from './diaglog'
@@ -27,11 +27,12 @@ async function clipboardText(text: string): Promise<void> {
   await clipboard.write([new ClipboardItem({ 'text/plain': text })])
 }
 
+/** Image on the clipboard, with a text line unless `text` is empty (a plain capture: the picture alone). */
 async function clipboardImageAndText(pngPath: string, text: string): Promise<void> {
   const png = new Uint8Array(await readFile(pngPath))
-  await clipboard.write([
-    new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }), 'text/plain': text })
-  ])
+  const item: Record<string, Blob | string> = { 'image/png': new Blob([png], { type: 'image/png' }) }
+  if (text) item['text/plain'] = text
+  await clipboard.write([new ClipboardItem(item)])
 }
 
 /** Status-bar text for a stop (UI language). The editor shows its own wording from DeliveryStatus. */
@@ -123,9 +124,13 @@ async function deliver(
     tracker.reach('saved')
     if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
     // The line and the image prefix are read by the agent: brief language. Status messages: UI language.
-    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, target?.mcp ? pkg.id : undefined, briefTranslator())
+    // Nothing added to the capture: the picture alone (chat UIs) or its path alone (terminals), no instructions.
+    const plain = isPlainCapture(payload)
+    const line = plain
+      ? plainPathLine(pkg.annotatedPng)
+      : instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, target?.mcp ? pkg.id : undefined, briefTranslator())
     // Chat UIs get the image itself: say up front that the drawn marks are the user's Backseat annotations.
-    const imageLine = `${briefTranslator()('send.imageNotice')} ${line}`
+    const imageLine = plain ? '' : `${briefTranslator()('send.imageNotice')} ${line}`
 
     if (!target || !identity || target.method === 'clipboard' || !target.hwnd) {
       await clipboardImageAndText(pkg.annotatedPng, imageLine)

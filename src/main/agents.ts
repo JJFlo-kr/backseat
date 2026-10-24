@@ -1,6 +1,6 @@
 // Guess which agent the user was talking to from the window that had focus
 // right before the capture hotkey. Pure function: easy to extend and test.
-import type { AgentKind, AgentTarget, WindowInfo } from '../shared/types.ts'
+import type { AgentKind, AgentTarget, ExportPayload, WindowInfo } from '../shared/types.ts'
 import { t, type Translate } from '../shared/i18n.ts'
 
 const TERMINALS = new Set([
@@ -142,6 +142,28 @@ export function instructionLine(briefPath: string, pngPath: string, memo: string
     return head + tr('agents.instruction.mcp', { id: mcpSendId, brief: briefPath })
   }
   return head + tr('agents.instruction.paths', { brief: briefPath, image: pngPath })
+}
+
+/**
+ * A capture sent as it was: no marks, memo, voice, manual links, comparison or agent question. Then 보내기
+ * delivers only the picture (chat UIs) or only its path (terminals) — no instruction line that would cost
+ * the agent tokens to read. Crop is not an addition: it only changes the picture.
+ */
+export function isPlainCapture(p: Pick<ExportPayload, 'annotations' | 'memo' | 'transcript' | 'audio' | 'links' | 'compare' | 'meta'>): boolean {
+  return (
+    p.annotations.length === 0 &&
+    !p.memo.trim() &&
+    !p.audio &&
+    !(p.transcript && (p.transcript.text.trim() || p.transcript.segments.length > 0)) &&
+    !(p.links && p.links.length > 0) &&
+    !p.compare &&
+    !p.meta.request
+  )
+}
+
+/** What a terminal gets for a plain capture: the image path alone (quoted when it has spaces). */
+export function plainPathLine(pngPath: string): string {
+  return /\s/.test(pngPath) ?`"${pngPath}"` : pngPath
 }
 
 // ---------- MCP agents (backseat_register) ----------
