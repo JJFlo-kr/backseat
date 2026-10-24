@@ -129,7 +129,8 @@ const deliveryDetail = byId<HTMLElement>('delivery-detail')
 const actionBtns: Record<DeliveryAction, HTMLButtonElement> = {
   resend: byId('resend'),
   retarget: byId('retarget'),
-  copy: byId('copy-direct')
+  copy: byId('copy-direct'),
+  confirm: byId('confirm-target')
 }
 const newCaptureBtn = byId<HTMLButtonElement>('new-capture')
 const boldBtn = byId<HTMLButtonElement>('text-bold')
@@ -1625,7 +1626,14 @@ async function save(): Promise<void> {
  * afterwards the steps main confirmed. A recording without text stops it: the send bar offers 다시 변환 /
  * 음성 없이 보내기 instead of sending the image as if the spoken part were in it (Codex review F12).
  */
-async function send(withoutVoice = false): Promise<void> {
+/** How this send differs from a plain 보내기: without the failed voice part, or into the window whose title changed. */
+interface SendExtra {
+  withoutVoice?: boolean
+  confirmTarget?: boolean
+}
+
+async function send(extra: SendExtra = {}): Promise<void> {
+  const withoutVoice = extra.withoutVoice === true
   if (busy || !init) return
   if (mustPickTarget) {
     setStatus(t('editor.status.pickTarget'), true)
@@ -1658,7 +1666,7 @@ async function send(withoutVoice = false): Promise<void> {
           lastSentWithoutVoice = withoutVoice
           sending = true
           renderSendbar()
-          return window.backseat.editor.send(payload, sendOptions(withoutVoice))
+          return window.backseat.editor.send(payload, sendOptions(extra))
         }
       }
     )
@@ -1678,10 +1686,7 @@ async function send(withoutVoice = false): Promise<void> {
     if (r.targetExpired) {
       // The picked window closed: drop it from the menu and make the user choose again (or the clipboard).
       const gone = chosenTarget?.identity?.hwnd
-      if (gone) {
-        if (initData) initData.candidates = (initData.candidates ?? []).filter((c) => c.hwnd !== gone)
-        if (targetViews) targetViews = targetViews.filter((v) => v.identity?.hwnd !== gone)
-      }
+      if (gone) goneHwnds.add(gone)
       chosenTarget = null
       mustPickTarget = true
       showTarget()
@@ -1767,6 +1772,7 @@ function renderDelivery(): void {
       b.disabled = true
       b.classList.remove('primary-action')
     }
+    actionBtns.confirm.hidden = true
     return
   }
   const v = deliveryView(s, lastDeliveryCtx, t)
@@ -1784,6 +1790,7 @@ function renderDelivery(): void {
     b.disabled = false
     b.classList.toggle('primary-action', k === v.primary)
   }
+  actionBtns.confirm.hidden = v.primary !== 'confirm' // only after a title change
 }
 
 /** Anything 보내기 would send changed (annotations, links, memo, recording). */
@@ -1813,15 +1820,16 @@ voiceLinksBtn.addEventListener('click', () => {
   syncToolbar()
 })
 byId('stt-retry').addEventListener('click', () => void retryTranscription())
-byId('stt-image').addEventListener('click', () => void send(true))
+byId('stt-image').addEventListener('click', () => void send({ withoutVoice: true }))
 // 다시 보내기 repeats the last choice: a send the user made without its failed voice part stays without it.
-actionBtns.resend.addEventListener('click', () => void send(lastSentWithoutVoice))
+actionBtns.resend.addEventListener('click', () => void send({ withoutVoice: lastSentWithoutVoice }))
+// The title of the target changed (another tab or chat?): the user says it is the right window, once.
+actionBtns.confirm.addEventListener('click', () => void send({ withoutVoice: lastSentWithoutVoice, confirmTarget: true }))
 actionBtns.retarget.addEventListener('click', () => openTargetMenu())
 actionBtns.copy.addEventListener('click', () => void copy())
 byId('close-editor').addEventListener('click', () => window.backseat.editor.close())
 newCaptureBtn.addEventListener('click', () => {
-  const api = window.backseat.editor as typeof window.backseat.editor & { newCapture?: () => void }
-  api.newCapture?.()
+  window.backseat.editor.newCapture?.()
 })
 for (const b of [...Object.values(actionBtns), byId('stt-retry'), byId('stt-image'), voiceLinksBtn]) {
   b.addEventListener('mousedown', (e) => e.preventDefault()) // an open text box keeps the focus
@@ -1873,12 +1881,13 @@ function showTarget(): void {
 }
 
 /** What 보내기 passes to the main process: the picked window and / or a changed pin state. */
-function sendOptions(withoutVoice = false): SendOptions {
+function sendOptions(extra: SendExtra = {}): SendOptions {
   const o: SendOptions = { pressEnter: false }
   if (isClipboardOnly(chosenTarget)) o.clipboardOnly = true
   else if (chosenTarget?.identity?.hwnd) o.targetHwnd = chosenTarget.identity.hwnd
   if (pinChecked !== startPinned()) o.pinTarget = pinChecked
-  if (withoutVoice) o.withoutVoice = true
+  if (extra.withoutVoice) o.withoutVoice = true
+  if (extra.confirmTarget) o.confirmTarget = true
   return o
 }
 
@@ -1910,10 +1919,13 @@ function methodRowHint(m: SendTargetView['method']): string {
   }
 }
 
+/** Picked windows that turned out closed: not offered again in this editor. */
+const goneHwnds = new Set<number>()
+
 /** Other windows the user may pick, front-most first. */
 function candidateViews(): SendTargetView[] {
-  if (targetViews) return targetViews.filter((v) => v.identity?.hwnd)
-  return (initData?.candidates ?? []).map((c: AgentTarget) => viewFromAgent(c, 'picked'))
+  const views = targetViews ?? (initData?.candidates ?? []).map((c: AgentTarget) => viewFromAgent(c, 'picked'))
+  return views.filter((v) => v.identity?.hwnd && !goneHwnds.has(v.identity.hwnd))
 }
 
 const targetMenu = document.createElement('div')
@@ -1967,7 +1979,8 @@ function onMenuKey(e: KeyboardEvent): void {
   else if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement)) { stop(); pickMenuRow(menuActive) }
 }
 
-function openTargetMenu(): void {
+/** refresh: ask main for the windows open now and rebuild the menu with them (it opens at once with the last list). */
+function openTargetMenu(refresh = true): void {
   if (!initData) return
   commitPendingText() // the menu and an open text box would fight over the keyboard
   picker.close()
@@ -2058,6 +2071,16 @@ function openTargetMenu(): void {
   document.addEventListener('pointerdown', onMenuPointerDown, true)
   window.addEventListener('keydown', onMenuKey, true)
   window.addEventListener('resize', closeTargetMenu)
+  if (refresh && window.backseat.editor.targets) {
+    window.backseat.editor.targets().then((views) => {
+      targetViews = views
+      if (!targetMenuOpen()) return
+      const active = menuActive
+      closeTargetMenu()
+      openTargetMenu(false)
+      if (active < menuRows.length) setMenuActive(active)
+    }, () => undefined)
+  }
 }
 
 function toggleTargetMenu(): void {
@@ -3103,6 +3126,13 @@ window.addEventListener('resize', () => {
   fitRow2()
 })
 // Rows that open and close (세부, comparison, timeline, send bar wrapping) change the stage: re-fit the image.
+// Row 1 and 2 re-fit whenever their width changes (window resize, pinning); the window resize event alone
+// is not reliable after a programmatic resize.
+let fitRaf = 0
+new ResizeObserver(() => {
+  cancelAnimationFrame(fitRaf)
+  fitRaf = requestAnimationFrame(() => { fitToolbar(); fitRow2() })
+}).observe(toolbar)
 let layoutRaf = 0
 new ResizeObserver(() => {
   // next frame: resizing the canvases inside the observer callback would re-trigger observers in the same frame
@@ -3135,9 +3165,10 @@ window.backseat.editor.onInit((data) => {
   updateMicUi()
   initData = data
   pinChecked = startPinned()
+  mustPickTarget = data.sendTarget?.source === 'none' && data.sendTarget.unavailable !== undefined
   showTarget()
   window.backseat.editor.targets?.().then((views) => { targetViews = views }, () => undefined)
-  newCaptureBtn.hidden = typeof (window.backseat.editor as { newCapture?: unknown }).newCapture !== 'function'
+  newCaptureBtn.hidden = typeof window.backseat.editor.newCapture !== 'function'
   if (data.request) {
     askBar.textContent = t('editor.ask.label', { agent: data.request.agent || t('editor.target.agentFallback'), question: data.request.question })
     askBar.title = data.request.question

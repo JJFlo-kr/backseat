@@ -66,6 +66,12 @@ export async function runFlowsSelfTest(shotsDir: string | undefined): Promise<vo
     sendId: `selftest-flow-${n}`, target: CLAUDE, reached: ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted']
   })
   const ensureIpc = (): void => {
+    // the chip menu lists fake windows, never the real ones on this machine (they would be in the screenshots)
+    ipcMain.removeHandler(IPC.editorTargets)
+    ipcMain.handle(IPC.editorTargets, (): SendTargetView[] => (baseInit().candidates ?? []).map((c) => ({
+      source: 'picked', label: c.label, kind: c.kind, estimated: false, method: c.method,
+      identity: { hwnd: c.hwnd, pid: 0, processStartMs: 0, title: c.title, process: c.process }
+    })))
     ipcMain.removeHandler(IPC.editorSend)
     ipcMain.handle(IPC.editorSend, async (_e, payload: ExportPayload, opts: SendOptions = {}): Promise<SendResult> => {
       sent.push({ annotations: payload.annotations.map((a) => a.kind), memo: payload.memo, transcript: Boolean(payload.transcript), audio: Boolean(payload.audio), opts })
@@ -370,6 +376,26 @@ export async function runFlowsSelfTest(shotsDir: string | undefined): Promise<vo
       await ed.js(`window.__backseat.fakeTarget(null); window.__backseat.fakeDelivery({ sendId: 'y', reached: ['saved', 'clipboard'], stoppedAt: { step: 'targetVerified', reason: 'noTarget' } }); true`)
       r.noTarget = await bar(ed)
       await shot(ed, 'stop-no-target.png')
+      // main stopped because the window's title changed: 이 창에 보내기 resends with confirmTarget
+      await ed.js(`window.__backseat.fakeTarget(${JSON.stringify(CLAUDE)}); true`)
+      nextStatus = (n) => ({ sendId: `selftest-flow-${n}`, target: CLAUDE, reached: ['saved', 'clipboard'], stoppedAt: { step: 'targetVerified', reason: 'targetChanged' } })
+      await click(ed, '#send', 'stops')
+      await sleep(600)
+      const changed = await bar(ed)
+      r.titleChanged = changed
+      check(changed.primary === 'confirm', `title change should offer 이 창에 보내기: ${JSON.stringify(changed)}`)
+      await shot(ed, 'stop-title-changed.png')
+      nextStatus = (n) => ({ sendId: `selftest-flow-${n}`, target: CLAUDE, reached: ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'] })
+      await click(ed, '#confirm-target', 'stops')
+      await sleep(600)
+      check(sent.at(-1)?.opts.confirmTarget === true, `이 창에 보내기 did not pass confirmTarget: ${JSON.stringify(sent.at(-1)?.opts)}`)
+      check((await bar(ed)).headline === '붙여넣기를 시도했어요 · 제출은 직접 해주세요', 'confirmed resend did not show the paste attempt')
+      // the pinned window is not open: the chip names it (보내기 then asks for a new pick)
+      await ed.js(`window.__backseat.fakeTarget({ source: 'none', label: '', estimated: true, method: 'clipboard', unavailable: { source: 'pinned', label: 'Codex · ChatGPT 앱' } }); true`)
+      const chipText = await ed.js<string>(`document.getElementById('target-btn').textContent`)
+      r.unavailableChip = chipText
+      check(chipText.includes('열려 있지 않음'), `unavailable chip: ${chipText}`)
+      await shot(ed, 'chip-unavailable.png')
       await click(ed, '#target-btn', 'stops')
       await shot(ed, 'target-menu.png')
       await key(ed, 'Escape')
@@ -383,6 +409,7 @@ export async function runFlowsSelfTest(shotsDir: string | undefined): Promise<vo
       await shot(ed, 'width-820.png')
       ed.win.setContentSize(480, 520)
       await sleep(350)
+      r.diag480 = await ed.js<unknown>(`(() => { const t = document.getElementById('toolbar'); return { inner: innerWidth, cw: t.clientWidth, sw: t.scrollWidth, fit: window.__backseat.fit(), vis: document.visibilityState, focus: document.hasFocus() } })()`)
       r.at480 = { fits: await rowFits(ed), fold: await ed.js<unknown>(`window.__backseat.fit()`) }
       check((r.at480 as { fits: Record<string, boolean> }).fits.toolbar, `row 1 overflows at 480 px: ${JSON.stringify(r.at480)}`)
       await shot(ed, 'width-480.png')

@@ -54,6 +54,8 @@ export function targetText(v: SendTargetView): string {
 }
 
 export function chipView(v: SendTargetView | null, t: Translate, opts: { expired?: boolean } = {}): ChipView {
+  // The picked / pinned window is not open: say which, never fall back to another window.
+  if (v?.source === 'none' && v.unavailable) return { label: t('editor.chip.unavailable', { label: v.unavailable.label }), state: t('editor.stop.pickAgain'), tone: 'warn' }
   if (opts.expired) return { label: t('editor.target.expiredNote'), state: '', tone: 'warn' }
   if (!v || v.source === 'none') return { label: t('editor.chip.none'), state: '', tone: 'none' }
   if (v.method === 'clipboard' && !v.identity?.hwnd) return { label: t('editor.target.clipboardOnly'), state: '', tone: 'ok' }
@@ -92,7 +94,8 @@ export function initialTarget(init: { sendTarget?: SendTargetView; target: Agent
 // ---------- after sending ----------
 
 export type StepState = 'done' | 'stopped'
-export type DeliveryAction = 'resend' | 'retarget' | 'copy'
+/** confirm: the target's title changed (another tab or chat?) and the user says it is the right window. */
+export type DeliveryAction = 'resend' | 'retarget' | 'copy' | 'confirm'
 export type DeliveryTone = 'ok' | 'wait' | 'warn' | 'error'
 
 export interface DeliveryView {
@@ -144,6 +147,7 @@ export function deliveryView(s: DeliveryStatus, ctx: DeliveryContext, t: Transla
     }
     const headline = stop.reason === 'error' && ctx.error ? t('editor.stop.errorWith', { error: ctx.error }) : t(STOP_KEYS[stop.reason])
     if (stop.reason === 'targetExpired') return { steps, headline, detail: t('editor.stop.pickAgain'), tone: 'error', primary: 'retarget' }
+    if (stop.reason === 'targetChanged') return { steps, headline, detail: t('editor.stop.confirmDetail'), tone: 'warn', primary: 'confirm' }
     return {
       steps, headline,
       detail: onClipboard ? t('editor.stop.pasteByHand') : t('editor.stop.tryAgain'),
@@ -161,7 +165,9 @@ export function deliveryView(s: DeliveryStatus, ctx: DeliveryContext, t: Transla
   }
   if (reached.has('pasted')) {
     const mcp = ctx.mcp === true || s.target?.method === 'mcp' || s.target?.source === 'mcp-verified'
-    return { steps, headline: t('editor.delivery.pasted'), detail: mcp ? t('editor.delivery.waitFetch') : '', tone: mcp ? 'wait' : 'ok', primary: null }
+    // Enter after a verified paste (the auto-Enter setting) is still an attempt to submit, not a receipt.
+    const headline = t(s.enterPressed ? 'editor.delivery.pastedEnter' : 'editor.delivery.pasted')
+    return { steps, headline, detail: mcp ? t('editor.delivery.waitFetch') : '', tone: mcp ? 'wait' : 'ok', primary: null }
   }
   if (onClipboard) return { steps, headline: t('editor.delivery.clipboardChosen'), detail: t('editor.delivery.clipboardChosenDetail'), tone: 'ok', primary: null }
   if (reached.has('saved')) return { steps, headline: t('editor.delivery.saved'), detail: '', tone: 'ok', primary: null }

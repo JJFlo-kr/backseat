@@ -5,7 +5,7 @@
  * selector and editor windows briefly to make sure both renderers load without
  * console errors. Exits 0 on success, 1 on failure, printing a JSON report.
  */
-import { app, BrowserWindow, clipboard, nativeImage, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, nativeImage, screen } from 'electron'
 import { access, mkdir, readFile, writeFile } from 'fs/promises'
 import { createServer } from 'http'
 import { dirname, join } from 'path'
@@ -274,6 +274,14 @@ export async function runSelfTest(): Promise<void> {
       debug: true
     }
     const ed = createEditorWindow(init, errors)
+    // The chip menu asks main for the windows open right now (editor.targets()); the harness offers its fake
+    // candidates instead, so the menu checks below see a known list. A send to one still goes through main,
+    // which never saw those windows alive and answers targetExpired.
+    ipcMain.removeHandler(IPC.editorTargets)
+    ipcMain.handle(IPC.editorTargets, () => FAKE_CANDIDATES.map((c) => ({
+      source: 'picked', label: c.label, kind: c.kind, estimated: false, method: c.method,
+      identity: { hwnd: c.hwnd, pid: 0, processStartMs: 0, title: c.title, process: c.process }
+    })))
     await waitLoad(ed)
     // Wait until the renderer has processed editor:init and drawn the image (debug hook).
     const tReady = Date.now()

@@ -170,3 +170,19 @@ test('the chip at open time: main\'s SendTargetView first, else the legacy detec
   assert.equal(initialTarget({ target: null }), null)
   assert.equal(viewFromAgent(a, 'picked').identity?.hwnd, 5)
 })
+
+test('phase 2: a changed title offers "이 창에 보내기"; Enter after a verified paste is still an attempt', () => {
+  const changed = deliveryView(status(['saved', 'clipboard'], { stoppedAt: { step: 'targetVerified', reason: 'targetChanged' } }), {}, ko)
+  assert.equal(changed.headline, '보낼 창의 제목이 바뀌어 붙여넣지 않았어요')
+  assert.ok(changed.detail.includes(ko('editor.action.confirmTarget')), 'the detail names the button')
+  assert.equal(changed.primary, 'confirm')
+  const enter = deliveryView(status(['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'], { enterPressed: true }), {}, ko)
+  assert.equal(enter.headline, '붙여넣기와 Enter를 시도했어요')
+  assert.equal(enter.steps.length, 5)
+})
+
+test('phase 2: the picked or pinned window is not open: the chip names it and asks for a new pick', () => {
+  const v: SendTargetView = { source: 'none', label: '', estimated: true, method: 'clipboard', unavailable: { source: 'pinned', label: 'Codex · ChatGPT 앱' } }
+  assert.deepEqual(chipView(v, ko), { label: 'Codex · ChatGPT 앱 · 열려 있지 않음', state: '보낼 곳을 다시 고르세요', tone: 'warn' })
+  assert.equal(chipView(v, ko, { expired: true }).label, 'Codex · ChatGPT 앱 · 열려 있지 않음', 'the name wins over the generic note')
+})
