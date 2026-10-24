@@ -3,7 +3,9 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import { applyLoginItem, loadSettings, saveSettings, configPath, mcpServerPath } from './config'
 import { SUPPORT_URL } from '../shared/links'
+import { getLocale, LOCALE_NAMES, LOCALES, t } from '../shared/i18n'
 import { showAbout } from './about'
+import { applyLocale, STT_LANGUAGES } from './locales'
 import { sessionsRoot } from './sessions'
 
 let tray: Tray | null = null
@@ -36,27 +38,67 @@ function copyMcpConfig(): void {
   clipboard.writeText(JSON.stringify(snippet, null, 2))
 }
 
-function buildMenu(actions: TrayActions): Menu {
+/** "Language" also in English, so someone who cannot read the current language still finds the menu. */
+function languageLabel(): string {
+  return getLocale() === 'en' ? t('tray.language') : `${t('tray.language')} / Language`
+}
+
+function languageMenu(onChange: () => void): Electron.MenuItemConstructorOptions[] {
+  const pref = loadSettings().locale
+  const pick = (locale: string) => (): void =>
+    void saveSettings({ locale }).then(() => {
+      applyLocale()
+      onChange()
+    })
+  return [
+    { label: t('tray.languageAuto'), type: 'radio', checked: !pref || pref === 'auto', click: pick('auto') },
+    { type: 'separator' },
+    ...LOCALES.map((l): Electron.MenuItemConstructorOptions => ({
+      label: LOCALE_NAMES[l],
+      type: 'radio',
+      checked: pref === l,
+      click: pick(l)
+    }))
+  ]
+}
+
+function sttMenu(): Electron.MenuItemConstructorOptions[] {
+  const pref = loadSettings().sttLanguage || 'auto'
+  const pick = (sttLanguage: string) => (): void => void saveSettings({ sttLanguage })
+  return [
+    { label: t('tray.sttFollowUi'), type: 'radio', checked: pref === 'auto', click: pick('auto') },
+    { label: t('tray.sttDetect'), type: 'radio', checked: pref === 'detect', click: pick('detect') },
+    { type: 'separator' },
+    ...STT_LANGUAGES.map((l): Electron.MenuItemConstructorOptions => ({
+      label: t(`stt.lang.${l}`),
+      type: 'radio',
+      checked: pref === l,
+      click: pick(l)
+    }))
+  ]
+}
+
+function buildMenu(actions: TrayActions, onChange: () => void): Menu {
   const s = loadSettings()
   return Menu.buildFromTemplate([
-    { label: `영역 캡처\t${s.hotkeyRect.replace('CommandOrControl', 'Ctrl')}`, click: actions.capture },
-    { label: `창 캡처\t${s.hotkeyWindow.replace('CommandOrControl', 'Ctrl')}`, click: actions.captureWindow },
-    { label: '마지막 영역 다시 캡처', enabled: actions.hasLast(), click: actions.recaptureLast },
+    { label: `${t('tray.captureRegion')}\t${s.hotkeyRect.replace('CommandOrControl', 'Ctrl')}`, click: actions.capture },
+    { label: `${t('tray.captureWindow')}\t${s.hotkeyWindow.replace('CommandOrControl', 'Ctrl')}`, click: actions.captureWindow },
+    { label: t('tray.recaptureLast'), enabled: actions.hasLast(), click: actions.recaptureLast },
     { type: 'separator' },
     {
-      label: '편집기 열리면 자동 녹음',
+      label: t('tray.autoRecord'),
       type: 'checkbox',
       checked: s.autoRecord,
       click: (item) => void saveSettings({ autoRecord: item.checked })
     },
     {
-      label: '전송 후 Enter 자동 입력',
+      label: t('tray.pressEnter'),
       type: 'checkbox',
       checked: s.pressEnter,
       click: (item) => void saveSettings({ pressEnter: item.checked })
     },
     {
-      label: app.isPackaged ? '로그인 시 자동 시작' : '로그인 시 자동 시작 (설치판에서만)',
+      label: app.isPackaged ? t('tray.launchAtLogin') : t('tray.launchAtLoginDev'),
       type: 'checkbox',
       enabled: app.isPackaged,
       checked: app.isPackaged && s.launchAtLogin,
@@ -65,30 +107,41 @@ function buildMenu(actions: TrayActions): Menu {
     ...(s.pinnedTargetProcess
       ? [
           {
-            label: `기본 대상 고정 해제 (${s.pinnedTargetProcess})`,
+            label: t('tray.unpinTarget', { process: s.pinnedTargetProcess }),
             click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' })
           }
         ]
       : []),
     { type: 'separator' },
-    { label: '에이전트 연결 설정(MCP) 복사', click: copyMcpConfig },
-    { label: '세션 폴더 열기', click: () => void shell.openPath(sessionsRoot()) },
-    { label: '설정 파일 열기', click: () => void shell.openPath(configPath()) },
+    { label: languageLabel(), submenu: languageMenu(onChange) },
+    {
+      label: t('tray.briefInEnglish'),
+      type: 'checkbox',
+      checked: s.briefLocale === 'en',
+      click: (item) => void saveSettings({ briefLocale: item.checked ? 'en' : 'follow' })
+    },
+    { label: t('tray.sttLanguage'), submenu: sttMenu() },
     { type: 'separator' },
-    { label: '후원하기 ☕', click: () => void shell.openExternal(SUPPORT_URL) },
-    { label: '정보…', click: showAbout },
+    { label: t('tray.copyMcp'), click: copyMcpConfig },
+    { label: t('tray.openSessions'), click: () => void shell.openPath(sessionsRoot()) },
+    { label: t('tray.openConfig'), click: () => void shell.openPath(configPath()) },
     { type: 'separator' },
-    { label: '종료', click: () => app.quit() }
+    { label: t('tray.support'), click: () => void shell.openExternal(SUPPORT_URL) },
+    { label: t('tray.about'), click: showAbout },
+    { type: 'separator' },
+    { label: t('tray.quit'), click: () => app.quit() }
   ])
 }
 
 export function createTray(actions: TrayActions): Tray {
   if (tray) return tray
   tray = new Tray(trayIcon())
-  tray.setToolTip('Backseat — AI 소통기 (Ctrl+Shift+A 캡처)')
-  const refresh = (): void => tray?.setContextMenu(buildMenu(actions))
+  const refresh = (): void => {
+    tray?.setToolTip(t('tray.tooltip', { hotkey: loadSettings().hotkeyRect.replace('CommandOrControl', 'Ctrl') }))
+    tray?.setContextMenu(buildMenu(actions, refresh))
+  }
   refresh()
-  // Rebuild on open so "마지막 영역" and checkboxes reflect the current state.
+  // Rebuild on open so the last region, checkboxes and the language reflect the current state.
   tray.on('right-click', refresh)
   tray.on('click', actions.capture)
   return tray

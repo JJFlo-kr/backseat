@@ -5,6 +5,7 @@
 import type { Annotation, Segment, Transcript } from '../../shared/types'
 import { alignSegments, fmtClock, sessionEnd } from '../../shared/align'
 import type { Assignment } from '../../shared/align'
+import { t } from '../../shared/i18n'
 
 export interface TimelineHost {
   getAnnotations(): readonly Annotation[]
@@ -30,10 +31,10 @@ const PAD_R = 14
 const RULER_H = 18
 const LANE_H = 16
 const LANE_GAP = 4
-const LANES: { kinds: readonly Annotation['kind'][]; label: string }[] = [
-  { kinds: ['stroke'], label: '펜' },
-  { kinds: ['arrow', 'rect', 'badge', 'blur'], label: '도형' },
-  { kinds: ['text'], label: '텍스트' }
+const LANES: { kinds: readonly Annotation['kind'][]; labelKey: string }[] = [
+  { kinds: ['stroke'], labelKey: 'timeline.lane.pen' },
+  { kinds: ['arrow', 'rect', 'badge', 'blur'], labelKey: 'timeline.lane.shape' },
+  { kinds: ['text'], labelKey: 'timeline.lane.text' }
 ]
 /** Index of the speech lane, right below the annotation lanes. */
 const VOICE_LANE = LANES.length
@@ -84,7 +85,7 @@ export class Timeline {
   private readonly playBtn: HTMLButtonElement
   private readonly liveBtn: HTMLButtonElement
   private readonly hintEl: HTMLElement | null
-  private readonly hintDefault: string
+  private hintDefault: string | null = null
   private scrubT: number | null = null
   private playing = false
   private playToken = 0
@@ -121,7 +122,6 @@ export class Timeline {
     this.playBtn = playBtn
     this.liveBtn = liveBtn
     this.hintEl = root.querySelector<HTMLElement>('.tl-hint')
-    this.hintDefault = this.hintEl?.textContent ?? ''
 
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e))
     canvas.addEventListener('pointermove', (e) => this.onPointerMove(e))
@@ -359,7 +359,7 @@ export class Timeline {
     if (seg !== null) {
       this.link = { seg, startX: x, startY: y, x, y, moved: false, target: null, pointerId: e.pointerId }
       this.canvas.style.cursor = 'grabbing'
-      this.setHint('주석 위에 놓아 연결 · 음성 빈 곳은 자동 연결로 되돌림 · Esc 취소')
+      this.setHint(t('timeline.hint.linkDrag'))
       this.refresh()
       return
     }
@@ -436,7 +436,13 @@ export class Timeline {
   }
 
   private setHint(text: string | null): void {
-    if (this.hintEl) this.hintEl.textContent = text ?? this.hintDefault
+    if (!this.hintEl) return
+    // The idle hint is static markup translated by the editor after this constructor ran: remember it lazily.
+    if (this.hintDefault === null) {
+      if (text === null) return
+      this.hintDefault = this.hintEl.textContent ?? ''
+    }
+    this.hintEl.textContent = text ?? this.hintDefault
   }
 
   private localX(e: PointerEvent): number {
@@ -570,7 +576,7 @@ export class Timeline {
       ctx.fillStyle = '#6d6d78'
       ctx.font = '10px system-ui, "Malgun Gothic", sans-serif'
       ctx.textBaseline = 'middle'
-      ctx.fillText(li === VOICE_LANE ? '음성' : LANES[li].label, PAD_L + 3, y + LANE_H / 2)
+      ctx.fillText(t(li === VOICE_LANE ? 'timeline.lane.voice' : LANES[li].labelKey), PAD_L + 3, y + LANE_H / 2)
     }
     LANES.forEach((lane, li) => {
       const y = laneY(li)
@@ -581,14 +587,14 @@ export class Timeline {
     })
     this.drawSegments(ctx, axis, laneY(VOICE_LANE))
 
-    const t = this.scrubT ?? this.host.liveNow()
-    this.drawPlayhead(ctx, axis.xOf(Math.min(t, duration)), height)
+    const playT = this.scrubT ?? this.host.liveNow()
+    this.drawPlayhead(ctx, axis.xOf(Math.min(playT, duration)), height)
     this.drawLinkDrag(ctx, axis)
 
     const annTotal = fmtClock(sessionEnd(annotations))
     this.clockEl.textContent =
       this.scrubT === null
-        ? `LIVE ${fmtClock(this.host.liveNow())} · 주석 ${annTotal}`
+        ? t('timeline.clock.live', { now: fmtClock(this.host.liveNow()), total: annTotal })
         : `${fmtClock(this.scrubT)} / ${fmtClock(this.sessionLength())}`
     this.liveBtn.classList.toggle('active', this.scrubT === null)
     this.root.classList.toggle('scrubbed', this.scrubT !== null)

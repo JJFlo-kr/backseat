@@ -4,7 +4,7 @@ import { PALETTES, RECENT_MAX, contrastText, normalizeHex, pushRecent, withAlpha
 
 test('palettes: exact ids/order and valid uppercase #RRGGBB colours', () => {
   assert.deepEqual(PALETTES.map((p) => p.id), ['vivid', 'calm', 'pastel', 'mono'])
-  assert.deepEqual(PALETTES.map((p) => p.label), ['선명', '차분', '파스텔', '모노'])
+  assert.deepEqual(PALETTES.map((p) => p.labelKey), ['palette.vivid', 'palette.calm', 'palette.pastel', 'palette.mono'])
   assert.deepEqual(PALETTES.map((p) => p.colors.length), [12, 12, 12, 9])
   for (const p of PALETTES) {
     for (const c of p.colors) assert.match(c, /^#[0-9A-F]{6}$/, `${p.id} ${c}`)

@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, screen }
 import { mkdir, writeFile } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { IPC } from '../shared/ipc'
+import { t } from '../shared/i18n'
 import type {
   AgentTarget,
   CopyResult,
@@ -15,6 +16,7 @@ import type {
 import { pinParts, rememberTarget } from './agents'
 import { buildBrief } from './brief'
 import { saveSettings } from './config'
+import { briefTranslator, mergedMessages, uiLocale } from './locales'
 import { isWindow } from './native/win32'
 import { sendToTarget } from './send'
 import { transcribe } from './stt'
@@ -46,7 +48,7 @@ async function handleSave(win: BrowserWindow | null, payload: ExportPayload): Pr
     await mkdir(dir, { recursive: true })
     const defaultPath = join(dir, `backseat-${stamp()}.png`)
     const opts = {
-      title: '캡처 저장',
+      title: t('dialog.saveCapture'),
       defaultPath,
       filters: [{ name: 'PNG', extensions: ['png'] }]
     }
@@ -57,7 +59,7 @@ async function handleSave(win: BrowserWindow | null, payload: ExportPayload): Pr
     await writeFile(file, pngBuffer(payload.pngDataUrl))
     if (payload.memo || payload.annotations.length > 0) {
       const md = file.replace(/\.png$/i, '.md')
-      await writeFile(md, buildBrief(payload, basename(file)), 'utf8')
+      await writeFile(md, buildBrief(payload, basename(file), null, { t: briefTranslator() }), 'utf8')
     }
     return { ok: true, path: file }
   } catch (err) {
@@ -86,7 +88,7 @@ async function handleSaveVideo(win: BrowserWindow | null, video: VideoSave): Pro
     await mkdir(dir, { recursive: true })
     const ext = video.mimeType.includes('mp4') ? 'mp4' : 'webm'
     const opts = {
-      title: '녹화 저장',
+      title: t('dialog.saveVideo'),
       defaultPath: join(dir, `backseat-${stamp()}.${ext}`),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
     }
@@ -184,7 +186,8 @@ export function createEditorWindow(init: EditorInit, errors?: string[]): Browser
   if (errors) watchRendererErrors(win.webContents, errors, 'editor')
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return
-    win.webContents.send(IPC.editorInit, init)
+    // The UI language is read at send time: a language change applies from the next capture on.
+    win.webContents.send(IPC.editorInit, { ...init, locale: uiLocale(), messages: mergedMessages() })
     win.show()
     win.focus()
   })

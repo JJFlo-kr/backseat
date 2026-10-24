@@ -1,6 +1,7 @@
 // Guess which agent the user was talking to from the window that had focus
 // right before the capture hotkey. Pure function: easy to extend and test.
-import type { AgentKind, AgentTarget, WindowInfo } from '../shared/types'
+import type { AgentKind, AgentTarget, WindowInfo } from '../shared/types.ts'
+import { t, type Translate } from '../shared/i18n.ts'
 
 const TERMINALS = new Set([
   'windowsterminal.exe',
@@ -50,17 +51,17 @@ export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {
   const base = { hwnd: win.hwnd, title, process: win.process }
 
   if (proc === 'claude.exe') {
-    return { ...base, kind: 'claude-desktop', label: 'Claude 앱', method: 'paste-image', confidence: 0.8 }
+    return { ...base, kind: 'claude-desktop', label: t('agents.claudeApp'), method: 'paste-image', confidence: 0.8 }
   }
   if (proc === 'chatgpt.exe' || proc === 'codex.exe') {
-    return { ...base, kind: 'codex', label: 'Codex · ChatGPT 앱', method: 'paste-image', confidence: 0.8 }
+    return { ...base, kind: 'codex', label: t('agents.codexApp'), method: 'paste-image', confidence: 0.8 }
   }
   if (TERMINALS.has(proc)) {
     const agent = agentInTitle(title)
     if (agent) {
-      return { ...base, kind: agent.kind, label: `${agent.name} · 터미널`, method: 'paste-path', confidence: 0.9 }
+      return { ...base, kind: agent.kind, label: t('agents.terminalAgent', { agent: agent.name }), method: 'paste-path', confidence: 0.9 }
     }
-    return { ...base, kind: 'terminal', label: `터미널 (${win.process})`, method: 'paste-path', confidence: 0.6 }
+    return { ...base, kind: 'terminal', label: t('agents.terminal', { process: win.process }), method: 'paste-path', confidence: 0.6 }
   }
   if (proc === 'cursor.exe') {
     return { ...base, kind: 'cursor', label: 'Cursor', method: 'paste-path', confidence: 0.7 }
@@ -82,16 +83,16 @@ export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {
   if (proc === 'slack.exe') return { ...base, kind: 'chat', label: 'Slack', method: 'paste-image', confidence: 0.6 }
   if (proc === 'discord.exe') return { ...base, kind: 'chat', label: 'Discord', method: 'paste-image', confidence: 0.6 }
   if (BROWSERS.has(proc)) {
-    const t = title.toLowerCase()
-    if (t.includes('claude') || t.includes('chatgpt') || t.includes('gemini') || t.includes('copilot')) {
-      return { ...base, kind: 'chat', label: `웹 채팅 (${title.slice(0, 30)})`, method: 'paste-image', confidence: 0.7 }
+    const lower = title.toLowerCase()
+    if (lower.includes('claude') || lower.includes('chatgpt') || lower.includes('gemini') || lower.includes('copilot')) {
+      return { ...base, kind: 'chat', label: t('agents.webChat', { title: title.slice(0, 30) }), method: 'paste-image', confidence: 0.7 }
     }
   }
   // Any other real window: the user may well have been talking to it, so deliver there by pasting the image.
   return {
     ...base,
     kind: 'unknown',
-    label: `창: ${title.slice(0, 30)} (${win.process})`,
+    label: t('agents.window', { title: title.slice(0, 30), process: win.process }),
     method: 'paste-image',
     confidence: 0.4
   }
@@ -140,7 +141,10 @@ export function pinParts(t: Pick<AgentTarget, 'process' | 'title'>): { process: 
 
 // ---------- "previous target" memory ----------
 
-const FALLBACK_SUFFIX = ' (직전 대상)'
+/** The " (previous target)" decoration in the current UI language. */
+function fallbackSuffix(): string {
+  return ` ${t('agents.fallbackSuffix')}`
+}
 
 /** Last target that was a real window, reused when the hotkey is pressed from the desktop/tray. Always stored in its original form. */
 let lastTarget: AgentTarget | null = null
@@ -153,7 +157,8 @@ export function getLastTarget(): AgentTarget | null {
 export function rememberTarget(t: AgentTarget | null): void {
   if (!t || !t.hwnd) return
   let label = t.label
-  while (label.endsWith(FALLBACK_SUFFIX)) label = label.slice(0, -FALLBACK_SUFFIX.length)
+  const suffix = fallbackSuffix()
+  while (label.endsWith(suffix)) label = label.slice(0, -suffix.length)
   label = label.replace(/ · MCP .*$/, '')
   const { mcp: _mcp, ...rest } = t
   lastTarget = { ...rest, label }
@@ -161,14 +166,14 @@ export function rememberTarget(t: AgentTarget | null): void {
 
 /** The remembered target as shown for a fallback: lower confidence and a single suffix, from the original label. */
 export function asFallback(t: AgentTarget): AgentTarget {
-  return { ...t, confidence: Math.min(t.confidence, 0.5), label: t.label + FALLBACK_SUFFIX }
+  return { ...t, confidence: Math.min(t.confidence, 0.5), label: t.label + fallbackSuffix() }
 }
 
 /** One-line instruction pasted into a terminal agent. Paths are absolute so any cwd works. */
-export function instructionLine(briefPath: string, pngPath: string, memo: string, viaMcp = false): string {
+export function instructionLine(briefPath: string, pngPath: string, memo: string, viaMcp = false, tr: Translate = t): string {
   const head = memo ? `${memo} — ` : ''
   if (viaMcp) {
-    return `${head}Backseat로 방금 캡처를 보냈어. backseat_latest 툴로 브리프와 이미지를 읽고, 주석과 메모가 가리키는 대로 수정해줘. (파일: ${briefPath})`
+    return head + tr('agents.instruction.mcp', { brief: briefPath })
   }
-  return `${head}Backseat 브리프 ${briefPath} 와 이미지 ${pngPath} 를 읽고, 주석과 메모가 가리키는 대로 수정해줘.`
+  return head + tr('agents.instruction.paths', { brief: briefPath, image: pngPath })
 }

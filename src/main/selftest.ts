@@ -24,6 +24,8 @@ import { stopStt, transcribe } from './stt'
 import { wavToFloat16k } from './stt/wav'
 import { createSelectorWindow, selectorInitFor } from './selector'
 import { loadPage } from './windows'
+import { mergedMessages, setBriefLocaleOverride, setLocaleOverride, uiLocale } from './locales'
+import { runLocaleSelfTest } from './selftest-locale'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -125,6 +127,11 @@ const FAKE_CANDIDATES: AgentTarget[] = [
 ]
 
 export async function runSelfTest(): Promise<void> {
+  const localeArg = argValue('selftest-locale')
+  if (localeArg) return runLocaleSelfTest(localeArg, argValue('selftest-shots'))
+  // The checks below compare Korean text: run in Korean whatever config.json says.
+  setLocaleOverride('ko')
+  setBriefLocaleOverride('follow')
   const errors: string[] = []
   const warnings: string[] = []
   const report: Record<string, unknown> = {}
@@ -217,7 +224,7 @@ export async function runSelfTest(): Promise<void> {
       waitLoad(sel),
       sel.loadFile(join(__dirname, '../renderer/selector/index.html'))
     ])
-    sel.webContents.send(IPC.selectorInit, selectorInitFor(cap, windows))
+    sel.webContents.send(IPC.selectorInit, { ...selectorInitFor(cap, windows), locale: uiLocale(), messages: mergedMessages() })
     await sleep(700)
     const shotsDir = argValue('selftest-shots')
     if (shotsDir) {

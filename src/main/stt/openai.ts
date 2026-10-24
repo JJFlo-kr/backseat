@@ -3,6 +3,7 @@
 // .ts extensions so plain Node (the unit tests) can import this file without a bundler.
 import type { Transcript } from '../../shared/types.ts'
 import { toTranscript, type Chunk } from '../../shared/transcript.ts'
+import { t } from '../../shared/i18n.ts'
 
 export interface OpenAiSttOptions {
   /** e.g. https://api.openai.com/v1 */
@@ -26,7 +27,8 @@ export interface VerboseJson {
 }
 
 const LANG_CODES: Record<string, string> = {
-  korean: 'ko', english: 'en', japanese: 'ja', chinese: 'zh', german: 'de', french: 'fr', spanish: 'es'
+  korean: 'ko', english: 'en', japanese: 'ja', chinese: 'zh', german: 'de', french: 'fr', spanish: 'es',
+  portuguese: 'pt'
 }
 
 export function languageCode(lang?: string): string | undefined {
@@ -96,7 +98,7 @@ export function verboseJsonToTranscript(
 }
 
 export async function transcribeOpenAi(pcm16k: Float32Array, opts: OpenAiSttOptions): Promise<Transcript> {
-  if (!opts.apiKey) throw new Error('클라우드 STT 키가 없습니다: 환경변수 BACKSEAT_STT_API_KEY를 설정하세요')
+  if (!opts.apiKey) throw new Error(`${t('stt.noCloudKey')}: BACKSEAT_STT_API_KEY`)
   const base = opts.apiBase.replace(/\/+$/, '')
   const form = new FormData()
   form.append('file', new Blob([pcmToWav(pcm16k)], { type: 'audio/wav' }), 'audio.wav')

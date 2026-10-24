@@ -2,7 +2,9 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { IPC } from '../shared/ipc'
-import { APP_NAME, APP_TAGLINE, ISSUES_URL, LICENSE_NAME, REPO_URL, SUPPORT_URL } from '../shared/links'
+import { t } from '../shared/i18n'
+import { mergedMessages, uiLocale } from './locales'
+import { APP_NAME, ISSUES_URL, LICENSE_NAME, REPO_URL, SUPPORT_URL } from '../shared/links'
 import type { AboutInfo } from '../shared/types'
 import { appIcon, baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
@@ -13,11 +15,13 @@ export function aboutInfo(): AboutInfo {
   return {
     name: APP_NAME,
     version: app.getVersion(),
-    tagline: APP_TAGLINE,
+    tagline: t('app.tagline'),
     license: LICENSE_NAME,
     repoUrl: REPO_URL,
     supportUrl: SUPPORT_URL,
-    issuesUrl: ISSUES_URL
+    issuesUrl: ISSUES_URL,
+    locale: uiLocale(),
+    messages: mergedMessages()
   }
 }
 
@@ -62,7 +66,7 @@ export function createAboutWindow(errors?: string[]): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     autoHideMenuBar: true,
-    title: `${APP_NAME} 정보`,
+    title: t('about.windowTitle', { name: APP_NAME }),
     backgroundColor: '#1b1b1f',
     webPreferences: baseWebPreferences()
   })

@@ -14,6 +14,8 @@ import {
   unregisterAgent,
   type RegistryEntry
 } from './registry'
+import { BUNDLES } from '../../shared/bundles'
+import { createTranslator, mergeBundles, resolveLocale, type Locale, type Messages, type Translate } from '../../shared/i18n'
 
 const SERVER_NAME = 'backseat'
 const SERVER_VERSION = '0.1.0'
@@ -34,6 +36,31 @@ export async function sessionsRoot(): Promise<string> {
     /* no config yet */
   }
   return join(homedir(), 'Pictures', 'Backseat', 'sessions')
+}
+
+// ---------- language of the text returned to the agent ----------
+
+const mergedByLocale = new Map<Locale, Messages>()
+
+/**
+ * Translator for what the agent reads: English when config.briefLocale is 'en', else the UI language
+ * (config.locale, 'auto' = the system language). Plain Node: no Electron, so read config.json ourselves
+ * (on every call, so a language change in the tray applies without restarting the agent).
+ */
+async function agentTranslator(): Promise<Translate> {
+  let cfg: { locale?: string; briefLocale?: string } = {}
+  try {
+    cfg = JSON.parse(await readFile(configFile(), 'utf8')) as typeof cfg
+  } catch {
+    /* no config yet */
+  }
+  const lang: Locale = cfg.briefLocale === 'en' ? 'en' : resolveLocale(cfg.locale, Intl.DateTimeFormat().resolvedOptions().locale)
+  let messages = mergedByLocale.get(lang)
+  if (!messages) {
+    messages = mergeBundles(lang, BUNDLES)
+    mergedByLocale.set(lang, messages)
+  }
+  return createTranslator(lang, messages)
 }
 
 // ---------- packages ----------
@@ -89,24 +116,21 @@ async function loadPackage(root: string, id: string): Promise<Loaded | null> {
 
 type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
-const ANNOTATION_NOTICE =
-  '이 이미지의 주석(선·화살표·사각형·번호 원·보라 B 표시 글자)은 사용자가 Backseat로 그린 것이며 원래 화면에는 없습니다.'
-
-function packageContent(p: Loaded, includeImage = true, includeOriginal = false): Content[] {
+function packageContent(p: Loaded, tr: Translate, includeImage = true, includeOriginal = false): Content[] {
   const out: Content[] = []
   const header = [
     `# Backseat session ${p.id}`,
-    `폴더: ${p.dir}`,
-    `파일: ${(p.meta.files ?? []).join(', ')}`,
+    tr('mcp.folder', { dir: p.dir }),
+    tr('mcp.files', { files: (p.meta.files ?? []).join(', ') }),
     ''
   ].join('\n')
   out.push({ type: 'text', text: header + p.brief })
   if (includeImage && p.png) {
-    out.push({ type: 'text', text: ANNOTATION_NOTICE })
+    out.push({ type: 'text', text: tr('mcp.annotationNotice') })
     out.push({ type: 'image', data: p.png.toString('base64'), mimeType: 'image/png' })
   }
   if (includeOriginal && p.screenshot) {
-    out.push({ type: 'text', text: '원본 화면(주석 없음):' })
+    out.push({ type: 'text', text: tr('mcp.originalScreen') })
     out.push({ type: 'image', data: p.screenshot.toString('base64'), mimeType: 'image/png' })
   }
   return out
@@ -196,11 +220,12 @@ export async function createServer(): Promise<McpServer> {
       }
     },
     async ({ includeImage, includeOriginal }) => {
+      const tr = await agentTranslator()
       const ids = await listSessionDirs(root)
       const id = ids[ids.length - 1]
       const p = id ? await loadPackage(root, id) : null
-      if (!p) return { content: [{ type: 'text', text: `아직 세션이 없습니다 (${root}). 사용자가 Ctrl+Shift+A로 캡처해 전송하면 생깁니다.` }] }
-      return { content: packageContent(p, includeImage ?? true, includeOriginal ?? false) }
+      if (!p) return { content: [{ type: 'text', text: tr('mcp.noSession', { root }) }] }
+      return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
     }
   )
 
@@ -212,6 +237,7 @@ export async function createServer(): Promise<McpServer> {
       inputSchema: { limit: z.number().int().min(1).max(100).optional() }
     },
     async ({ limit }) => {
+      const tr = await agentTranslator()
       const ids = (await listSessionDirs(root)).slice(-(limit ?? 10))
       const lines: string[] = []
       for (const id of ids) {
@@ -220,7 +246,7 @@ export async function createServer(): Promise<McpServer> {
         const memo = p.meta.memo ? ` · ${p.meta.memo}` : ''
         lines.push(`${id} · ${p.meta.meta?.mode ?? ''} ${p.meta.meta?.window?.title ?? ''}${memo} · → ${p.meta.target?.label ?? '-'}`)
       }
-      return { content: [{ type: 'text', text: lines.length ? lines.join('\n') : '세션 없음' }] }
+      return { content: [{ type: 'text', text: lines.length ? lines.join('\n') : tr('mcp.listEmpty') }] }
     }
   )
 
@@ -236,9 +262,10 @@ export async function createServer(): Promise<McpServer> {
       }
     },
     async ({ id, includeImage, includeOriginal }) => {
+      const tr = await agentTranslator()
       const p = await loadPackage(root, basename(id))
-      if (!p) return { content: [{ type: 'text', text: `세션 ${id} 없음` }], isError: true }
-      return { content: packageContent(p, includeImage ?? true, includeOriginal ?? false) }
+      if (!p) return { content: [{ type: 'text', text: tr('mcp.notFound', { id }) }], isError: true }
+      return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
     }
   )
 
@@ -255,8 +282,9 @@ export async function createServer(): Promise<McpServer> {
     },
     async ({ timeoutSec, includeOriginal }) => {
       const p = await waitForPackage(root, (timeoutSec ?? 300) * 1000)
-      if (!p) return { content: [{ type: 'text', text: '시간 안에 새 캡처가 오지 않았습니다.' }] }
-      return { content: packageContent(p, true, includeOriginal ?? false) }
+      const tr = await agentTranslator()
+      if (!p) return { content: [{ type: 'text', text: tr('mcp.waitTimeout') }] }
+      return { content: packageContent(p, tr, true, includeOriginal ?? false) }
     }
   )
 
@@ -282,8 +310,9 @@ export async function createServer(): Promise<McpServer> {
         'utf8'
       )
       const p = await waitForPackage(root, (timeoutSec ?? 600) * 1000, requestId)
-      if (!p) return { content: [{ type: 'text', text: `사용자가 ${timeoutSec ?? 600}초 안에 답하지 않았습니다 (요청 ${requestId}).` }] }
-      return { content: packageContent(p, true, includeOriginal ?? false) }
+      const tr = await agentTranslator()
+      if (!p) return { content: [{ type: 'text', text: tr('mcp.askTimeout', { seconds: timeoutSec ?? 600, requestId }) }] }
+      return { content: packageContent(p, tr, true, includeOriginal ?? false) }
     }
   )
 

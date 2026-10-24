@@ -1,7 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { asFallback, buildCandidates, classifyTarget, matchPinned, pinParts } from '../src/main/agents.ts'
+import { asFallback, buildCandidates, classifyTarget, instructionLine, matchPinned, pinParts, rememberTarget, getLastTarget } from '../src/main/agents.ts'
+import { setMessages } from '../src/shared/i18n.ts'
 import type { WindowInfo } from '../src/shared/types.ts'
+import ko from '../src/locales/ko.json' with { type: 'json' }
+import en from '../src/locales/en.json' with { type: 'json' }
+
+// The labels are translated: assert against the Korean bundle (the source language).
+setMessages('ko', ko)
 
 let nextHwnd = 100
 const win = (process: string, title: string, extra: Partial<WindowInfo> = {}): WindowInfo => ({
@@ -104,4 +110,31 @@ test('matchPinned: process case-insensitive, title substring, front-most wins, n
   assert.equal(matchPinned(list, 'claude.exe', ''), null)
   assert.equal(matchPinned(list, '', ''), null)
   assert.deepEqual(pinParts({ process: 'a.exe', title: 'x'.repeat(40) }), { process: 'a.exe', title: 'x'.repeat(20) })
+})
+
+test('labels follow the current language; rememberTarget strips the suffix of that language', () => {
+  setMessages('en', en)
+  try {
+    assert.equal(classifyTarget(win('ChatGPT.exe', 'ChatGPT'))?.label, 'Codex · ChatGPT app')
+    assert.equal(classifyTarget(win('notepad.exe', 'Memo'))?.label, 'Window: Memo (notepad.exe)')
+    const orig = classifyTarget(win('claude.exe', 'Claude'))!
+    const fb = asFallback(orig)
+    assert.equal(fb.label, 'Claude app (previous target)')
+    rememberTarget(fb)
+    assert.equal(getLastTarget()?.label, 'Claude app')
+  } finally {
+    setMessages('ko', ko)
+  }
+})
+
+test('instructionLine: Korean by default, a given translator wins, memo is prefixed', () => {
+  assert.equal(
+    instructionLine('C:/s/brief.md', 'C:/s/annotated.png', ''),
+    'Backseat 브리프 C:/s/brief.md 와 이미지 C:/s/annotated.png 를 읽고, 주석과 메모가 가리키는 대로 수정해줘.'
+  )
+  const mcp = instructionLine('C:/s/brief.md', 'C:/s/annotated.png', 'fix this', true)
+  assert.ok(mcp.startsWith('fix this — Backseat로 방금 캡처를 보냈어. backseat_latest'))
+  assert.ok(mcp.endsWith('(파일: C:/s/brief.md)'))
+  const tr = (key: string, p?: Record<string, string | number>): string => `<${key}:${p?.brief}>`
+  assert.equal(instructionLine('b', 'p', '', false, tr), '<agents.instruction.paths:b>')
 })
