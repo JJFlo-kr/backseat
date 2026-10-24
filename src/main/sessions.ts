@@ -14,6 +14,8 @@ export interface SessionPackage {
   briefMd: string
   strokesJson: string
   metaJson: string
+  /** The capture without annotations; only when the editor sent basePngDataUrl. */
+  screenshotPng?: string
   audioFile?: string
   transcriptJson?: string
 }
@@ -59,11 +61,17 @@ export async function writeSessionPackage(
     metaJson: join(dir, 'meta.json')
   }
   const files = ['annotated.png', 'brief.md', 'strokes.json', 'meta.json']
+  const hasShot = Boolean(payload.basePngDataUrl)
   const writes: Promise<void>[] = [
     writeFile(pkg.annotatedPng, pngBuffer(payload.pngDataUrl)),
-    writeFile(pkg.briefMd, buildBrief(payload, 'annotated.png', target), 'utf8'),
+    writeFile(pkg.briefMd, buildBrief(payload, 'annotated.png', target, hasShot ? { screenshotFileName: 'screenshot.png' } : {}), 'utf8'),
     writeFile(pkg.strokesJson, JSON.stringify({ annotations: payload.annotations }, null, 2), 'utf8')
   ]
+  if (payload.basePngDataUrl) {
+    pkg.screenshotPng = join(dir, 'screenshot.png')
+    files.push('screenshot.png')
+    writes.push(writeFile(pkg.screenshotPng, pngBuffer(payload.basePngDataUrl)))
+  }
   if (payload.audio) {
     const name = `audio.${audioExt(payload.audio.mimeType)}`
     pkg.audioFile = join(dir, name)

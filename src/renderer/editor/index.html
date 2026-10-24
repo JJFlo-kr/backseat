@@ -20,10 +20,8 @@
         <button type="button" class="btn" data-tool="crop" title="자르기">자르기</button>
         <button type="button" class="btn" data-tool="eraser" title="지우개 (E)">지우개</button>
       </div>
-      <div class="group" role="group" aria-label="색상">
-        <button type="button" class="swatch active" data-color="#E5484D" style="--c: #E5484D" title="빨강" aria-label="빨강"></button>
-        <button type="button" class="swatch" data-color="#F5A623" style="--c: #F5A623" title="노랑" aria-label="노랑"></button>
-        <button type="button" class="swatch" data-color="#2F80ED" style="--c: #2F80ED" title="파랑" aria-label="파랑"></button>
+      <div class="group" id="color-group" role="group" aria-label="색상">
+        <!-- #color: colorButton() is mounted here by editor.ts -->
       </div>
       <div class="group" role="group" aria-label="히스토리">
         <button type="button" class="btn" id="undo" data-command="undo" aria-label="되돌리기">↶</button>
@@ -62,15 +60,37 @@
           <option value="32">32</option>
           <option value="48">48</option>
         </select>
-        <select id="text-style" title="글자 배경">
-          <option value="plate" selected>판</option>
-          <option value="outline">외곽선</option>
-          <option value="plain">없음</option>
-        </select>
+        <button type="button" class="tgl tgl-b" id="text-bold" aria-pressed="false" title="굵게">B</button>
+        <button type="button" class="tgl tgl-i" id="text-italic" aria-pressed="false" title="기울임">I</button>
       </div>
     </div>
 
-    <div id="targetbar" role="status"></div>
+    <div id="textbar" hidden>
+      <div class="group" role="group" aria-label="글자 효과">
+        <span class="lbl">글자 효과</span>
+        <div id="text-style" class="seg" role="radiogroup" aria-label="글자 효과" title="글자를 화면 위에서 잘 읽히게 하는 효과">
+          <button type="button" role="radio" aria-checked="true" class="active" data-text-style="plate" title="글자 뒤에 반투명 상자를 깔아 어떤 화면 위에서도 읽히게 합니다 (Snagit·Canva·인스타 스토리의 텍스트 배경)"><span class="fx fx-plate">가</span>배경 상자</button>
+          <button type="button" role="radio" aria-checked="false" data-text-style="outline" title="글자 둘레에 어두운 테두리를 둘러 배경과 분리합니다 (PowerPoint·Photoshop의 윤곽선/획)"><span class="fx fx-outline">가</span>윤곽선</button>
+          <button type="button" role="radio" aria-checked="false" data-text-style="plain" title="글자만 그립니다"><span class="fx fx-plain">가</span>효과 없음</button>
+        </div>
+      </div>
+      <div class="group" id="bg-group" role="group" aria-label="배경">
+        <span class="lbl">배경</span>
+        <!-- #text-bg: colorButton() mounted by editor.ts -->
+        <button type="button" class="tgl tgl-auto" id="text-bg-auto" aria-pressed="true" title="자동: 글자색에 맞춰 어두운/흰 상자를 고릅니다">자동</button>
+        <input type="range" id="text-bg-opacity" min="10" max="100" step="1" value="85" title="배경 불투명도" aria-label="배경 불투명도" />
+      </div>
+      <button type="button" class="btn tgl-btn" id="text-invert" title="글자색과 배경색 맞바꾸기">⇄ 반전</button>
+      <div class="group" id="outline-group" role="group" aria-label="윤곽선">
+        <span class="lbl">윤곽선</span>
+        <!-- #text-outline: colorButton() mounted by editor.ts -->
+      </div>
+      <button type="button" class="tgl tgl-shadow" id="text-shadow" aria-pressed="false" title="그림자">그림자</button>
+    </div>
+
+    <div id="targetbar">
+      <button type="button" class="target-btn" id="target-btn" data-command="target" aria-haspopup="listbox" aria-expanded="false"><span class="tb-label"></span><span class="hint"></span><span class="tb-caret" aria-hidden="true">▾</span></button>
+    </div>
 
     <div id="comparebar" hidden aria-label="이전 캡처와 비교">
       <button type="button" class="btn cmp-btn" id="compare-toggle" data-command="compare">전/후 비교</button>

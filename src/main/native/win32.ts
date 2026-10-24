@@ -155,7 +155,7 @@ function describe(a: Api, hwnd: number): WindowInfo | null {
   const px = physicalBounds(a, hwnd)
   if (!px) return null
   const dip = screen.screenToDipRect(null, px)
-  return { hwnd, pid, title, process: processName(a, pid), bounds: dip }
+  return { hwnd, pid, title, process: processName(a, pid), bounds: dip, className: className(a, hwnd) }
 }
 
 /** Visible top-level windows in z-order (front-most first), excluding our own. */

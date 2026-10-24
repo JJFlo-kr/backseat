@@ -8,15 +8,16 @@ description: Read the user's latest Backseat capture (annotated screenshot + spo
 The user captures their screen, draws on it (pen, arrows, numbered badges, text) while speaking, and sends the
 result here. Each send is a **session package** folder:
 
-- `annotated.png` — the screenshot with the drawings and numbers
+- `annotated.png` — the screenshot **plus** what the user drew: colored lines/arrows/rectangles, violet-ringed numbered circles, and text with a small violet "B" tag at its top-left. All of that is the user's Backseat annotation, NOT part of the real screen
+- `screenshot.png` — the same capture without any annotations (blur boxes still applied); use it to read the real on-screen text
 - `brief.md` — what to do: capture context, memo, the numbered annotations with pixel coordinates and timing,
   and under each one the 🗣 sentences the user said while drawing it (with auto/manual link and a confidence)
 - `strokes.json`, `transcript.json`, `audio.webm` — raw data (rarely needed)
 
 ## How to read it
 
-1. If the `backseat` MCP server is available, call `backseat_latest` (brief + image inline). Otherwise read
-   the `brief.md` path the user pasted, then view `annotated.png` next to it.
+1. If the `backseat` MCP server is available, call `backseat_latest` (brief + annotated image inline; pass `includeOriginal: true` to also get `screenshot.png`). Otherwise read
+   the `brief.md` path the user pasted, then view `annotated.png` (and `screenshot.png` when you need the unmarked screen) next to it.
 2. Map each numbered annotation to the UI element at those pixel coordinates in the image. Arrows mean
    "this → there" or "look here"; badges number the spots the user talks about; blur boxes hide secrets — ignore them.
 3. Treat the 🗣 lines as the instruction for that spot. Low-confidence or "전역 지시" lines apply to the whole

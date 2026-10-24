@@ -1,10 +1,12 @@
 import type {
-  EditorInit, ExportPayload, Annotation, AgentTarget, Point, Transcript, Rect, CompareMode, CaptureMeta
+  EditorInit, ExportPayload, Annotation, AgentTarget, AgentKind, Point, Transcript, Rect, CompareMode, CaptureMeta, SendOptions
 } from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
+import { ColorPicker, colorButton, setColorButton } from './colorpicker'
+import { normalizeHex } from '../../shared/palette'
 import '@fontsource/noto-sans-kr/500.css'
 import '@fontsource/noto-sans-kr/700.css'
 import '@fontsource/nanum-gothic/700.css'
@@ -87,6 +89,7 @@ const cmpCtx = ctxOf(cmp, true)
 const memoInput = byId<HTMLInputElement>('memo')
 const statusEl = byId<HTMLElement>('status')
 const targetBar = byId<HTMLElement>('targetbar')
+const targetBtn = byId<HTMLButtonElement>('target-btn')
 const undoBtn = byId<HTMLButtonElement>('undo')
 const redoBtn = byId<HTMLButtonElement>('redo')
 const timelineBtn = byId<HTMLButtonElement>('timeline-toggle')
@@ -95,22 +98,54 @@ const player = byId<HTMLAudioElement>('player')
 const baseCtx = ctxOf(base, true) // blur and the compare diff read it back
 const inkCtx = ctxOf(ink)
 const toolBtns = document.querySelectorAll<HTMLButtonElement>('[data-tool]')
-const colorBtns = document.querySelectorAll<HTMLButtonElement>('[data-color]')
 const widthInput = byId<HTMLInputElement>('width')
 const widthDot = byId<HTMLElement>('width-dot')
 const fontSelect = byId<HTMLSelectElement>('font')
 const sizeSelect = byId<HTMLSelectElement>('font-size')
-const styleSelect = byId<HTMLSelectElement>('text-style')
+const styleBtns = Array.from(byId('text-style').querySelectorAll<HTMLButtonElement>('[data-text-style]'))
+const textBar = byId<HTMLElement>('textbar')
+const boldBtn = byId<HTMLButtonElement>('text-bold')
+const italicBtn = byId<HTMLButtonElement>('text-italic')
+const colorBtn = colorButton({ id: 'color', label: '', title: '색 (펜·도형·번호·글자)' })
+byId('color-group').append(colorBtn)
+const bgBtn = colorButton({ id: 'text-bg', label: '', title: '배경 상자 색' })
+const bgAutoBtn = byId<HTMLButtonElement>('text-bg-auto')
+bgAutoBtn.before(bgBtn)
+const bgOpacityInput = byId<HTMLInputElement>('text-bg-opacity')
+const invertBtn = byId<HTMLButtonElement>('text-invert')
+const outlineBtn = colorButton({ id: 'text-outline', label: '', title: '윤곽선 색' })
+byId('outline-group').append(outlineBtn)
+const shadowBtn = byId<HTMLButtonElement>('text-shadow')
 
 let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
 let t0 = 0
 let tool: Tool = 'pen'
-let color = '#E5484D'
+const DEFAULT_COLOR = '#E5484D'
+const LS_COLOR = 'backseat.color'
+/** The last pen colour the user picked (localStorage; storage may be unavailable). */
+function loadColor(): string {
+  try {
+    return normalizeHex(localStorage.getItem(LS_COLOR) ?? '') ?? DEFAULT_COLOR
+  } catch {
+    return DEFAULT_COLOR
+  }
+}
+let color = loadColor()
 let widthCss = 3
 let fontFamily: string | undefined = DEFAULT_FONT // undefined = system UI font
 let fontSizeCss = 24
 let textStyle: TextStyle = 'plate'
+/** Plate colour '#RRGGBB'; undefined = automatic (dark or white by text brightness). */
+let textBg: string | undefined
+/** Plate opacity 0..1; undefined = the automatic plate's own alpha. */
+let textBgOpacity: number | undefined
+/** Outline colour '#RRGGBB'; undefined = translucent black. */
+let textOutline: string | undefined
+let textShadow = false
+/** undefined = the font's default weight (see defaultBold). */
+let textBold: boolean | undefined
+let textItalic = false
 let view = 1 // displayed size / natural on-screen size
 let doc: Doc = { annotations: [], links: new Map(), crop: { x: 0, y: 0, width: 0, height: 0 } }
 let annotations: readonly Annotation[] = doc.annotations
@@ -141,7 +176,7 @@ let cmpWipe = 0.5
 let diffCache: number | null = null
 /** The open text input: a new text (index -1) or an edit of annotations[index]. */
 interface TextSession {
-  box: HTMLInputElement
+  box: HTMLTextAreaElement
   index: number
   orig: TextAnn | null
   at: Point
@@ -150,8 +185,16 @@ interface TextSession {
   font: string | undefined
   sizeCss: number
   style: TextStyle
+  bg: string | undefined
+  bgOpacity: number | undefined
+  outline: string | undefined
+  shadow: boolean
+  bold: boolean | undefined
+  italic: boolean
 }
 let textSession: TextSession | null = null
+/** Keeps the text bar visible while an annotation is being re-edited with another tool active. */
+let textbarPin = false
 let busy = false
 let pinned = false // small always-on-top reference window; 전송 no longer closes it
 let scrubT: number | null = null // non-null while the timeline is scrubbed/replaying
@@ -192,11 +235,14 @@ function applyStroke(ctx: CanvasRenderingContext2D, a: StrokeAnn): void {
   ctx.lineJoin = 'round'
 }
 
-/** Canvas / CSS font shorthand for a text annotation's family and size (px). */
-function fontString(family: string | undefined, sizePx: number): string {
-  if (!family) return `700 ${sizePx}px ${FALLBACK_FONTS}`
-  const weight = BOLD_FONTS.has(family) ? 700 : 400
-  return `${weight} ${sizePx}px "${family}", ${FALLBACK_FONTS}`
+/** Gothic faces and the system font default to bold; display / handwriting faces to regular. */
+const defaultBold = (family: string | undefined): boolean => !family || BOLD_FONTS.has(family)
+
+/** Canvas / CSS font shorthand for a text annotation's family, size (px), weight and slant. bold undefined = the font's default. */
+function fontString(family: string | undefined, sizePx: number, bold?: boolean, italic?: boolean): string {
+  const weight = (bold ?? defaultBold(family)) ? 700 : 400
+  const slant = italic ? 'italic ' : ''
+  return `${slant}${weight} ${sizePx}px ${family ? `"${family}", ` : ''}${FALLBACK_FONTS}`
 }
 
 const fontLoads = new Set<string>() // "font|text" combos already requested
@@ -215,7 +261,7 @@ async function loadDocFonts(): Promise<void> {
   const jobs: Promise<unknown>[] = []
   for (const a of annotations) {
     if (a.kind !== 'text') continue
-    const f = fontString(a.font, a.fontSize)
+    const f = fontString(a.font, a.fontSize, a.bold, a.italic)
     if (BUNDLED_FONTS.has(a.font ?? '')) jobs.push(document.fonts.load(f, a.text).catch(() => undefined))
   }
   if (jobs.length) await Promise.all(jobs)
@@ -223,26 +269,45 @@ async function loadDocFonts(): Promise<void> {
 
 const measureCtx = ctxOf(document.createElement('canvas'))
 
-interface TextMetrics { font: string; width: number; ascent: number; descent: number; pad: number }
+const LINE_HEIGHT = 1.3 // text line height, in font sizes
 
+interface TextMetrics {
+  font: string
+  lines: string[]
+  /** Widest line. */
+  width: number
+  /** Ink ascent of the first line / descent of the last, relative to the middle baseline. */
+  ascent: number
+  descent: number
+  pad: number
+  lineH: number
+  /** Ink height from the first line's top to the last line's bottom (no padding). */
+  height: number
+}
+
+/** Multi-line box of a text annotation: a.y is the middle of the FIRST line, lines are left-aligned. */
 function measureText(a: TextAnn): TextMetrics {
-  const font = fontString(a.font, a.fontSize)
+  const font = fontString(a.font, a.fontSize, a.bold, a.italic)
   measureCtx.font = font
   measureCtx.textBaseline = 'middle'
-  const m = measureCtx.measureText(a.text)
-  return {
-    font,
-    width: m.width,
-    ascent: m.actualBoundingBoxAscent,
-    descent: m.actualBoundingBoxDescent,
-    pad: a.fontSize * 0.35
-  }
+  const lines = a.text.split('\n')
+  let width = 0
+  for (const l of lines) width = Math.max(width, measureCtx.measureText(l).width)
+  // a blank line has no ink: measure a CJK glyph instead so the box keeps its height
+  const edge = (l: string): ReturnType<CanvasRenderingContext2D['measureText']> => measureCtx.measureText(l.trim() ? l : '가')
+  const lineH = a.fontSize * LINE_HEIGHT
+  const ascent = edge(lines[0]).actualBoundingBoxAscent
+  const descent = edge(lines[lines.length - 1]).actualBoundingBoxDescent
+  return { font, lines, width, ascent, descent, pad: a.fontSize * 0.35, lineH, height: ascent + (lines.length - 1) * lineH + descent }
+}
+
+function rectOf(a: TextAnn, m: TextMetrics): Rect {
+  return { x: a.x - m.pad, y: a.y - m.ascent - m.pad, width: m.width + m.pad * 2, height: m.height + m.pad * 2 }
 }
 
 /** Rect (image px) the text occupies including its plate padding: used for drawing and hit-testing. */
 function textRect(a: TextAnn): Rect {
-  const m = measureText(a)
-  return { x: a.x - m.pad, y: a.y - m.ascent - m.pad, width: m.width + m.pad * 2, height: m.ascent + m.descent + m.pad * 2 }
+  return rectOf(a, measureText(a))
 }
 
 /** '#rrggbb' or 'rgb(r, g, b)' -> perceived brightness 0..1 (unknown strings count as dark). */
@@ -263,33 +328,87 @@ function brightness(c: string): number {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255
 }
 
-/** Light text gets a dark plate, dark / saturated text a white one. */
-function plateColor(textColor: string): string {
-  return brightness(textColor) > 0.6 ? 'rgba(20,20,24,0.78)' : 'rgba(255,255,255,0.85)'
+/** The automatic plate: light text gets a dark plate, dark / saturated text a white one. */
+function autoPlate(textColor: string): { hex: string; alpha: number } {
+  return brightness(textColor) > 0.6 ? { hex: '#141418', alpha: 0.78 } : { hex: '#FFFFFF', alpha: 0.85 }
+}
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1]
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+
+/** Plate fill as a CSS colour: bg (or the automatic plate) at bgOpacity (or the automatic alpha). */
+function plateColor(textColor: string, bg?: string, bgOpacity?: number): string {
+  const auto = autoPlate(textColor)
+  const [r, g, b] = hexToRgb(bg ?? auto.hex) ?? hexToRgb(auto.hex) ?? [0, 0, 0]
+  return `rgba(${r},${g},${b},${bgOpacity ?? auto.alpha})`
+}
+
+/** Soft drop shadow shared by the canvas and the CSS preview (blur / offset scale with the font size). */
+const SHADOW_COLOR = 'rgba(0,0,0,0.55)'
+const shadowBlur = (fontSize: number): number => fontSize * 0.25
+const shadowDy = (fontSize: number): number => fontSize * 0.08
+
+/** Violet "made in Backseat" mark so an AI can tell typed text / numbered badges from real screen content. */
+const TAG_COLOR = '#6E56CF'
+
+/** Small rounded square with a white bold "B", centred just inside the box's top-left corner (x, y). s = size in image px. */
+function drawTag(ctx: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+  const cx = x + s * 0.25
+  const cy = y + s * 0.25
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(cx - s / 2, cy - s / 2, s, s, s * 0.28)
+  ctx.fillStyle = TAG_COLOR
+  ctx.fill()
+  ctx.lineWidth = s / 10
+  ctx.strokeStyle = '#fff'
+  ctx.stroke()
+  ctx.fillStyle = '#fff'
+  ctx.font = `bold ${Math.round(s * 0.7)}px system-ui, "Malgun Gothic", sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('B', cx, cy + s * 0.04)
+  ctx.restore()
 }
 
 function drawText(ctx: CanvasRenderingContext2D, a: TextAnn): void {
   const m = measureText(a)
   ensureFont(m.font, a.text)
+  const box = rectOf(a, m)
   ctx.save()
   ctx.font = m.font
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'start'
   const style = a.style ?? 'plate'
+  const shadowOn = (): void => {
+    ctx.shadowColor = SHADOW_COLOR
+    ctx.shadowBlur = shadowBlur(a.fontSize)
+    ctx.shadowOffsetY = shadowDy(a.fontSize)
+  }
+  const shadowOff = (): void => { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0 }
   if (style === 'plate') {
-    ctx.fillStyle = plateColor(a.color)
+    ctx.fillStyle = plateColor(a.color, a.bg, a.bgOpacity)
+    if (a.shadow) shadowOn()
     ctx.beginPath()
-    ctx.roundRect(a.x - m.pad, a.y - m.ascent - m.pad, m.width + m.pad * 2, m.ascent + m.descent + m.pad * 2, a.fontSize * 0.3)
+    ctx.roundRect(box.x, box.y, box.width, box.height, a.fontSize * 0.3)
     ctx.fill()
+    shadowOff()
   } else if (style === 'outline') {
     ctx.lineJoin = 'round'
     ctx.lineWidth = Math.max(1, a.fontSize / 9)
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)'
-    ctx.strokeText(a.text, a.x, a.y)
-  }
+    ctx.strokeStyle = a.outline ?? 'rgba(0,0,0,0.6)'
+    if (a.shadow) shadowOn() // the outlined silhouette casts the shadow; the fill below stays crisp
+    m.lines.forEach((l, i) => ctx.strokeText(l, a.x, a.y + i * m.lineH))
+    shadowOff()
+  } else if (a.shadow) shadowOn()
   ctx.fillStyle = a.color
-  ctx.fillText(a.text, a.x, a.y)
-  ctx.restore()
+  m.lines.forEach((l, i) => ctx.fillText(l, a.x, a.y + i * m.lineH))
+  ctx.restore() // also clears the shadow before the tag
+  drawTag(ctx, box.x, box.y, Math.max(9 * (init?.meta.scaleFactor ?? 1), a.fontSize * 0.42))
 }
 
 /** Draw the first `count` points of a stroke (all when undefined). */
@@ -357,7 +476,15 @@ function drawBadge(ctx: CanvasRenderingContext2D, a: BadgeAnn, no: number): void
   ctx.fillStyle = a.color
   ctx.fill()
   ctx.lineWidth = Math.max(1, a.size / 16)
+  const stroke = ctx.lineWidth
   ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+  ctx.stroke()
+  // violet outer ring = Backseat mark
+  const ring = Math.max(1.5, a.size / 9)
+  ctx.beginPath()
+  ctx.arc(a.x, a.y, r + ring / 2 + stroke, 0, Math.PI * 2)
+  ctx.lineWidth = ring
+  ctx.strokeStyle = TAG_COLOR
   ctx.stroke()
   ctx.fillStyle = '#fff'
   ctx.font = `bold ${Math.round(a.size * 0.58)}px system-ui, "Malgun Gothic", sans-serif`
@@ -703,13 +830,29 @@ function setCompareMode(m: CompareMode): void {
 
 const CMP_LABELS: Record<CompareMode, string> = { overlay: '겹치기', wipe: '와이프', diff: '차이' }
 
+/** Base image + every annotation on one canvas (image px). */
+function flattenCanvas(): HTMLCanvasElement {
+  const out = document.createElement('canvas')
+  out.width = base.width
+  out.height = base.height
+  const ctx = ctxOf(out, true)
+  ctx.drawImage(base, 0, 0)
+  drawAll(ctx, null) // always the full picture, even while scrubbed
+  return out
+}
+
 function flatten(): string {
+  return flattenCanvas().toDataURL('image/png')
+}
+
+/** The original capture with only the blur (privacy) annotations applied: no other annotations, no tags. */
+function flattenBase(): string {
   const out = document.createElement('canvas')
   out.width = base.width
   out.height = base.height
   const ctx = ctxOf(out)
   ctx.drawImage(base, 0, 0)
-  drawAll(ctx, null) // always the full picture, even while scrubbed
+  for (const a of annotations) if (a.kind === 'blur') drawBlur(ctx, a)
   return out.toDataURL('image/png')
 }
 
@@ -797,31 +940,68 @@ function ensureLive(): void {
 
 // ---------- text tool ----------
 
-/** Mirror the session's font, size, colour and plate onto the live text input. */
+/** The optional annotation fields of a text: written only when they differ from the default look, so old text stays byte-identical. */
+type TextExtras = Pick<TextAnn, 'bg' | 'bgOpacity' | 'outline' | 'shadow' | 'bold' | 'italic'>
+const EXTRA_KEYS = ['bg', 'bgOpacity', 'outline', 'shadow', 'bold', 'italic'] as const
+
+function textExtras(sess: TextSession): TextExtras {
+  const out: TextExtras = {}
+  if (sess.style === 'plate') {
+    if (sess.bg !== undefined) out.bg = sess.bg
+    if (sess.bgOpacity !== undefined && Math.abs(sess.bgOpacity - autoPlate(sess.color).alpha) > 0.004) {
+      out.bgOpacity = Math.round(sess.bgOpacity * 100) / 100
+    }
+  }
+  if (sess.style === 'outline' && sess.outline !== undefined) out.outline = sess.outline
+  if (sess.shadow) out.shadow = true
+  if (sess.bold !== undefined && sess.bold !== defaultBold(sess.font)) out.bold = sess.bold
+  if (sess.italic) out.italic = true
+  return out
+}
+
+/** A copy of the annotation whose optional style fields are exactly `ex`. */
+function withExtras(a: TextAnn, ex: TextExtras): TextAnn {
+  const next = { ...a }
+  for (const k of EXTRA_KEYS) delete next[k]
+  return Object.assign(next, ex)
+}
+
+/** Mirror the session's font, size, colour, plate, outline, shadow, weight and slant onto the live text box. */
 function styleTextBox(sess: TextSession): void {
   const box = sess.box
-  box.style.font = fontString(sess.font, sess.sizeCss * view)
-  box.style.lineHeight = '1.3'
+  const px = sess.sizeCss * view
+  const plate = sess.style === 'plate'
+  const outline = sess.style === 'outline'
+  const shadow = `0 ${shadowDy(px)}px ${shadowBlur(px)}px ${SHADOW_COLOR}`
+  box.style.font = fontString(sess.font, px, sess.bold, sess.italic)
+  box.style.lineHeight = String(LINE_HEIGHT)
   box.style.color = sess.color
-  box.style.background = sess.style === 'plate' ? plateColor(sess.color) : 'transparent'
-  box.classList.toggle('st-outline', sess.style === 'outline')
+  box.style.background = plate ? plateColor(sess.color, sess.bg, sess.bgOpacity) : 'transparent'
+  box.style.boxShadow = plate && sess.shadow ? shadow : 'none'
+  box.style.setProperty('-webkit-text-stroke', outline ? `${Math.max(1, px / 9)}px ${sess.outline ?? 'rgba(0,0,0,0.6)'}` : '0')
+  box.style.textShadow = !plate && sess.shadow ? shadow : 'none'
+  box.classList.toggle('st-outline', outline)
 }
 
 function finishText(sess: TextSession, commitIt: boolean): void {
   if (textSession !== sess) return
   textSession = null // first, so the blur fired by remove() is a no-op
+  textbarPin = false
   const text = sess.box.value.trim()
   sess.box.remove()
+  syncToolbar() // the text bar hides again unless the text tool is active
   if (!commitIt || !text || !init) { render(); return }
   const fontSize = sess.sizeCss * init.meta.scaleFactor
+  const ex = textExtras(sess)
   if (sess.orig) {
     const o = sess.orig
     const unchanged =
       o.text === text && o.color === sess.color && o.font === sess.font &&
-      (o.style ?? 'plate') === sess.style && Math.abs(o.fontSize - fontSize) < 0.01
+      (o.style ?? 'plate') === sess.style && Math.abs(o.fontSize - fontSize) < 0.01 &&
+      EXTRA_KEYS.every((k) => o[k] === ex[k])
     if (unchanged || annotations[sess.index] !== o) { render(); return }
     const next = [...annotations]
-    next[sess.index] = { ...o, text, color: sess.color, font: sess.font, style: sess.style, fontSize, tEnd: now() }
+    next[sess.index] = { ...withExtras(o, ex), text, color: sess.color, font: sess.font, style: sess.style, fontSize, tEnd: now() }
     commit('텍스트 수정', next)
     return
   }
@@ -829,7 +1009,7 @@ function finishText(sess: TextSession, commitIt: boolean): void {
     ...annotations,
     {
       kind: 'text', text, x: sess.at.x, y: sess.at.y, color: sess.color, fontSize,
-      font: sess.font, style: sess.style, tStart: sess.tStart, tEnd: now()
+      font: sess.font, style: sess.style, ...ex, tStart: sess.tStart, tEnd: now()
     }
   ])
 }
@@ -839,12 +1019,26 @@ function commitPendingText(): void {
 }
 
 const isToolbarControl = (n: EventTarget | null): boolean =>
+  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range') ||
+  (n instanceof HTMLElement && n.closest('#toolbar2, #textbar') !== null) ||
+  (n instanceof Node && picker.root.contains(n)) // the colour popover works on the open text box
+
+/** Controls that need the real mouse-down (focus / drag): selects and sliders (the colour popover has its own handling). */
+const isNativeToolbarControl = (n: EventTarget | null): boolean =>
   n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range')
 
-/** Open the text input at (left, top) in wrap CSS px; `orig` = existing annotation being edited. */
+/** Shift+Enter: insert a line break at the caret (execCommand keeps the box's own undo history). */
+function insertNewline(box: HTMLTextAreaElement): void {
+  if (document.execCommand('insertText', false, '\n')) return
+  box.setRangeText('\n', box.selectionStart, box.selectionEnd, 'end')
+  box.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/** Open the text box at (left, top) in wrap CSS px; `orig` = existing annotation being edited. */
 function openTextBox(left: number, top: number, at: Point, index: number, orig: TextAnn | null, initial: string): void {
-  const box = document.createElement('input')
-  box.type = 'text'
+  const box = document.createElement('textarea')
+  box.rows = 1 // auto-grows with the text (field-sizing: content), no scrollbars
+  box.wrap = 'off'
   box.className = 'textbox'
   box.spellcheck = false
   box.value = initial
@@ -852,20 +1046,26 @@ function openTextBox(left: number, top: number, at: Point, index: number, orig: 
   box.style.top = `${top}px`
   const sess: TextSession = {
     box, index, orig, at, tStart: orig ? orig.tStart : now(),
-    color, font: fontFamily, sizeCss: fontSizeCss, style: textStyle
+    color, font: fontFamily, sizeCss: fontSizeCss, style: textStyle,
+    bg: textBg, bgOpacity: textBgOpacity, outline: textOutline, shadow: textShadow, bold: textBold, italic: textItalic
   }
   styleTextBox(sess)
   box.addEventListener('keydown', (ev) => {
     if (ev.isComposing) return // Korean IME: Enter confirms the composition
-    if (ev.key === 'Enter') { ev.preventDefault(); finishText(sess, true) }
-    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finishText(sess, false) }
+    if (ev.key === 'Enter') {
+      ev.preventDefault()
+      if (ev.shiftKey) insertNewline(box)
+      else finishText(sess, true)
+    } else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finishText(sess, false) }
   })
   box.addEventListener('blur', (ev) => {
     if (isToolbarControl(ev.relatedTarget)) return // picking a font / size / style keeps the box open
+    if (picker.isOpen()) return // the colour popover (or its eyedropper) took the focus: the box stays open
     finishText(sess, true)
   })
   textSession = sess
   wrap.appendChild(box)
+  syncToolbar() // shows the text bar
   if (orig) render() // hide the original under the box
   setTimeout(() => { box.focus(); if (orig) box.select() }, 0) // after the browser's own mousedown focus handling
 }
@@ -877,7 +1077,7 @@ function startText(p: Point, e: PointerEvent): void {
 
 const SIZE_CHOICES = [14, 18, 24, 32, 48]
 
-/** Edit annotations[index] in place: the toolbar adopts its font / size / colour / style. */
+/** Edit annotations[index] in place: the toolbar adopts its font / size / colour / style / effects. */
 function startEditText(index: number): void {
   const a = annotations[index]
   if (!init || !a || a.kind !== 'text') return
@@ -885,8 +1085,15 @@ function startEditText(index: number): void {
   fontFamily = a.font
   textStyle = a.style ?? 'plate'
   color = a.color
+  textBg = a.bg
+  textBgOpacity = a.bgOpacity
+  textOutline = a.outline
+  textShadow = a.shadow === true
+  textBold = a.bold
+  textItalic = a.italic === true
   const css = a.fontSize / init.meta.scaleFactor
   fontSizeCss = SIZE_CHOICES.reduce((best, v) => (Math.abs(v - css) < Math.abs(best - css) ? v : best), SIZE_CHOICES[0])
+  textbarPin = true // the text bar shows (and the image is re-laid-out) before the box is positioned
   syncToolbar()
   const r = ink.getBoundingClientRect()
   openTextBox(a.x * (r.width / ink.width), a.y * (r.height / ink.height), { x: a.x, y: a.y }, index, a, a.text)
@@ -1235,6 +1442,7 @@ function buildPayload(): ExportPayload | null {
   commitPendingText()
   const payload: ExportPayload = {
     pngDataUrl: flatten(),
+    basePngDataUrl: flattenBase(),
     memo: memoInput.value.trim(),
     annotations: [...annotations],
     meta: exportMeta(),
@@ -1280,12 +1488,12 @@ async function send(): Promise<void> {
     const payload = buildPayload()
     if (!payload) return
     setStatus('전송 중…')
-    const r = await window.backseat.editor.send(payload, { pressEnter: false })
+    const r = await window.backseat.editor.send(payload, sendOptions())
     setStatus(r.message, !r.ok)
     if (r.ok && r.delivered === 'clipboard') {
       // nothing was pasted anywhere: keep the editor open so the user sees what happened
-      targetBar.textContent = '대상 창이 없어 클립보드에 복사했습니다. 채팅창이나 터미널에 Ctrl+V 하세요.'
-      targetBar.title = ''
+      targetNote = '대상 창이 없어 클립보드에 복사했습니다. 채팅창이나 터미널에 Ctrl+V 하세요.'
+      showTarget()
     } else if (r.ok && r.delivered === 'pasted') {
       closing = true // stay busy: no double send while the status is visible
       if (!pinned) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
@@ -1303,20 +1511,200 @@ const METHOD_HINT: Record<AgentTarget['method'], string> = {
   clipboard: '클립보드'
 }
 
-function showTarget(target: AgentTarget | null): void {
-  targetBar.textContent = ''
-  if (!target) {
-    targetBar.textContent = '대상 없음 · 전송하면 클립보드에 복사됩니다'
-    targetBar.title = ''
+// ---------- send target (detected, or picked from the Ctrl+T menu for this send only) ----------
+
+let initData: EditorInit | null = null // the init payload as received (`init` is set once the image is drawn)
+/** The window picked in the target menu; null = the automatic / pinned target main detected. */
+let chosenTarget: AgentTarget | null = null
+/** State of the "pin as default" checkbox. */
+let pinChecked = false
+/** One-off message replacing the target label (e.g. after a clipboard-only send). */
+let targetNote = ''
+
+function showTarget(): void {
+  const label = targetBtn.querySelector<HTMLElement>('.tb-label')
+  const hint = targetBtn.querySelector<HTMLElement>('.hint')
+  if (!label || !hint) return
+  const target = chosenTarget ?? initData?.target ?? null
+  const menuTitle = hotkeys.label('target')
+  if (targetNote) {
+    label.textContent = targetNote
+    hint.textContent = ''
+    targetBtn.title = menuTitle
     return
   }
-  targetBar.append(`→ ${target.label}`)
-  const hint = document.createElement('span')
-  hint.className = 'hint'
+  if (!target) {
+    label.textContent = '대상 없음 · 전송하면 클립보드에 복사됩니다'
+    hint.textContent = ''
+    targetBtn.title = menuTitle
+    return
+  }
+  const tag = chosenTarget ? ' (선택)' : initData?.targetPinned ? ' (고정)' : ''
+  label.textContent = `→ ${target.label}${tag}`
   hint.textContent = METHOD_HINT[target.method]
-  targetBar.append(hint)
-  targetBar.title = `${target.title} (${target.process})`
+  targetBtn.title = `${menuTitle}\n${target.title} (${target.process})`
 }
+
+/** What 전송 passes to the main process: the picked window and / or a changed pin state. */
+function sendOptions(): SendOptions {
+  const o: SendOptions = { pressEnter: false }
+  if (chosenTarget) o.targetHwnd = chosenTarget.hwnd
+  if (pinChecked !== (initData?.targetPinned === true)) o.pinTarget = pinChecked
+  return o
+}
+
+const KIND_CHIP: Record<AgentKind, string> = {
+  'claude-code': 'Claude Code', 'claude-desktop': 'Claude 앱', cursor: 'Cursor', vscode: 'VS Code', codex: 'Codex',
+  orca: 'Orca', terminal: '터미널', chat: '웹 채팅', unknown: '창'
+}
+function kindChip(t: AgentTarget): string {
+  if (t.kind === 'chat') return /^slack/i.test(t.label) ? 'Slack' : /^discord/i.test(t.label) ? 'Discord' : '웹 채팅'
+  return KIND_CHIP[t.kind]
+}
+const METHOD_ROW_HINT: Record<AgentTarget['method'], string> = {
+  'paste-path': '경로 붙여넣기',
+  'paste-image': '이미지 붙여넣기',
+  clipboard: '클립보드'
+}
+
+const targetMenu = document.createElement('div')
+targetMenu.id = 'target-menu'
+targetMenu.hidden = true
+targetMenu.setAttribute('role', 'listbox')
+targetMenu.setAttribute('aria-label', '전송 대상')
+document.body.append(targetMenu)
+let menuRows: { el: HTMLElement; target: AgentTarget | null }[] = []
+let menuActive = 0
+
+const targetMenuOpen = (): boolean => !targetMenu.hidden
+
+function setMenuActive(i: number): void {
+  menuActive = (i + menuRows.length) % menuRows.length
+  menuRows.forEach((r, k) => r.el.classList.toggle('active', k === menuActive))
+  menuRows[menuActive]?.el.scrollIntoView({ block: 'nearest' })
+}
+
+function pickMenuRow(i: number): void {
+  const row = menuRows[i]
+  if (!row) return
+  chosenTarget = row.target
+  targetNote = ''
+  closeTargetMenu()
+  showTarget()
+}
+
+function closeTargetMenu(): void {
+  if (!targetMenuOpen()) return
+  targetMenu.hidden = true
+  targetMenu.replaceChildren()
+  menuRows = []
+  targetBtn.setAttribute('aria-expanded', 'false')
+  document.removeEventListener('pointerdown', onMenuPointerDown, true)
+  window.removeEventListener('keydown', onMenuKey, true)
+  window.removeEventListener('resize', closeTargetMenu)
+}
+
+function onMenuPointerDown(e: PointerEvent): void {
+  const t = e.target as Node | null
+  if (t && (targetMenu.contains(t) || targetBtn.contains(t))) return
+  closeTargetMenu()
+}
+
+function onMenuKey(e: KeyboardEvent): void {
+  if (e.isComposing) return
+  const stop = (): void => { e.preventDefault(); e.stopImmediatePropagation() }
+  if (e.key === 'Escape') { stop(); closeTargetMenu() }
+  else if (e.key === 'ArrowDown') { stop(); setMenuActive(menuActive + 1) }
+  else if (e.key === 'ArrowUp') { stop(); setMenuActive(menuActive - 1) }
+  else if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement)) { stop(); pickMenuRow(menuActive) }
+}
+
+function openTargetMenu(): void {
+  if (!initData) return
+  commitPendingText() // the menu and an open text box would fight over the keyboard
+  picker.close()
+  const detected = initData.target
+  const cands = initData.candidates ?? []
+  const list = document.createElement('div')
+  list.className = 'tm-list'
+  menuRows = []
+  const addRow = (t: AgentTarget | null, chip: string, agent: boolean, text: string, hint: string, current: boolean): void => {
+    const el = document.createElement('div')
+    el.className = 'tm-item'
+    el.setAttribute('role', 'option')
+    el.setAttribute('aria-selected', String(current))
+    const mark = document.createElement('span')
+    mark.className = 'tm-mark'
+    mark.textContent = current ? '✓' : ''
+    const c = document.createElement('span')
+    c.className = `tm-chip${agent ? ' agent' : ''}`
+    c.textContent = chip
+    const title = document.createElement('span')
+    title.className = 'tm-title'
+    title.textContent = text
+    title.title = text
+    const h = document.createElement('span')
+    h.className = 'tm-hint'
+    h.textContent = hint
+    el.append(mark, c, title, h)
+    const idx = menuRows.length
+    el.addEventListener('click', () => pickMenuRow(idx))
+    el.addEventListener('mousemove', () => { if (menuActive !== idx) setMenuActive(idx) })
+    menuRows.push({ el, target: t })
+    list.append(el)
+  }
+  const pinned = initData.targetPinned === true
+  addRow(
+    null, pinned ? '고정' : '자동', true,
+    detected ? `${pinned ? '고정' : '자동'}: ${detected.label}` : '자동: 대상 없음 (클립보드)',
+    detected ? METHOD_ROW_HINT[detected.method] : '', chosenTarget === null
+  )
+  let sepDone = false
+  for (const t of cands) {
+    if (!sepDone && t.kind === 'unknown') {
+      sepDone = true
+      const sep = document.createElement('div')
+      sep.className = 'tm-sep'
+      list.append(sep)
+    }
+    addRow(t, kindChip(t), t.kind !== 'unknown', t.title.slice(0, 40) || t.process, METHOD_ROW_HINT[t.method], chosenTarget?.hwnd === t.hwnd)
+  }
+  const foot = document.createElement('div')
+  foot.className = 'tm-foot'
+  const pin = document.createElement('label')
+  pin.className = 'tm-pin'
+  const box = document.createElement('input')
+  box.type = 'checkbox'
+  box.checked = pinChecked
+  box.addEventListener('change', () => { pinChecked = box.checked })
+  pin.append(box, '이 창을 기본 대상으로 고정')
+  foot.append(pin)
+  targetMenu.replaceChildren(list, foot)
+
+  targetMenu.hidden = false
+  targetMenu.style.visibility = 'hidden'
+  const a = targetBtn.getBoundingClientRect()
+  const bar = targetBar.getBoundingClientRect()
+  const vw = document.documentElement.clientWidth
+  const vh = document.documentElement.clientHeight
+  const top = Math.round(bar.bottom + 2)
+  list.style.maxHeight = `${Math.max(80, vh - top - 8 - 48)}px` // keep room for the footer row
+  const w = targetMenu.offsetWidth
+  targetMenu.style.left = `${Math.round(Math.max(8, Math.min(a.left, vw - w - 8)))}px`
+  targetMenu.style.top = `${top}px`
+  targetMenu.style.visibility = ''
+  targetBtn.setAttribute('aria-expanded', 'true')
+  setMenuActive(Math.max(0, menuRows.findIndex((r) => (r.target?.hwnd ?? null) === (chosenTarget?.hwnd ?? null))))
+  document.addEventListener('pointerdown', onMenuPointerDown, true)
+  window.addEventListener('keydown', onMenuKey, true)
+  window.addEventListener('resize', closeTargetMenu)
+}
+
+function toggleTargetMenu(): void {
+  if (targetMenuOpen()) closeTargetMenu()
+  else openTargetMenu()
+}
+targetBtn.addEventListener('mousedown', (e) => e.preventDefault())
 
 async function copy(): Promise<void> {
   if (busy || !init) return
@@ -1599,15 +1987,48 @@ function setTool(next: Tool): void {
   syncToolbar()
 }
 
+/** Reflect the text props into toolbar row 2's B / I and the text bar; show the bar only for the text tool / an open box. */
+function syncTextBar(): void {
+  const show = tool === 'text' || textSession !== null || textbarPin
+  if (textBar.hidden === show) {
+    textBar.hidden = !show
+    layout() // the stage got shorter / taller
+  }
+  const auto = autoPlate(color)
+  const plate = textStyle === 'plate'
+  boldBtn.setAttribute('aria-pressed', String(textBold ?? defaultBold(fontFamily)))
+  italicBtn.setAttribute('aria-pressed', String(textItalic))
+  shadowBtn.setAttribute('aria-pressed', String(textShadow))
+  setColorButton(bgBtn, textBg ?? auto.hex)
+  bgBtn.classList.toggle('auto', textBg === undefined)
+  bgBtn.title = textBg === undefined ? '배경 상자 색 (지금은 자동)' : '배경 상자 색'
+  bgAutoBtn.setAttribute('aria-pressed', String(textBg === undefined))
+  bgOpacityInput.value = String(Math.round((textBgOpacity ?? auto.alpha) * 100))
+  setColorButton(outlineBtn, textOutline ?? '#000000')
+  const dimGroup = (el: HTMLElement, off: boolean): void => {
+    const g = el.closest<HTMLElement>('.group')
+    if (!g) return
+    g.classList.toggle('dim', off)
+    g.inert = off // not clickable, not focusable: a click falls through to the bar, which keeps the box focused
+  }
+  dimGroup(bgBtn, !plate)
+  dimGroup(outlineBtn, textStyle !== 'outline')
+}
+
 function syncToolbar(): void {
   toolBtns.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool))
-  colorBtns.forEach((b) => b.classList.toggle('active', b.dataset.color === color))
+  setColorButton(colorBtn, color)
   widthInput.value = String(widthCss)
   widthDot.style.width = widthDot.style.height = `${widthCss}px`
   widthDot.style.background = color
   fontSelect.value = fontFamily ?? ''
   sizeSelect.value = String(fontSizeCss)
-  styleSelect.value = textStyle
+  styleBtns.forEach((b) => {
+    const on = b.dataset.textStyle === textStyle
+    b.classList.toggle('active', on)
+    b.setAttribute('aria-checked', String(on))
+  })
+  syncTextBar()
   wrap.classList.toggle('text-tool', tool === 'text')
   wrap.classList.toggle('eraser-tool', tool === 'eraser')
   if (tool !== 'text') wrap.classList.remove('over-text')
@@ -1631,11 +2052,11 @@ wipeInput.addEventListener('input', () => {
 compareBar.addEventListener('mousedown', (e) => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault() })
 
 toolBtns.forEach((b) => b.addEventListener('click', () => setTool(isTool(b.dataset.tool) ? b.dataset.tool : 'pen')))
-colorBtns.forEach((b) => b.addEventListener('click', () => {
-  color = b.dataset.color ?? color
-  if (textSession) { textSession.color = color; styleTextBox(textSession) }
-  syncToolbar()
-}))
+/** Pen / arrow / text colour (one shared colour). The open text box follows. */
+function setColor(c: string, refocus = false): void {
+  color = c
+  refreshTextSession(refocus)
+}
 function setWidth(v: number): void {
   widthCss = Math.min(24, Math.max(1, Math.round(v)))
   syncToolbar()
@@ -1643,15 +2064,67 @@ function setWidth(v: number): void {
 widthInput.addEventListener('input', () => setWidth(Number(widthInput.value) || widthCss))
 widthInput.addEventListener('change', () => widthInput.blur())
 
-/** A font / size / style pick applies to the open text box too, and hands focus back to it. */
-function textPropChanged(sel: HTMLSelectElement): void {
+/** Push the module-level text props (colour, effects; not font / size) into the open box and, usually, hand focus back to it. */
+function refreshTextSession(refocus = true): void {
+  const s = textSession
+  if (s) {
+    s.color = color
+    s.style = textStyle
+    s.bg = textBg
+    s.bgOpacity = textBgOpacity
+    s.outline = textOutline
+    s.shadow = textShadow
+    s.bold = textBold
+    s.italic = textItalic
+    styleTextBox(s)
+  }
+  syncToolbar()
+  if (refocus) s?.box.focus()
+}
+
+// One setter per text prop: the toolbar controls (and a later colour popover) go through these.
+function setTextStyle(v: TextStyle, refocus = true): void { textStyle = v; refreshTextSession(refocus) }
+/** '#RRGGBB' or undefined = automatic plate colour. */
+function setTextBg(v: string | undefined, refocus = true): void { textBg = v?.toUpperCase(); refreshTextSession(refocus) }
+/** 0..1 or undefined = the automatic plate's own alpha. */
+function setTextBgOpacity(v: number | undefined, refocus = true): void {
+  textBgOpacity = v === undefined ? undefined : Math.min(1, Math.max(0.1, Math.round(v * 100) / 100))
+  refreshTextSession(refocus)
+}
+/** '#RRGGBB' or undefined = translucent black. */
+function setTextOutline(v: string | undefined, refocus = true): void { textOutline = v?.toUpperCase(); refreshTextSession(refocus) }
+function setTextShadow(on: boolean, refocus = true): void { textShadow = on; refreshTextSession(refocus) }
+/** undefined = the font's default weight. */
+function setTextBold(v: boolean | undefined, refocus = true): void { textBold = v; refreshTextSession(refocus) }
+function setTextItalic(on: boolean, refocus = true): void { textItalic = on; refreshTextSession(refocus) }
+
+/** '#RRGGBB' (upper case) for any hex colour, or null. */
+function normHex(c: string): string | null {
+  const rgb = hexToRgb(c)
+  return rgb ? `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`.toUpperCase() : null
+}
+
+/** Swap the text colour and the plate colour (an automatic plate counts as its effective colour); turns the plate on. */
+function invertTextColors(): void {
+  const auto = autoPlate(color)
+  const plateHex = normHex(textBg ?? auto.hex) ?? auto.hex
+  const alpha = textBgOpacity ?? auto.alpha
+  const textHex = normHex(color) ?? '#FFFFFF'
+  color = plateHex
+  textBg = textHex
+  // keep the plate as translucent as it was; "automatic" only if that matches the new text colour's own alpha
+  textBgOpacity = Math.abs(alpha - autoPlate(color).alpha) > 0.004 ? alpha : undefined
+  textStyle = 'plate'
+  refreshTextSession()
+}
+
+/** A font / size pick applies to the open text box too, and hands focus back to it. */
+function textPropChanged(sel: HTMLElement): void {
   if (textSession) {
     textSession.font = fontFamily
     textSession.sizeCss = fontSizeCss
-    textSession.style = textStyle
-    styleTextBox(textSession)
   }
-  syncToolbar()
+  refreshTextSession(false)
   sel.blur()
   textSession?.box.focus()
 }
@@ -1663,15 +2136,100 @@ sizeSelect.addEventListener('change', () => {
   fontSizeCss = Number(sizeSelect.value) || fontSizeCss
   textPropChanged(sizeSelect)
 })
-styleSelect.addEventListener('change', () => {
-  const v = styleSelect.value
-  if (isTextStyle(v)) textStyle = v
-  textPropChanged(styleSelect)
+styleBtns.forEach((b) => b.addEventListener('click', () => {
+  const v = b.dataset.textStyle ?? ''
+  if (isTextStyle(v)) setTextStyle(v)
+}))
+boldBtn.addEventListener('click', () => setTextBold(!(textBold ?? defaultBold(fontFamily))))
+italicBtn.addEventListener('click', () => setTextItalic(!textItalic))
+shadowBtn.addEventListener('click', () => setTextShadow(!textShadow))
+invertBtn.addEventListener('click', invertTextColors)
+bgAutoBtn.addEventListener('click', () => setTextBg(textBg === undefined ? autoPlate(color).hex : undefined))
+bgOpacityInput.addEventListener('input', () => setTextBgOpacity(Number(bgOpacityInput.value) / 100, false))
+// the slider is a native control: give the focus back to the open box once it is done
+bgOpacityInput.addEventListener('change', () => textSession?.box.focus())
+bgOpacityInput.addEventListener('blur', (ev) => {
+  const sess = textSession
+  if (!sess || ev.relatedTarget === sess.box || isToolbarControl(ev.relatedTarget)) return
+  if (!document.hasFocus()) return
+  finishText(sess, true)
+})
+window.addEventListener('focus', () => { // back from the popover's native colour dialog
+  const ae = document.activeElement
+  if (textSession && ae instanceof HTMLInputElement && ae.type === 'color') textSession.box.focus()
 })
 // keep focus (e.g. in the text box) when clicking toolbar buttons; selects and sliders need the mouse
-for (const bar of [byId('toolbar'), byId('toolbar2')]) {
-  bar.addEventListener('mousedown', (e) => { if (!isToolbarControl(e.target)) e.preventDefault() })
+for (const bar of [byId('toolbar'), byId('toolbar2'), textBar]) {
+  bar.addEventListener('mousedown', (e) => { if (!isNativeToolbarControl(e.target)) e.preventDefault() })
 }
+
+// ---------- colour popover ----------
+
+const picker = new ColorPicker()
+
+/** One-shot "pick a colour from the capture" mode (the popover's eyedropper when window.EyeDropper is missing). */
+function sampleFromCanvas(): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!init) { resolve(null); return }
+    setStatus('캡처 화면을 클릭해 색을 집으세요 (Esc 취소)')
+    stage.classList.add('sampling')
+    let done = false
+    const finish = (c: string | null): void => {
+      if (done) return
+      done = true
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('mousedown', onMouse, true)
+      window.removeEventListener('keydown', onKey, true)
+      stage.classList.remove('sampling')
+      setStatus(c ? `색 ${c}` : '색 집기 취소')
+      resolve(c)
+    }
+    const swallowClick = (ev: MouseEvent): void => ev.stopPropagation() // the click that ends sampling must not hit a button
+    const onMouse = (ev: MouseEvent): void => ev.preventDefault() // keep the focus (an open text box stays open)
+    const onDown = (ev: PointerEvent): void => {
+      ev.preventDefault()
+      ev.stopImmediatePropagation() // never reaches the ink handler: no stroke, no move-drag
+      document.addEventListener('click', swallowClick, { capture: true, once: true })
+      setTimeout(() => document.removeEventListener('click', swallowClick, true), 400)
+      if (ev.target !== ink || ev.button !== 0) { finish(null); return }
+      const p = toImg(ev)
+      const x = Math.floor(p.x)
+      const y = Math.floor(p.y)
+      if (x < 0 || y < 0 || x >= ink.width || y >= ink.height) { finish(null); return }
+      const d = ctxOf(flattenCanvas(), true).getImageData(x, y, 1, 1).data
+      finish(normalizeHex(`rgb(${d[0]},${d[1]},${d[2]})`))
+    }
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== 'Escape') return
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      finish(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('mousedown', onMouse, true)
+    window.addEventListener('keydown', onKey, true)
+  })
+}
+
+/** Open the popover under `anchor`; `onPick` receives every live pick. The open text box keeps its focus and gets it back on close. */
+function openPicker(anchor: HTMLButtonElement, title: string, value: string, onPick: (c: string) => void): void {
+  anchor.setAttribute('aria-expanded', 'true')
+  picker.open({
+    anchor, value, title, onPick,
+    sampleFallback: sampleFromCanvas,
+    onClose: () => {
+      anchor.setAttribute('aria-expanded', 'false')
+      if (textSession && document.activeElement !== textSession.box) textSession.box.focus()
+    }
+  })
+}
+
+colorBtn.addEventListener('click', () => openPicker(colorBtn, '색', color, (c) => {
+  setColor(c, false)
+  try { localStorage.setItem(LS_COLOR, c) } catch { /* storage unavailable */ }
+}))
+bgBtn.addEventListener('click', () => openPicker(bgBtn, '배경 상자 색', textBg ?? autoPlate(color).hex, (c) => setTextBg(c, false)))
+outlineBtn.addEventListener('click', () => openPicker(outlineBtn, '윤곽선 색', textOutline ?? '#000000', (c) => setTextOutline(c, false)))
 
 const hotkeys = new Hotkeys([
   {
@@ -1687,6 +2245,7 @@ const hotkeys = new Hotkeys([
   { id: 'redo', label: '다시 실행', keys: ['Ctrl+Shift+KeyZ', 'Ctrl+KeyY'], run: redo },
   { id: 'pen', label: '펜', keys: ['KeyP'], run: () => setTool('pen') },
   { id: 'text', label: '텍스트', keys: ['KeyT'], run: () => setTool('text') },
+  { id: 'target', label: '전송 대상 바꾸기', keys: ['Ctrl+KeyT'], context: 'global', run: toggleTargetMenu },
   { id: 'arrow', label: '화살표', keys: ['KeyA'], run: () => setTool('arrow') },
   { id: 'rect', label: '사각형', keys: ['KeyR'], run: () => setTool('rect') },
   { id: 'badge', label: '번호', keys: ['KeyN'], run: () => setTool('badge') },
@@ -1710,7 +2269,7 @@ const hotkeys = new Hotkeys([
     run: (e) => {
       if (e.target === memoInput) { memoInput.blur(); return }
       if (e.target instanceof HTMLSelectElement) { e.target.blur(); return }
-      if (e.target instanceof HTMLInputElement) return false // the text box handles its own Escape
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return false // the text box handles its own Escape
       if (moveDrag) { endMove(false); return }
       if (erasing) { endErase(false); return }
       if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first
@@ -1737,7 +2296,9 @@ window.backseat.editor.onInit((data) => {
   t0 = performance.now()
   document.title = 'Backseat'
   syncToolbar()
-  showTarget(data.target)
+  initData = data
+  pinChecked = data.targetPinned === true
+  showTarget()
   if (data.request) {
     const q = document.createElement('span')
     q.className = 'ask'
@@ -1772,14 +2333,25 @@ window.backseat.editor.onInit((data) => {
         crop: { ...crop },
         meta: init ? exportMeta() : null,
         tool,
+        color,
+        textBg: textBg ?? null,
+        textOutline: textOutline ?? null,
+        pickerOpen: picker.isOpen(),
+        targetMenuOpen: targetMenuOpen(),
         cropDrag: cropDrag !== null,
         pointer: { ...pointerCounts },
         compare: { available: compareImg !== null, on: cmpOn, mode: cmpMode, diffPercent: compareImg ? diffPercent() : null }
       }),
       /** Crop programmatically (image px of the current canvas); same path as a pointer drag. */
       crop: (x: number, y: number, w: number, h: number) => applyCropSelection({ x, y, width: w, height: h }),
+      /** Commit annotations (image px of the current canvas) as ONE history step; undo removes them together. */
+      addAnnotations: (list: Annotation[]) => { commit('주석 추가 (디버그)', [...annotations, ...list]) },
+      /** Restore the pen colour without the popover (self-test cleanup). */
+      setColor: (c: string) => setColor(c, false),
+      /** The SendOptions 전송 would pass right now (nothing is sent). */
+      sendOptions: () => sendOptions(),
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
-      payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations } : null }
+      payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
     }
   }
   afterChange()

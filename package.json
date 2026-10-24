@@ -1,6 +1,6 @@
 {
   "name": "backseat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "AI 소통기 Backseat - point, talk, let the AI drive",
   "main": "./out/main/index.js",
@@ -52,7 +52,9 @@
       "node_modules/@huggingface/transformers/**",
       "node_modules/onnxruntime-common/**",
       "node_modules/sharp/**",
-      "node_modules/@img/**"
+      "node_modules/@img/**",
+      "out/main/mcp-server.js",
+      "out/main/chunks/**"
     ],
     "win": {
       "target": [

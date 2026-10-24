@@ -1,5 +1,5 @@
 // End-to-end check of the built backseat-mcp server with the official MCP client.
-// usage: node scripts/mcp-check.mjs <sessionsRoot>
+// usage: node scripts/mcp-check.mjs <sessionsRoot> [path/to/mcp-server.js]
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileURLToPath } from 'node:url'
@@ -11,7 +11,7 @@ if (!root) throw new Error('usage: mcp-check.mjs <sessionsRoot>')
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [join(here, '..', 'out', 'main', 'mcp-server.js')],
+  args: [process.argv[3] ?? join(here, '..', 'out', 'main', 'mcp-server.js')],
   env: { ...process.env, BACKSEAT_SESSIONS: root }
 })
 const client = new Client({ name: 'mcp-check', version: '0.0.1' })
@@ -30,6 +30,9 @@ const latest = await client.callTool({ name: 'backseat_latest', arguments: {} })
 const kinds = latest.content.map((c) => c.type).join('+')
 const text = latest.content.find((c) => c.type === 'text')?.text ?? ''
 console.log('LATEST', kinds, 'brief chars', text.length, 'has🗣', text.includes('🗣'))
+
+const withOrig = await client.callTool({ name: 'backseat_latest', arguments: { includeOriginal: true } })
+console.log('LATEST+ORIGINAL', withOrig.content.map((c) => c.type).join('+'), '(expect text+text+image+text+image when the latest session has screenshot.png)')
 
 const agents = await client.callTool({ name: 'backseat_agents', arguments: {} })
 console.log('AGENTS', JSON.parse(agents.content[0].text).length)
