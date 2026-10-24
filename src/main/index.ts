@@ -2,7 +2,7 @@ import { app, globalShortcut, session } from 'electron'
 import type { AgentTarget, AskRequest, CaptureMode, EditorInit, SelectionResult } from '../shared/types'
 import { classifyTarget } from './agents'
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
-import { ensureConfig, loadSettings } from './config'
+import { applyLoginItem, ensureConfig, loadSettings } from './config'
 import { createEditorWindow, installEditorIpc } from './editor'
 import { pruneRegistry } from './mcp/registry'
 import { getForegroundWindow, isWindow, listTopLevelWindows } from './native/win32'
@@ -155,6 +155,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
       return
     }
     const settings = await ensureConfig()
+    applyLoginItem(settings)
     createTray({
       capture: () => void startCapture('rect'),
       captureWindow: () => void startCapture('window'),

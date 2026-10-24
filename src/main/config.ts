@@ -32,6 +32,11 @@ export interface Settings {
   hotkeyWindow: string
   /** Scroll capture: stop once the stitched image is this tall (device px). */
   scrollMaxHeightPx: number
+  /**
+   * Start the tray app when the user logs in to Windows. Only the installed app registers itself;
+   * a development run (`electron .`) would register electron.exe, so there it is ignored.
+   */
+  launchAtLogin: boolean
 }
 
 const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
@@ -44,6 +49,7 @@ const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
   sttApiBase: 'https://api.openai.com/v1',
   sttCloudModel: 'whisper-1',
   scrollMaxHeightPx: 16000,
+  launchAtLogin: app.isPackaged,
   hotkeyRect: 'CommandOrControl+Shift+A',
   hotkeyWindow: 'CommandOrControl+Shift+W'
 }
@@ -65,6 +71,12 @@ export function loadSettings(): Settings {
   cached = { ...DEFAULTS, sessionsRoot: sessionsRoot(), ...stored }
   if (cached.sttBackend !== 'openai') cached.sttBackend = 'local'
   return cached
+}
+
+/** Mirror settings.launchAtLogin into the Windows Run key (installed app only). */
+export function applyLoginItem(s: Settings = loadSettings()): void {
+  if (!app.isPackaged) return
+  app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, path: process.execPath, args: [] })
 }
 
 /** Where the MCP server lives: unpacked next to app.asar when installed, out/main in a dev checkout. */

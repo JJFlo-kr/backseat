@@ -1,7 +1,7 @@
 import { app, clipboard, Menu, nativeImage, shell, Tray } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { loadSettings, saveSettings, configPath, mcpServerPath } from './config'
+import { applyLoginItem, loadSettings, saveSettings, configPath, mcpServerPath } from './config'
 import { sessionsRoot } from './sessions'
 
 let tray: Tray | null = null
@@ -52,6 +52,13 @@ function buildMenu(actions: TrayActions): Menu {
       type: 'checkbox',
       checked: s.pressEnter,
       click: (item) => void saveSettings({ pressEnter: item.checked })
+    },
+    {
+      label: app.isPackaged ? '로그인 시 자동 시작' : '로그인 시 자동 시작 (설치판에서만)',
+      type: 'checkbox',
+      enabled: app.isPackaged,
+      checked: app.isPackaged && s.launchAtLogin,
+      click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem)
     },
     { type: 'separator' },
     { label: '에이전트 연결 설정(MCP) 복사', click: copyMcpConfig },
