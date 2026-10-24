@@ -15,12 +15,14 @@ The name comes from "backseat driver": the AI drives, you sit in the back and po
 1. **Install.** Download the latest `Backseat Setup <version>.exe` from
    [Releases](https://github.com/JJFlo-kr/backseat/releases/latest) and run it. Backseat starts in the
    notification area (tray) and from then on whenever you log in.
-2. **Capture.** In the window where you talk to your AI (Claude Code, Codex, Cursor, a browser chat…), press
-   `Ctrl+Shift+A` and drag over the part of the screen you mean.
+2. **Capture.** While you talk to your AI (Claude Code, Codex, Cursor, a browser chat…), go to the screen you
+   want to show, press `Ctrl+Shift+A` and drag over the part you mean.
 3. **Mark it and explain.** Draw arrows, boxes or numbers, add text, and press `M` to say what you want while
    you draw.
-4. **Send.** Press `Enter`. Backseat pastes your capture into the window you came from; check it and press
-   Enter there to send it to the AI.
+4. **Send.** Press `Enter`. Backseat pastes your capture into the input box of the AI window you used last;
+   check it and press Enter there to send it to the AI. If it cannot confirm the input box, or it is a password
+   field, nothing is pasted and the capture waits on the clipboard. The captured page or a messenger only
+   gets it when you choose it yourself.
 
 The installer is not code-signed yet, so Windows may show a SmartScreen warning the first time
 ("More info" → "Run anyway").
@@ -46,7 +48,7 @@ The installer is not code-signed yet, so Windows may show a SmartScreen warning 
 | Voice | `M` starts and stops recording; what you say is saved with the marks you drew at that moment |
 | Timeline | `L` opens it · `Space` plays · `End` jumps to now · save the replay as a video with `Ctrl+E` |
 | Before/after | Capture again with "Recapture last region" in the tray, then `O`: overlay, split or difference |
-| Change where it goes | Click the target bar or `Ctrl+T`; you can pin a window as the default target |
+| Change where it goes | Click the target bar, `Ctrl+T` or "Send to" in the tray; a chosen window stays the target until it closes, and you can pin a window as the default target |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Send · save · copy | `Enter` · `Ctrl+S` · `Ctrl+C` |
 

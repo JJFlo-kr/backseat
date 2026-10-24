@@ -489,3 +489,79 @@ Codex가 930b9b4(v0.3.2) 기준으로 낸 리뷰 15건(F01–F15)을 v0.4.0(언�
 
 ### 검증하지 못한 것
 - 실제 OS에서 다른 창에 붙여넣기가 성공하는지(F05·F09는 창 숨김/표시와 전송 대상까지), 실제 ONNX 충돌(F11은 가짜 Worker), 실제 디스크 가득 참(F13은 쓰기 함수 대체), 여러 AI 앱을 동시에 띄운 실제 MCP 결합(F03은 프로세스 트리 모형 + 이 PC의 실제 스냅샷), 개발 환경 없는 PC에서 설치판 설치.
+
+## 23. 보낼 곳·전달 검증 (2026-10-25, 2단계)
+
+계획서 `docs/plans/2026-10-25-target-delivery-editor-plan.md` 3절 2·3·4단계의 메인 프로세스 부분. 요청서 (1)의 1~4, (2)의 ①②. 편집기 화면(칩·상태 표시)은 5단계(§24).
+
+### 보낼 곳 모델 (`targets.ts`, `tracker.ts`, `destination.ts`)
+- 보낼 곳을 캡처와 분리했다. 결정 순서: 사용자가 고른 창(편집기 메뉴·트레이 "보낼 곳", 그 창이 살아 있는 동안 다음 캡처에도 유지) → 고정 대상(config) → MCP 에이전트가 그 안에서 도는 것이 프로세스 트리로 확인된 창(여럿이면 최근 쓴 것) → **최근에 쓰던 AI 창**(400ms마다 앞 창을 보고 알려진 AI 창만 기억, 우리 창·바탕화면·작업표시줄 제외) → 캡처 직전 앞 창이 알려진 AI 앱 → 없음.
+- 캡처한 페이지·메신저·모르는 창은 자동으로 고르지 않는다. AI 회사의 결제·로그인·설정 탭(제목 기준, 9개 언어 단어)도 자동 대상이 아니다.
+- 고른 창이나 고정 창이 닫혔으면 다른 창으로 바꾸지 않고 `none` + `unavailable`(무엇이 없는지)로 다시 고르게 한다.
+- 동일성 `TargetIdentity` = 창 핸들 + PID + 프로세스 시작 시각 + 제목. 핸들 재사용·프로세스 재시작은 다른 창이다. 제목은 브라우저 탭·직접 고른 창에서만 비교한다. 터미널·편집기·AI 앱은 제목이 수시로 바뀌기 때문이다.
+- 편집기에는 `EditorInit.sendTarget`(SendTargetView), `editor.targets()`(현재 대상 + 후보, 모두 identity 포함)를 준다. 트레이에 "보낼 곳" 하위 메뉴: 지금 대상, 자동, AI 창 목록, 다른 창, 기본 대상으로 고정·해제.
+
+### 붙여넣기 직전 검증 (`send.ts`, `delivery.ts`, `native/uia*.ts`)
+- 단계: 자료 저장 → 클립보드 → 대상 확인(같은 창 인스턴스, 앞으로 가져온 뒤 다시 확인) → 입력란 확인 → Ctrl+V 직전 재확인 후 붙여넣기 시도. 확인한 단계만 `DeliveryStatus.reached`에 넣고, 멈추면 `stoppedAt{step, reason}`를 남긴다. 클립보드는 준비된 채로 둔다.
+- 입력란 확인: UIA 포커스 요소가 ① 비밀번호 칸이 아님(가장 먼저 확인, 값을 알 수 없으면 비밀번호로 간주) ② 대상과 같은 프로세스 ③ 편집 가능(Edit/Document, Value 쓰기 가능)이어야 한다. 터미널 대상은 TermControl(Windows Terminal), 레거시 콘솔은 그 콘솔 호스트(conhost)의 Document를 인정한다.
+- Claude 앱·Codex·ChatGPT 앱은 쓸 수 있는 입력란이 정확히 하나이고 비밀번호 칸이 없을 때만 UIA SetFocus를 쓴다. 좌표 클릭·Tab 반복은 없다.
+- Ctrl+V는 UIA 작업 스레드 안에서 `CompareElements`로 같은 요소인지, 앞 창이 그대로인지, 비밀번호 칸이 아닌지 다시 확인한 직후에 보낸다. 늦게 깨어난 스레드는 키를 누르지 않는다(기한 전달). 전송은 한 번에 하나씩 한다.
+- 자동 Enter: 대상·입력란·붙여넣기가 모두 확인됐을 때만 누른다. 알려진 AI 종류이고, 창이 여전히 같은 종류로 보일 때만이다. 그냥 셸, 직접 고른 메신저·페이지, "그래도 이 창에" 확인 전송에는 누르지 않는다. Enter 직전에도 같은 요소인지 확인한다. 누르면 `enterPressed`.
+- 제목이 바뀐 탭(`targetChanged`)은 한 번 묻는다. 멈춘 바로 다음 전송이 그 창으로 가면 확인으로 보고, 멈출 때 보였던 그 제목일 때만 붙여넣는다.
+- 편집기는 숨기지 않는다. 대상이 위로 올라오고, 멈추면 편집기를 다시 앞으로 가져온다.
+- 창 활성화: 예전의 "Alt 한 번 누르기"는 Alt 뗌이 Chrome·Edge에 도착해 ⋮ 메뉴 버튼에 포커스를 줬다. 그러면 Ctrl+V가 입력란이 아니라 메뉴로 갔다. v0.4.x까지 있던 문제로, 사고 보고의 "어디에도 전달되지 않음"과 맞을 수 있다(확인은 못 함). 이제 키를 누르지 않는다. 편집기가 앞이면 바로 넘기고, 아니면 `AttachThreadInput`을 쓴다.
+- Chromium은 처음 질의에 창 Pane만 돌려준다(접근성 트리가 아직 꺼져 있음). 200ms 간격으로 다시 묻는다.
+- 문구: 붙여넣으면 "붙여넣기를 시도했어요 · 제출은 직접 해주세요". 멈춘 이유별 안내(비밀번호 칸·입력란 없음·창 닫힘·내용 바뀜·포커스 이동·확인 불가) 9개 언어.
+
+### MCP 수신 확인 (`mcp/receipts.ts`, `fetchwatch.ts`)
+- MCP로 확인된 대상에 붙여넣는 지시문은 `backseat_get`에 전송 ID를 넣게 한다.
+- backseat-mcp는 패키지를 돌려줄 때(get·latest·wait·ask) `<sessions>/receipts/<id>/<agent>-<ms>-<rand>.json`을 원자적으로 쓴다. 내용은 전송 ID, 등록 에이전트 ID·이름·cwd, 도구, 시각이다.
+- 앱은 마지막 전송의 수신 기록을 보고 `delivery:update`로 `fetchedBy`를 준다. 정해진 수신 에이전트면 `expected: true`이고 reached에 `fetched`가 들어간다. 다른 에이전트면 `expected: false`로만 표시한다. MCP 대상인데 3분 안에 없으면 `fetchTimedOut`.
+- "가져갔다"만 말하고 이해·완료로 읽힐 문구는 쓰지 않는다.
+
+### 진단 로그 (`diaglog.ts`)
+- `<userData>\logs\delivery.log`(512KB에서 교체)에 단계·판정만 남긴다. 판정은 요소 종류, 비밀번호 칸 여부, 같은 프로세스 여부, 이유 코드다.
+- 창 제목, 클립보드, 메모, 요소 이름·값, 웹페이지의 HTML class(Chromium의 UIA ClassName)는 남기지 않는다.
+
+### 계약 추가(선택 필드, 상위·5단계 세션에 알림)
+`SendTargetView.unavailable`, `SendOptions.confirmTarget`, `DeliveryStatus.enterPressed`, `editor.newCapture()`(5단계 요청: 편집기를 닫고 영역 캡처).
+
+### UIA 방식 (실측: `docs/plans/uia-spike.md`)
+koffi로 UIAutomationCore COM을 작업 스레드(COM MTA)에서 직접 부른다. 시작 약 5ms, 반복 질의 1.6~3.8ms. 추가 exe·PowerShell이 없고 네이티브 UIA라 정보가 정확하다. 상주 PowerShell(시작 178~507ms, 회사 PC 정책 위험)과 csc 빌드 exe(서명 없는 추가 파일, 관리형 UIA라 Value 패턴을 놓침)는 고르지 않았다.
+
+### 검증
+- `npm test` 153개. 대상 결정 순서, 동일성, 입력란 판정표(비밀번호·읽기 전용·다른 프로세스·포커스 없음·콘솔), 단계 상태, Enter 규칙, 로그에 비밀 없음, 수신 기록(정확한 ID·에이전트만), "한 번 묻기"를 확인한다.
+- `npm run mcp-check` MCP_OK(수신 기록 검사 추가). `npm run selftest -- --selftest-no-scroll` ok(오류·경고 0). `npm run typecheck` 통과.
+- `npm run selftest-delivery`(새로 추가): 가짜 채팅 창 2개와 가짜 로그인 페이지를 별도 Chrome 프로필로 띄우고, 실제 편집기 IPC·UIA·Ctrl+V로 요청서 (1)의 6개 상황을 돌린다. 자기 시험 창만 보고(고정·MCP·실제 창 제외), 패키지는 임시 폴더에 쓴다. 최종 실행 9/9 통과:
+
+| 상황 | 대상(source) | 확인된 단계 → 멈춤 | 판정 |
+|---|---|---|---|
+| 1 AI 입력란 클릭 → 로그인 페이지(아이디 칸 커서) 캡처 → 보내기 | recent-agent(가짜 채팅 A) | 저장→클립보드→대상→입력란→붙여넣기 시도 | A에 들어감, 로그인 칸 0/0 |
+| 2a 로그인 페이지가 앞, 아무것도 안 고름 | none | 저장→클립보드 · noTarget | 어디에도 안 붙임 |
+| 2b 로그인 페이지를 직접 고름, 비밀번호 칸 포커스 | picked | 저장→클립보드→대상 · passwordField | 비밀번호 칸 0 |
+| 3 AI 창은 열렸지만 입력란에 포커스 없음 | recent-agent | 저장→클립보드→대상 · notEditable | A 비어 있음 |
+| 4a 같은 앱 창 2개, 최근은 B인데 A를 고름 | picked | …→붙여넣기 시도 | A에만 들어감, B 비어 있음 |
+| 4b 같은 창이 다른 페이지(제목 변경) | recent-agent | 저장→클립보드 · targetChanged, 다시 보내기 → 붙여넣기 시도 | 바뀐 것을 확인한 뒤에만 |
+| 5a 편집 중 대상 창 닫힘 | recent-agent | 저장→클립보드 · targetExpired | 다른 창 안 씀, 패키지 보존 |
+| 5b 활성화 직후 포커스가 다른 요소로 이동 | recent-agent | 저장→클립보드→대상 · notEditable | 아무 데도 안 붙임, Enter 없음 |
+| 6 실패 뒤 같은 내용으로 다시 보내기 | picked | …→붙여넣기 시도 | 두 패키지의 주석 동일 |
+
+- 실제 앱(사용자 허락, Enter 없음, 새 창·새 대화만, 확인 후 비움, 비밀번호 칸 없음, 붙여넣은 것은 1×1 빈 이미지와 시험 지시문):
+
+| 앱 | 포커스 요소(UIA) | 결과 |
+|---|---|---|
+| Windows Terminal(cmd 탭) | TermControl, 같은 프로세스 | 붙여넣기 시도 ✓, 프롬프트에 한 줄 들어감, 창 닫아 버림 |
+| Windows Terminal + Claude Code | TermControl → 터미널 판정은 통과 | 이 PC에서 Claude Code CLI 첫 실행이라 초기 설정(테마 선택) 화면이 떠서, Enter 없이는 진행할 수 없어 붙여넣지 않음 |
+| 레거시 콘솔(conhost·cmd) | conhost의 Document | 붙여넣기 시도 ✓, 창 닫음 |
+| Codex·ChatGPT 앱(ChatGPT.exe), "새 채팅"을 UIA로 열어 | Edit(ProseMirror), 쓰기 가능 | 붙여넣기 시도 ✓, 텍스트만 들어감(이미지는 안 붙음), 비운 뒤 원래 대화로 되돌림 |
+| 브라우저 ChatGPT 탭(사용자 Chrome, 새 탭) | Edit(ProseMirror), 쓰기 가능 | 붙여넣기 시도 ✓, 비우고 탭 닫음 |
+| Claude 앱 | Edit(tiptap ProseMirror), 쓰기 가능 | 입력란 판정만 확인. 이 작업 세션이 그 앱 안에서 돌고 있고 좌표 클릭 없이 새 대화를 여는 방법을 확인하지 못해 붙여넣지 않음 |
+
+### 남은 한계
+- 터미널 안쪽은 UIA로 보이지 않는다. Claude Code가 설정 화면·선택 질문을 띄우고 있어도 "터미널 입력"으로 판정된다.
+- 같은 창 안의 탭·대화: 브라우저 탭은 제목으로 구별한다. 탭 제목에 Claude·ChatGPT·Gemini·Copilot이 없으면(대화 이름만 제목인 경우 등) 자동 대상이 아니다. 이때는 직접 고르면 된다. 새 대화 탭의 제목 "ChatGPT - Chrome"은 확인했다. AI 앱은 창 안의 대화를 구별하지 못한다.
+- "입력란이 하나일 때만 SetFocus"는 실제 앱(Codex 3개·Claude 2개 Edit)에서는 거의 동작하지 않는다. 대부분 "입력란을 클릭한 뒤 Ctrl+V"로 멈춘다(안전 측).
+- 수신 확인은 MCP로 연결된 에이전트가 도구를 실제로 호출할 때만 생긴다. 일반 붙여넣기는 "시도"까지만 확인한다.
+- 진단 로그는 사용자 설정 폴더(`%APPDATA%\backseat\logs`)에 쌓인다. 자가 테스트 로그도 같은 곳이다.
+- 화면 잠금 파일 `D:\backseat-ui-test.lock`은 Claude 도구의 안전 검사(드라이브 루트 경로) 때문에 세션이 지울 수 없다. 사용자가 직접 지워야 한다. 다음부터는 잠금 위치를 루트가 아닌 폴더로 바꾸는 것을 권한다.
+- 검증하지 못한 것: 실제 MCP 에이전트의 수신 확인 왕복(mcp-check와 단위 테스트로만), Cursor·VS Code 안 에이전트, 여러 모니터·DPI 혼합, 설치판.

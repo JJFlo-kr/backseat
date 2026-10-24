@@ -14,7 +14,6 @@ const DWMWA_CLOAKED = 14
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9
 const SW_RESTORE = 9
 const KEYEVENTF_KEYUP = 2
-const VK_MENU = 0x12
 const VK_CONTROL = 0x11
 const VK_RETURN = 0x0d
 const VK_V = 0x56
@@ -54,6 +53,11 @@ interface Api {
   Process32FirstW: Fn
   Process32NextW: Fn
   CloseHandleI: Fn
+  IsWindow: Fn
+  GetProcessTimes: Fn
+  GetCurrentThreadId: Fn
+  AttachThreadInput: Fn
+  BringWindowToTop: Fn
 }
 
 let api: Api | null | undefined
@@ -97,7 +101,14 @@ function load(): Api | null {
       CreateToolhelp32Snapshot: kernel32.func('intptr_t CreateToolhelp32Snapshot(uint32_t flags, uint32_t pid)') as Fn,
       Process32FirstW: kernel32.func('bool Process32FirstW(intptr_t h, _Inout_ uint8_t *pe)') as Fn,
       Process32NextW: kernel32.func('bool Process32NextW(intptr_t h, _Inout_ uint8_t *pe)') as Fn,
-      CloseHandleI: kernel32.func('bool CloseHandle(intptr_t h)') as Fn
+      CloseHandleI: kernel32.func('bool CloseHandle(intptr_t h)') as Fn,
+      IsWindow: user32.func('bool IsWindow(uintptr_t hwnd)') as Fn,
+      GetProcessTimes: kernel32.func(
+        'bool GetProcessTimes(uintptr_t h, _Out_ uint8_t *creation, _Out_ uint8_t *exit, _Out_ uint8_t *kernel, _Out_ uint8_t *user)'
+      ) as Fn,
+      GetCurrentThreadId: kernel32.func('uint32_t GetCurrentThreadId()') as Fn,
+      AttachThreadInput: user32.func('bool AttachThreadInput(uint32_t idAttach, uint32_t idAttachTo, bool attach)') as Fn,
+      BringWindowToTop: user32.func('bool BringWindowToTop(uintptr_t hwnd)') as Fn
     }
   } catch (err) {
     console.error('[backseat] win32 layer unavailable:', err)
@@ -126,21 +137,109 @@ function className(a: Api, hwnd: number): string {
   return utf16(buf, n)
 }
 
-const processNames = new Map<number, string>()
+/** Executable name per pid, valid only for the process instance started at `startMs` (pids are reused). */
+const processNames = new Map<number, { name: string; startMs: number }>()
+
+/** FILETIME (100 ns since 1601) -> ms since 1970. */
+function filetimeMs(raw: Uint8Array): number {
+  const v = new DataView(raw.buffer, raw.byteOffset, 8)
+  const ticks = v.getUint32(4, true) * 2 ** 32 + v.getUint32(0, true)
+  return Math.round(ticks / 10000 - 11644473600000)
+}
+
+function startOf(a: Api, h: number): number {
+  const created = new Uint8Array(8)
+  const scratch = [new Uint8Array(8), new Uint8Array(8), new Uint8Array(8)]
+  return a.GetProcessTimes(h, created, scratch[0], scratch[1], scratch[2]) ? filetimeMs(created) : 0
+}
 
 function processName(a: Api, pid: number): string {
-  const cached = processNames.get(pid)
-  if (cached) return cached
-  let name = ''
   const h = a.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) as number
-  if (h) {
+  if (!h) return processNames.get(pid)?.name ?? ''
+  try {
+    const startMs = startOf(a, h)
+    const cached = processNames.get(pid)
+    if (cached && cached.startMs === startMs) return cached.name
+    let name = ''
     const buf = new Uint16Array(1024)
     const size = new Uint32Array([buf.length])
     if (a.QueryFullProcessImageNameW(h, 0, buf, size)) name = basename(utf16(buf, size[0]))
+    processNames.set(pid, { name, startMs })
+    return name
+  } finally {
     a.CloseHandle(h)
   }
-  processNames.set(pid, name)
-  return name
+}
+
+/** Executable base name of a process ('' when it cannot be read). */
+export function processNameOf(pid: number): string {
+  const a = load()
+  if (!a || !pid) return ''
+  try {
+    return processName(a, pid)
+  } catch {
+    return ''
+  }
+}
+
+/** Creation time of a process (ms since 1970), 0 when it cannot be read. With the pid it names one process instance. */
+export function processStartMs(pid: number): number {
+  const a = load()
+  if (!a || !pid) return 0
+  const h = a.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) as number
+  if (!h) return 0
+  try {
+    return startOf(a, h)
+  } finally {
+    a.CloseHandle(h)
+  }
+}
+
+/**
+ * What the handle names right now — owner pid, that process's start time and the title — or null when it
+ * is no longer a window. For TargetIdentity checks (src/main/delivery.ts compareIdentity).
+ */
+export function liveWindow(hwnd: number): { pid: number; processStartMs: number; title: string } | null {
+  const a = load()
+  if (!a || !hwnd) return null
+  try {
+    if (!a.IsWindow(hwnd)) return null
+    const pidOut = new Uint32Array(1)
+    a.GetWindowThreadProcessId(hwnd, pidOut)
+    if (!pidOut[0]) return null
+    return { pid: pidOut[0], processStartMs: processStartMs(pidOut[0]), title: windowText(a, hwnd) }
+  } catch {
+    return null
+  }
+}
+
+/** The foreground window handle (0 when none). Cheap: for the foreground tracker. */
+export function foregroundHwnd(): number {
+  const a = load()
+  if (!a) return 0
+  return Number(a.GetForegroundWindow())
+}
+
+/** Title only, cheap (0 = none). */
+export function windowTitle(hwnd: number): string {
+  const a = load()
+  if (!a || !hwnd) return ''
+  try {
+    return windowText(a, hwnd)
+  } catch {
+    return ''
+  }
+}
+
+/** Full description of one window (title, pid, process, bounds, class), or null. */
+export function describeWindow(hwnd: number): WindowInfo | null {
+  const a = load()
+  if (!a || !hwnd) return null
+  try {
+    return describe(a, hwnd)
+  } catch {
+    return null
+  }
 }
 
 function physicalBounds(a: Api, hwnd: number): Rect | null {
@@ -250,15 +349,29 @@ export function getForegroundWindow(): WindowInfo | null {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-/** Bring a window to the front; resolves true when it really is the foreground window. */
+/**
+ * Bring a window to the front; resolves true when it really is the foreground window. No key is pressed:
+ * the old "tap Alt first" trick let the Alt release reach the target, and Chrome / Edge answer a lone Alt by
+ * focusing their menu button — so the paste then went into the menu, not the page's input box. While one of
+ * our windows is in front (the editor's Send) Windows lets us hand the foreground on directly; otherwise our
+ * thread briefly shares input state with the foreground window's thread (AttachThreadInput).
+ */
 export async function focusWindow(hwnd: number): Promise<boolean> {
   const a = load()
   if (!a) return false
   if (a.IsIconic(hwnd)) a.ShowWindow(hwnd, SW_RESTORE)
-  // Tapping Alt first lifts Windows' foreground lock for the next SetForegroundWindow.
-  a.keybd_event(VK_MENU, 0, 0, 0)
-  a.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
-  a.SetForegroundWindow(hwnd)
+  const fg = Number(a.GetForegroundWindow())
+  const pidOut = new Uint32Array(1)
+  const fgThread = fg ? Number(a.GetWindowThreadProcessId(fg, pidOut)) : 0
+  const me = Number(a.GetCurrentThreadId())
+  const attach = fgThread !== 0 && fgThread !== me && pidOut[0] !== process.pid
+  if (attach) a.AttachThreadInput(me, fgThread, true)
+  try {
+    a.BringWindowToTop(hwnd)
+    a.SetForegroundWindow(hwnd)
+  } finally {
+    if (attach) a.AttachThreadInput(me, fgThread, false)
+  }
   for (let i = 0; i < 10; i++) {
     await sleep(40)
     if ((a.GetForegroundWindow() as number) === hwnd) return true
@@ -277,6 +390,15 @@ export function sendCtrlV(): boolean {
   a.keybd_event(VK_CONTROL, 0, 0, 0)
   tap(a, VK_V)
   a.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+  return true
+}
+
+/** Press the keys in order and release them in reverse (a chord such as Ctrl+A). The self-test clears its own test input with it. */
+export function tapKeys(chord: number[]): boolean {
+  const a = load()
+  if (!a) return false
+  for (const vk of chord) a.keybd_event(vk, 0, 0, 0)
+  for (const vk of [...chord].reverse()) a.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
   return true
 }
 
@@ -345,6 +467,13 @@ export function postWheel(hwnd: number, delta: number, screenX: number, screenY:
   const wParam = BigInt(delta & 0xffff) << 16n // HIWORD = signed wheel delta, LOWORD = no modifier keys
   const lParam = ((screenY & 0xffff) << 16) | (screenX & 0xffff)
   return Boolean(a.PostMessageW(hwnd, WM_MOUSEWHEEL, wParam, lParam))
+}
+
+/** Ask a window to close (WM_CLOSE), as its close button would. The delivery self-test closes its own test windows with it. */
+export function closeWindow(hwnd: number): boolean {
+  const a = load()
+  if (!a || !hwnd) return false
+  return Boolean(a.PostMessageW(hwnd, 0x0010, 0, 0))
 }
 
 /** Top-level window under a physical-pixel point (0 when none). */

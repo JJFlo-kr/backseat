@@ -17,8 +17,13 @@ export const IPC = {
   editorTranscribe: 'editor:transcribe',
   editorSttProgress: 'editor:stt-progress',
   editorPin: 'editor:pin',
+  // editor window -> main (invoke): send targets for the chip menu
+  editorTargets: 'editor:targets',
+  // main -> editor: later news for a send (fetched by an MCP agent, or not within the wait window)
+  deliveryUpdate: 'delivery:update',
   // editor window -> main (send)
   editorClose: 'editor:close',
+  editorNewCapture: 'editor:new-capture',
 
   // about window -> main (invoke)
   aboutInfo: 'about:info',

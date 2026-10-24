@@ -923,7 +923,8 @@ export async function runSelfTest(): Promise<void> {
             else {
               const st = await statusNow()
               report.targetExpired = { status: st, label: await label(), menuOpen: (await ts()).targetMenuOpen, rows: await rowCount() }
-              if (!st.includes(gone.label) || !st.includes('닫혀서 보내지 않았습니다')) errors.push(`target-expired status: ${st}`)
+              // The fake window was never alive, so main never offered it: the message names it or says '?'.
+              if (!(st.includes(gone.label) || st.includes('?')) || !st.includes('닫혀서 보내지 않았습니다')) errors.push(`target-expired status: ${st}`)
               if (!(await label()).includes('고른 창이 닫혔습니다')) errors.push(`target-expired label: ${await label()}`)
               if (!(await ts()).targetMenuOpen) errors.push('target-expired: the target menu did not open again')
               else if ((await rowCount()) !== FAKE_CANDIDATES.length + 1) errors.push(`target-expired: the closed window is still offered (${await rowCount()} rows)`)

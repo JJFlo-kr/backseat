@@ -17,6 +17,9 @@ const TERMINALS = new Set([
   'tabby.exe'
 ])
 const BROWSERS = new Set(['chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'arc.exe', 'whale.exe'])
+/** Tab titles of account pages (sign-in, billing, settings …) in the languages Backseat speaks. */
+const ACCOUNT_PAGE =
+  /billing|payment|checkout|subscri|pricing|upgrade|invoice|sign[ -]?in|sign[ -]?up|log[ -]?in|register|account|settings|password|결제|구독|요금|로그인|가입|계정|설정|비밀번호|ログイン|登録|支払|設定|パスワード|登录|注册|支付|设置|密码|登入|註冊|付款|密碼|anmelden|registrieren|zahlung|konto|einstellungen|passwort|iniciar sesión|registr|pago|cuenta|configuración|contraseña|cadastr|pagamento|configurações|senha|connexion|inscription|paiement|compte|paramètres|mot de passe/i
 
 function agentInTitle(title: string): { kind: AgentKind; name: string } | null {
   const t = title.toLowerCase()
@@ -83,7 +86,9 @@ export function classifyTarget(win: WindowInfo | null, opts: ClassifyOptions = {
   }
   if (BROWSERS.has(proc)) {
     const lower = title.toLowerCase()
-    if (lower.includes('claude') || lower.includes('chatgpt') || lower.includes('gemini') || lower.includes('copilot')) {
+    const aiChat = lower.includes('claude') || lower.includes('chatgpt') || lower.includes('gemini') || lower.includes('copilot')
+    // An AI vendor's billing, sign-in or settings page is a form, not a chat: never an automatic target.
+    if (aiChat && !ACCOUNT_PAGE.test(title)) {
       return { ...base, kind: 'chat', label: t('agents.webChat', { title: title.slice(0, 30) }), method: 'paste-image', confidence: 0.7 }
     }
   }
@@ -107,53 +112,8 @@ export function isAutoTarget(t: AgentTarget | null): t is AgentTarget {
   return t !== null && t.kind !== 'unknown' && t.hwnd !== 0
 }
 
-/**
- * The target a new capture starts with. pinned: the window of the user's pinned default (explicit, used as
- * it is). front: the window that was in front before the hotkey. prev: the last target used.
- * - the pinned window wins while it is open;
- * - the front window is used only when isAutoTarget() allows it; an unknown front window gives NO target
- *   (package + clipboard, the editor asks where to send);
- * - the previous target is a fallback only when nothing real was in front (desktop, taskbar, our own
- *   window), and only when it would be allowed automatically itself.
- */
-export function detectTarget(
-  args: { pinned: WindowInfo | null; front: WindowInfo | null; prev: AgentTarget | null; selfPid?: number },
-  isWindow: (hwnd: number) => boolean
-): { target: AgentTarget | null; pinned: boolean; detected: AgentTarget | null } {
-  const opts = { selfPid: args.selfPid }
-  const pinnedTarget = args.pinned ? classifyTarget(args.pinned, opts) : null
-  if (pinnedTarget) return { target: pinnedTarget, pinned: true, detected: pinnedTarget }
-  const front = classifyTarget(args.front, opts)
-  if (front) return { target: isAutoTarget(front) ? front : null, pinned: false, detected: isAutoTarget(front) ? front : null }
-  const prev = args.prev
-  if (prev && isAutoTarget(prev) && isWindow(prev.hwnd)) return { target: asFallback(prev), pinned: false, detected: null }
-  return { target: null, pinned: false, detected: null }
-}
-
 /** Max alternative windows offered in the editor's target menu. */
 export const MAX_CANDIDATES = 12
-
-/**
- * Other open windows the user may pick as the delivery target: known agent/chat apps first, then the
- * remaining windows (kind 'unknown'); each group keeps the given (front-most first) order.
- * The window with hwnd `excludeHwnd` (the detected target) and our own / shell windows are left out.
- */
-export function buildCandidates(
-  windows: WindowInfo[],
-  opts: { selfPid?: number; excludeHwnd?: number; max?: number } = {}
-): AgentTarget[] {
-  const known: AgentTarget[] = []
-  const other: AgentTarget[] = []
-  const seen = new Set<number>()
-  for (const w of windows) {
-    if (!w.hwnd || w.hwnd === opts.excludeHwnd || seen.has(w.hwnd)) continue
-    const t = classifyTarget(w, { selfPid: opts.selfPid })
-    if (!t) continue
-    seen.add(w.hwnd)
-    ;(t.kind === 'unknown' ? other : known).push(t)
-  }
-  return [...known, ...other].slice(0, opts.max ?? MAX_CANDIDATES)
-}
 
 /**
  * The pinned default target: first window (front-most first) whose process equals `process`
@@ -171,72 +131,17 @@ export function pinParts(t: Pick<AgentTarget, 'process' | 'title'>): { process: 
   return { process: t.process, title: t.title.slice(0, 20) }
 }
 
-// ---------- "previous target" memory ----------
-
-/** The " (previous target)" decoration in the current UI language. */
-function fallbackSuffix(): string {
-  return ` ${t('agents.fallbackSuffix')}`
-}
-
-/** Last target that was a real window, reused when the hotkey is pressed from the desktop/tray. Always stored in its original form. */
-let lastTarget: AgentTarget | null = null
-
-export function getLastTarget(): AgentTarget | null {
-  return lastTarget
-}
-
-/** Remember a target. Display decorations (previous-target / MCP suffixes, mcp info) are stripped so labels never accumulate. */
-export function rememberTarget(t: AgentTarget | null): void {
-  if (!t || !t.hwnd) return
-  let label = t.label
-  const suffix = fallbackSuffix()
-  while (label.endsWith(suffix)) label = label.slice(0, -suffix.length)
-  label = label.replace(/ · MCP .*$/, '')
-  const { mcp: _mcp, ...rest } = t
-  lastTarget = { ...rest, label }
-}
-
-/** The remembered target as shown for a fallback: lower confidence and a single suffix, from the original label. */
-export function asFallback(t: AgentTarget): AgentTarget {
-  return { ...t, confidence: Math.min(t.confidence, 0.5), label: t.label + fallbackSuffix() }
-}
-
-/** One-line instruction pasted into a terminal agent. Paths are absolute so any cwd works. */
-export function instructionLine(briefPath: string, pngPath: string, memo: string, viaMcp = false, tr: Translate = t): string {
+/**
+ * One-line instruction pasted into the agent. Paths are absolute so any cwd works. With `mcpSendId` (an
+ * agent proven to have backseat-mcp) it asks for backseat_get with that send id, so the fetch receipt names
+ * exactly this send (src/main/mcp/receipts.ts).
+ */
+export function instructionLine(briefPath: string, pngPath: string, memo: string, mcpSendId?: string, tr: Translate = t): string {
   const head = memo ? `${memo} — ` : ''
-  if (viaMcp) {
-    return head + tr('agents.instruction.mcp', { brief: briefPath })
+  if (mcpSendId) {
+    return head + tr('agents.instruction.mcp', { id: mcpSendId, brief: briefPath })
   }
   return head + tr('agents.instruction.paths', { brief: briefPath, image: pngPath })
-}
-
-// ---------- the target a send goes to ----------
-
-export type SendTarget =
-  | { kind: 'target'; target: AgentTarget | null }
-  /** The user asked for clipboard only: no window is focused or pasted into. */
-  | { kind: 'clipboard' }
-  /** The window the user picked is gone (or was never offered): do NOT substitute another one. */
-  | { kind: 'expired'; label: string }
-
-/**
- * Resolve 전송's destination. Without a pick the detected (automatic / pinned) target is used. A picked
- * window must be the detected target or one of this editor's candidates and must still exist; when it does
- * not, the result is 'expired' — never the automatic target, which is a different window the user did not
- * choose (Codex review F09).
- */
-export function resolveSendTarget(
-  detected: AgentTarget | null,
-  candidates: readonly AgentTarget[],
-  opts: { targetHwnd?: number; clipboardOnly?: boolean },
-  isWindow: (hwnd: number) => boolean
-): SendTarget {
-  if (opts.clipboardOnly) return { kind: 'clipboard' }
-  if (!opts.targetHwnd) return { kind: 'target', target: detected }
-  const pick = opts.targetHwnd === detected?.hwnd ? detected : candidates.find((c) => c.hwnd === opts.targetHwnd)
-  if (!pick) return { kind: 'expired', label: '' }
-  if (!isWindow(pick.hwnd)) return { kind: 'expired', label: pick.label }
-  return { kind: 'target', target: pick }
 }
 
 // ---------- MCP agents (backseat_register) ----------
