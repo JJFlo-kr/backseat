@@ -34,16 +34,13 @@ test('Windows Terminal with a Claude Code title is claude-code (paste-path)', ()
   assert.equal(t?.method, 'paste-path')
 })
 
-test('Claude app, Zed, Slack, Discord', () => {
+test('Claude app, Zed; Slack and Discord are plain windows (messengers, Phase 0 safety)', () => {
   assert.equal(classifyTarget(win('claude.exe', 'Claude'))?.kind, 'claude-desktop')
   const zed = classifyTarget(win('zed.exe', 'main.rs — zed'))
   assert.equal(zed?.label, 'Zed')
   assert.equal(zed?.method, 'paste-path')
-  const slack = classifyTarget(win('slack.exe', 'general - Slack'))
-  assert.equal(slack?.kind, 'chat')
-  assert.equal(slack?.label, 'Slack')
-  assert.equal(slack?.method, 'paste-image')
-  assert.equal(classifyTarget(win('Discord.exe', 'Discord'))?.label, 'Discord')
+  assert.equal(classifyTarget(win('slack.exe', 'general - Slack'))?.kind, 'unknown')
+  assert.equal(classifyTarget(win('Discord.exe', 'Discord'))?.kind, 'unknown')
 })
 
 test('unknown apps and plain browser windows become the unknown-window target', () => {
