@@ -1,7 +1,7 @@
 import { app, clipboard, Menu, nativeImage, shell, Tray } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { applyLoginItem, loadSettings, saveSettings, configPath, mcpServerPath } from './config'
+import { applyLoginItem, loadSettings, onSettingsSaveError, saveSettings, configPath, mcpServerPath } from './config'
 import { SUPPORT_URL } from '../shared/links'
 import { getLocale, LOCALE_NAMES, LOCALES, t } from '../shared/i18n'
 import { showAbout } from './about'
@@ -46,10 +46,12 @@ function languageLabel(): string {
 function languageMenu(onChange: () => void): Electron.MenuItemConstructorOptions[] {
   const pref = loadSettings().locale
   const pick = (locale: string) => (): void =>
-    void saveSettings({ locale }).then(() => {
-      applyLocale()
-      onChange()
-    })
+    void saveSettings({ locale })
+      .then(
+        () => applyLocale(),
+        () => undefined // already reported by onSettingsSaveError; the menu falls back to the unchanged setting
+      )
+      .then(onChange)
   return [
     { label: t('tray.languageAuto'), type: 'radio', checked: !pref || pref === 'auto', click: pick('auto') },
     { type: 'separator' },
@@ -64,7 +66,7 @@ function languageMenu(onChange: () => void): Electron.MenuItemConstructorOptions
 
 function sttMenu(): Electron.MenuItemConstructorOptions[] {
   const pref = loadSettings().sttLanguage || 'auto'
-  const pick = (sttLanguage: string) => (): void => void saveSettings({ sttLanguage })
+  const pick = (sttLanguage: string) => (): void => void saveSettings({ sttLanguage }).catch(() => undefined)
   return [
     { label: t('tray.sttFollowUi'), type: 'radio', checked: pref === 'auto', click: pick('auto') },
     { label: t('tray.sttDetect'), type: 'radio', checked: pref === 'detect', click: pick('detect') },
@@ -89,26 +91,26 @@ function buildMenu(actions: TrayActions, onChange: () => void): Menu {
       label: t('tray.autoRecord'),
       type: 'checkbox',
       checked: s.autoRecord,
-      click: (item) => void saveSettings({ autoRecord: item.checked })
+      click: (item) => void saveSettings({ autoRecord: item.checked }).catch(() => undefined)
     },
     {
       label: t('tray.pressEnter'),
       type: 'checkbox',
       checked: s.pressEnter,
-      click: (item) => void saveSettings({ pressEnter: item.checked })
+      click: (item) => void saveSettings({ pressEnter: item.checked }).catch(() => undefined)
     },
     {
       label: app.isPackaged ? t('tray.launchAtLogin') : t('tray.launchAtLoginDev'),
       type: 'checkbox',
       enabled: app.isPackaged,
       checked: app.isPackaged && s.launchAtLogin,
-      click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem)
+      click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem).catch(() => undefined)
     },
     ...(s.pinnedTargetProcess
       ? [
           {
             label: t('tray.unpinTarget', { process: s.pinnedTargetProcess }),
-            click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' })
+            click: () => void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' }).catch(() => undefined)
           }
         ]
       : []),
@@ -118,7 +120,7 @@ function buildMenu(actions: TrayActions, onChange: () => void): Menu {
       label: t('tray.briefInEnglish'),
       type: 'checkbox',
       checked: s.briefLocale === 'en',
-      click: (item) => void saveSettings({ briefLocale: item.checked ? 'en' : 'follow' })
+      click: (item) => void saveSettings({ briefLocale: item.checked ? 'en' : 'follow' }).catch(() => undefined)
     },
     { label: t('tray.sttLanguage'), submenu: sttMenu() },
     { type: 'separator' },
@@ -136,6 +138,15 @@ function buildMenu(actions: TrayActions, onChange: () => void): Menu {
 export function createTray(actions: TrayActions): Tray {
   if (tray) return tray
   tray = new Tray(trayIcon())
+  // saveSettings rejects on a failed write (Codex review F13); the callers swallow it, so tell the user here.
+  onSettingsSaveError((err) => {
+    console.error('[backseat] saving settings failed:', err)
+    tray?.displayBalloon({
+      iconType: 'error',
+      title: t('tray.settingsSaveFailedTitle'),
+      content: t('tray.settingsSaveFailed', { error: err instanceof Error ? err.message : String(err) })
+    })
+  })
   const refresh = (): void => {
     tray?.setToolTip(t('tray.tooltip', { hotkey: loadSettings().hotkeyRect.replace('CommandOrControl', 'Ctrl') }))
     tray?.setContextMenu(buildMenu(actions, refresh))

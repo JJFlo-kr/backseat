@@ -3,6 +3,8 @@ import type {
 } from '../../shared/types'
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
+import { linksAt, type Doc } from './doc'
+import { runSend, type SttOutcome, type TranscriptChoice } from './sendflow'
 import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
 import { ColorPicker, colorButton, setColorButton } from './colorpicker'
@@ -52,14 +54,6 @@ const MIN_DRAG = 3 // image px
 const SEND_CLOSE_DELAY = 700 // ms the status stays visible before the editor closes
 const AUDIO_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
 
-/** The whole undoable document: drawings, manual speech-to-annotation links and the crop. */
-interface Doc {
-  annotations: readonly Annotation[]
-  /** segmentIndex -> annotationIndex (null = forced global). Absent = automatic alignment. */
-  links: ReadonlyMap<number, number | null>
-  /** Visible region in px of the ORIGINAL capture. Annotation coordinates are relative to it. */
-  crop: Rect
-}
 
 function isTool(v: string | undefined): v is Tool {
   return (
@@ -170,7 +164,9 @@ let textShadow = false
 let textBold: boolean | undefined
 let textItalic = false
 let view = 1 // displayed size / natural on-screen size
-let doc: Doc = { annotations: [], links: new Map(), crop: { x: 0, y: 0, width: 0, height: 0 } }
+/** Bumped by every new recording; manual links belong to one revision (see doc.ts linksAt). */
+let transcriptRev = 0
+let doc: Doc = { annotations: [], links: new Map(), crop: { x: 0, y: 0, width: 0, height: 0 }, linksRev: 0 }
 let annotations: readonly Annotation[] = doc.annotations
 let links: ReadonlyMap<number, number | null> = doc.links
 let crop: Rect = doc.crop // mirrors doc.crop; the canvases are exactly this big
@@ -759,7 +755,8 @@ function applyCropSelection(sel: Rect): void {
   const after: Doc = {
     annotations: renumbered,
     links: nextLinks,
-    crop: { x: crop.x + x, y: crop.y + y, width: w, height: h }
+    crop: { x: crop.x + x, y: crop.y + y, width: w, height: h },
+    linksRev: transcriptRev
   }
   history.commit(t('editor.history.crop'), doc, after)
   setDoc(after)
@@ -948,7 +945,7 @@ const timeline = new Timeline(byId('timeline'), {
 function setDoc(next: Doc): void {
   doc = next
   annotations = next.annotations
-  links = next.links
+  links = linksAt(next, transcriptRev) // an undo across a new recording must not revive its old links
   if (!sameRect(next.crop, crop)) applyCrop(next.crop) // undo/redo across a crop re-blits the image
 }
 
@@ -963,14 +960,14 @@ function afterChange(): void {
 }
 
 function commit(label: string, next: readonly Annotation[]): void {
-  const after: Doc = { annotations: next, links, crop }
+  const after: Doc = { annotations: next, links, crop, linksRev: transcriptRev }
   history.commit(label, doc, after)
   setDoc(after)
   afterChange()
 }
 
 function commitLinks(label: string, nextLinks: ReadonlyMap<number, number | null>): void {
-  const after: Doc = { annotations, links: nextLinks, crop }
+  const after: Doc = { annotations, links: nextLinks, crop, linksRev: transcriptRev }
   history.commit(label, doc, after)
   setDoc(after)
   afterChange()
@@ -1278,7 +1275,7 @@ function endErase(commitIt: boolean): void {
       if (ni !== undefined) nextLinks.set(seg, ni)
     }
   }
-  const after: Doc = { annotations: renumbered, links: nextLinks, crop }
+  const after: Doc = { annotations: renumbered, links: nextLinks, crop, linksRev: transcriptRev }
   history.commit(t('editor.history.erase'), doc, after)
   setDoc(after)
   afterChange()
@@ -1555,13 +1552,33 @@ async function send(): Promise<void> {
   }
   busy = true
   setStatus(t('editor.status.sending'))
-  let closing = false
+  let stayBusy = false
   try {
-    await settleRecording()
-    const payload = buildPayload()
-    if (!payload) return
-    setStatus(t('editor.status.sending'))
-    const r = await window.backseat.editor.send(payload, sendOptions())
+    const o = await runSend(
+      {
+        settle: async () => {
+          await settleRecording()
+          return sttOutcome()
+        },
+        chooseOnSttFailure: () => askTranscriptFailure(),
+        retryTranscription: async () => {
+          await retryTranscription()
+          return sttOutcome()
+        },
+        deliver: () => {
+          const payload = buildPayload()
+          if (!payload) throw new Error(t('editor.status.unknownError'))
+          setStatus(t('editor.status.sending'))
+          return window.backseat.editor.send(payload, sendOptions())
+        }
+      },
+      () => pinned
+    )
+    const r = o.result
+    if (!r) {
+      setStatus(t('editor.status.sendCanceled'))
+      return
+    }
     setStatus(r.message, !r.ok)
     if (r.targetExpired) {
       // The picked window closed: drop it from the menu and make the user choose again (or the clipboard).
@@ -1576,14 +1593,73 @@ async function send(): Promise<void> {
       // nothing was pasted anywhere: keep the editor open so the user sees what happened
       targetNote = t('editor.target.clipboardNote')
       showTarget()
-    } else if (r.ok && r.delivered === 'pasted') {
-      closing = true // stay busy: no double send while the status is visible
-      if (!pinned) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
     }
+    stayBusy = o.stayBusy // no double send while the status is visible and the editor closes
+    if (o.close) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
   } catch (err) {
     setStatus(t('editor.status.sendFailed', { error: errText(err) }), true)
   } finally {
-    if (!closing) busy = false
+    if (!stayBusy) busy = false
+  }
+}
+
+/** What the recording amounts to right now: no audio, audio with its transcript, or audio whose transcription failed. */
+function sttOutcome(): SttOutcome {
+  if (!audioBytes) return 'none'
+  return transcript ? 'ok' : 'failed'
+}
+
+/**
+ * Codex review F12: the recording has no transcript (recognition failed). Ask before sending instead of
+ * reporting success without the spoken instructions. Enter = try again, Esc = cancel.
+ */
+function askTranscriptFailure(): Promise<TranscriptChoice> {
+  return new Promise((resolve) => {
+    const box = document.createElement('div')
+    box.id = 'stt-choice'
+    box.className = 'choice'
+    box.setAttribute('role', 'alertdialog')
+    const msg = document.createElement('p')
+    msg.textContent = t('editor.sttChoice.message')
+    const row = document.createElement('div')
+    row.className = 'choice-buttons'
+    const done = (c: TranscriptChoice): void => {
+      window.removeEventListener('keydown', onKey, true)
+      box.remove()
+      resolve(c)
+    }
+    const button = (id: string, label: string, choice: TranscriptChoice, primary = false): HTMLButtonElement => {
+      const b = document.createElement('button')
+      b.id = id
+      b.type = 'button'
+      b.textContent = label
+      if (primary) b.className = 'primary'
+      b.addEventListener('click', () => done(choice))
+      return b
+    }
+    const retry = button('stt-retry', t('editor.sttChoice.retry'), 'retry', true)
+    row.append(retry, button('stt-image', t('editor.sttChoice.imageOnly'), 'image'), button('stt-cancel', t('editor.sttChoice.cancel'), 'cancel'))
+    box.append(msg, row)
+    // Capture phase: Esc must cancel this question, not close the editor.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel') }
+      else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); e.stopPropagation(); done('retry') }
+    }
+    window.addEventListener('keydown', onKey, true)
+    document.body.append(box)
+    retry.focus()
+  })
+}
+
+/** Run speech recognition again on the current recording (after a failure). */
+async function retryTranscription(): Promise<void> {
+  if (!audioBytes) return
+  const task = transcribeAudio(audioBytes.slice().buffer as ArrayBuffer, audioStartMs, recGen)
+  recTask = task
+  try {
+    await task
+  } finally {
+    if (recTask === task) recTask = null
   }
 }
 
@@ -2182,12 +2258,21 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
   }
   if (a.gen !== recGen) return // a newer recording already took over
 
-  // a new recording replaces the previous audio and transcript (and the links into it)
-  transcript = null
-  if (links.size > 0) setDoc({ annotations, links: new Map(), crop })
-  replaceAudio(blob, new Uint8Array(buf), a.startMs, wallMs)
-  afterChange()
+  replaceRecording(blob, new Uint8Array(buf), a.startMs, wallMs)
+  await transcribeAudio(buf, a.startMs, a.gen)
+}
 
+/** A new recording replaces the previous audio and transcript, and the manual links into it (also in the undo history). */
+function replaceRecording(blob: Blob, bytes: Uint8Array, startMs: number, durationMs: number): void {
+  transcript = null
+  transcriptRev++
+  setDoc({ annotations, links: new Map(), crop, linksRev: transcriptRev })
+  replaceAudio(blob, bytes, startMs, durationMs)
+  afterChange()
+}
+
+/** Decode and transcribe one recording (also the 다시 시도 after a failure). Results of an older recording are dropped. */
+async function transcribeAudio(buf: ArrayBuffer, startMs: number, gen: number): Promise<void> {
   transcribing = true
   try {
     setStatus(t('editor.mic.processing'))
@@ -2196,12 +2281,12 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
     try {
       const decoded = await ac.decodeAudioData(buf.slice(0))
       pcm16k = decoded.getChannelData(0).slice() // already resampled to 16 kHz by the context
-      if (a.gen === recGen && decoded.duration > 0) audioDurationMs = decoded.duration * 1000
+      if (gen === recGen && decoded.duration > 0) audioDurationMs = decoded.duration * 1000
     } finally {
       void ac.close()
     }
-    const r = await window.backseat.editor.transcribe({ pcm16k, audioStartMs: a.startMs })
-    if (a.gen !== recGen) return
+    const r = await window.backseat.editor.transcribe({ pcm16k, audioStartMs: startMs })
+    if (gen !== recGen) return
     if (r.ok && r.transcript) {
       transcript = r.transcript
       const words = r.transcript.segments.reduce(
@@ -2213,9 +2298,9 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
       setStatus(t('editor.mic.transcribeFailed', { error: r.error ?? t('editor.status.unknownError') }), true)
     }
   } catch (err) {
-    if (a.gen === recGen) setStatus(t('editor.mic.transcribeFailed', { error: errText(err) }), true)
+    if (gen === recGen) setStatus(t('editor.mic.transcribeFailed', { error: errText(err) }), true)
   } finally {
-    if (a.gen === recGen) transcribing = false
+    if (gen === recGen) transcribing = false
   }
 }
 
@@ -2615,6 +2700,24 @@ window.backseat.editor.onInit((data) => {
       /** The SendOptions 전송 would pass right now (nothing is sent). */
       sendOptions: () => sendOptions(),
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
+      /** Manual link as the timeline's drag does it (one history step). */
+      linkSegment: (segmentIndex: number, annotationIndex: number) => {
+        const next = new Map(links)
+        next.set(segmentIndex, annotationIndex)
+        commitLinks(t('editor.history.linkAdd'), next)
+      },
+      /** A new recording whose recognition failed: same path as a real one, without the microphone (F10 / F12). */
+      fakeFailedRecording: () => replaceRecording(new Blob([new Uint8Array([0])], { type: 'audio/webm' }), new Uint8Array([0]), now(), 1000),
+      /** Drop the recording again (self-test cleanup). */
+      clearRecording: () => {
+        audioBytes = null
+        transcript = null
+        transcriptRev++
+        setDoc({ annotations, links: new Map(), crop, linksRev: transcriptRev })
+        afterChange()
+      },
+      sttChoiceOpen: () => document.getElementById('stt-choice') !== null,
+      busy: () => busy,
       /** Codex review F01: how far the blurred area of video frames is from the masked / raw capture. */
       videoMaskProbe: () => videoMaskProbe(),
       payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
@@ -2625,7 +2728,7 @@ window.backseat.editor.onInit((data) => {
   img.onload = () => {
     orig = img
     init = data
-    setDoc({ annotations: [], links: new Map(), crop: { x: 0, y: 0, width: data.width, height: data.height } })
+    setDoc({ annotations: [], links: new Map(), crop: { x: 0, y: 0, width: data.width, height: data.height }, linksRev: transcriptRev })
     render()
     if (data.compare) {
       const prev = new Image()

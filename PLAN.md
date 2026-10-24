@@ -447,3 +447,39 @@ WebGPU 렌더러, 타일 기반 undo 스필, 2만 트랙 가상화, Simple/Advan
 4. 글리프: 내장 글꼴에 없는 문자(예: 힌디 데바나가리)는 `@fontsource/noto-sans-<script>`를 `LAZY_FONT_CSS`·`LOCALE_FONT`에 추가.
 5. RTL(ar, he)은 따로: `<html dir="rtl">`, 툴바·대상 메뉴·타임라인 배치 반전, 브리프 좌표 설명 검토가 필요하다.
 6. `--selftest-locale=<code>`로 스크린샷·넘침 확인.
+
+
+## 22. Codex 리뷰 반영 (2026-10-25)
+
+Codex가 930b9b4(v0.3.2) 기준으로 낸 리뷰 15건(F01–F15)을 v0.4.0(언어팩 머지 뒤) 위에서 검증했다. 각 지적마다 **수정 전 코드에서 실패하는 테스트**를 먼저 만들고 확인한 뒤 고쳤다. 15건 모두 재현되어 기각한 것은 없다.
+
+### 테스트 기반
+- `npm test`가 Electron 없이 main 프로세스 모듈도 돌린다: `tests/support/fake-electron.ts`(가짜 `electron`), `register.mjs`/`ts-resolve.mjs`(확장자 없는 import 해석), Node `--experimental-test-module-mocks`로 `fs/promises`·`worker_threads`·`win32`·`send` 등을 바꿔 끼운다. 각 테스트 파일은 따로 프로세스에서 돈다.
+- 편집기(렌더러)처럼 DOM이 필요한 부분은 순수 모듈(`doc.ts`, `sendflow.ts`)로 떼어 단위 테스트하고, 실제 연결은 자가 테스트가 확인한다.
+
+### 지적별 결과
+| ID | 결과 | 원인 → 수정 | 확인 |
+|---|---|---|---|
+| F01 높음 | 수정 | 블러를 시간 따라 그리는 주석으로 취급 → 영상 첫 프레임부터 원본 노출. 모든 영상 프레임이 `maskedBase()`(원본+모든 블러, screenshot.png와 같은 바탕) 위에 그려지고 블러는 시간 주석에서 제외 | 자가 테스트 `video-mask`: 가장 복잡한 64px 영역에 임시 블러를 두고 시작/블러 전/중/끝 프레임과 **실제 인코딩한 WebM을 다시 디코딩한 프레임**을 원본·마스킹본과 비교. 수정 전 시작 프레임 {마스킹본과 40.4, 원본과 0}, 수정 후 모든 프레임 마스킹본과 0, 디코딩 프레임 최악 0.8(원본과 42) |
+| F09 높음 | 수정 | 고른 창이 닫히면 자동 대상으로 조용히 전송 → `resolveSendTarget()`이 `targetExpired`를 돌려주고 아무것도 쓰지도 보내지도 않음. 편집기는 그 창을 메뉴에서 빼고 다시 고를 때까지 전송을 막음. 메뉴 끝에 "클립보드에만 복사" | `tests/editor-send.test.ts`(실제 IPC, 수정 전 자동 대상 A로 전송), 자가 테스트 `target-expired`(가짜 hwnd 선택 → 전송 → 상태·메뉴 재표시·5행) |
+| F02 높음 | 수정 | 초 단위 ID + `mkdir recursive` → 같은 초 두 전송이 한 폴더. ID = 시각+밀리초+무작위(`20261025-143012-123-9f3a`), 준비 폴더는 배타적 생성, 충돌 시 새 ID | `tests/sessions.test.ts`(시계 고정 2회·동시 5회) |
+| F04 중간 | 수정 | 파일을 제자리에 병렬로 쓰고 reader는 meta+brief만 보고 완성으로 판단 → `.writing-<id>`에 다 쓴 뒤 폴더 rename 한 번으로 게시(Windows EPERM 재시도), 실패하면 준비 폴더 삭제. MCP wait 검사 중복 실행·처리 안 된 rejection 제거 | `tests/sessions.test.ts`(annotated.png 쓰기 지연 중 미게시, 쓰기 실패 시 흔적 없음) |
+| F06 중간 | 수정 | registry.json을 여러 MCP 프로세스가 읽고-고치고-씀(임시 파일 이름도 공유) → 프로세스마다 `agents/<pid>.json`, 옛 registry.json은 읽기만. 종료 시 동기 삭제(비동기는 exit에서 안 돌았음) | `tests/registry.test.ts`(동시 등록 2개·반복 등록/정리, 수정 전 rename ENOENT) |
+| F03 높음 | 수정 | 마지막 등록 에이전트를 앞의 창에 무조건 결합 → 에이전트의 backseat-mcp 프로세스가 그 창 프로세스 안에서 돈다는 근거(프로세스 트리, 콘솔 호스트는 부모)가 있을 때만 결합. explorer.exe 등은 근거가 안 됨, 한 창에 여럿이면 제목의 프로젝트 폴더 이름으로만 구분. meta.json에 `recipient`, MCP latest/list/wait는 다른 에이전트 앞 패키지를 건너뜀 | `tests/agents-mcp.test.ts`(옛 규칙을 그대로 옮긴 코드에서 6개 중 4개 실패), `tests/win32.test.ts`, mcp-check의 수신자 검사 |
+| F07 중간 | 수정 | 알림으로 답한 질문이 pending에 남아 다음 캡처에 붙음 → `requestForCapture()`가 클릭이든 pending이든 ID로 소비. 정책: 캡처를 시작하면 소비, 편집기를 취소하면 에이전트의 ask는 시간 초과(다시 물으면 됨) | `tests/requests.test.ts`(실제 watcher + 가짜 알림 클릭) |
+| F08 중간 | 수정 | writer·markAnswered는 기본 경로, watcher·MCP는 설정 경로 → `config.ts sessionsRoot()` 하나를 모두가 사용(MCP는 같은 config 키를 읽음) | `tests/sessions.test.ts` F08 |
+| F05 중간 | 수정 | 고정 창이 붙여넣기 뒤 숨은 채로 남고 busy 유지 → 고정 창은 포커스를 뺏지 않고 다시 표시, 닫힐 창만 busy 유지 | `tests/send.test.ts`, `tests/sendflow.test.ts` |
+| F10 중간 | 수정 | undo 이력에 링크는 있지만 어느 녹음의 링크인지 없음 → `Doc.linksRev`, 현재 녹음 것만 표시(`doc.ts linksAt`) | `tests/doc-links.test.ts`(실제 History), 자가 테스트 `recording-replace` |
+| F11 중간 | 수정 | worker exit·stopStt가 대기 작업을 끝내지 않음, 새 worker 오류가 옛 작업을 끝냄 → 작업이 자기 worker를 기억, error/exit/terminate에서 한 번만 실패 처리 | `tests/stt-worker.test.ts`(가짜 Worker) |
+| F12 중간 | 수정 | 음성 인식 실패에도 전송 성공 표시 → 전송 전에 "다시 시도 / 이미지만 보내기 / 취소"(Enter=다시 시도, Esc=취소). 이미지만 보내도 음성 파일은 패키지에 남음 | `tests/sendflow.test.ts`, 자가 테스트 `stt-failure`(대상을 클립보드로 바꾼 뒤 전송 → 질문 → 다시 시도 실패 → 질문 → 취소) |
+| F13 중간 | 수정 | 디스크 쓰기 전에 캐시 갱신, 연속 저장 순서 뒤바뀜, 실패 무시 → 저장 직렬화, 임시 파일→rename 성공 뒤에만 캐시, 실패는 트레이 풍선으로 알림 | `tests/config.test.ts`(ENOSPC·느린 첫 쓰기) |
+| F14 중간 | 수정 | mcp-check가 출력만 하고 항상 MCP_OK → 자체 패키지를 만들어 도구 목록·등록·이미지 MIME과 바이트·includeOriginal·list/get·wait 시간 초과와 수신자 건너뛰기·ask requestId를 검사, 하나라도 어기면 exit 1 | `tests/mcp-check.test.ts` + `tests/fixtures/wrong-mcp-server.mjs`(옛 검사기는 통과시킴, 새 검사기는 12건 실패), 실제 서버 `npm run mcp-check` MCP_OK |
+| F15 낮음 | 수정 | 분을 먼저 내리고 초만 반올림 → `00:60.0`. 0.1초 정수로 반올림한 뒤 분·초 분리, brief도 같은 `fmtClock` | `tests/clock.test.ts`(59949/59950/59999/60000 + seed 0xBACC5EA7 2000개) |
+
+### 그 밖에
+- CI: `.github/workflows/ci.yml`(windows-latest, Node 24: npm ci → typecheck → test → build → mcp-check). 자가 테스트는 데스크톱 세션이 필요해 CI에서 돌리지 않는다. 아직 push하지 않았다.
+- 새 문구 15개는 §21 문구 원칙대로 ko/en을 쓰고 나머지 7개 언어를 번역했다.
+- 작업 중 사고: 언어팩 세션과 같은 폴더(HEAD 하나)를 써서 첫 세 커밋이 fix 브랜치가 아니라 로컬 main에 올라갔다. 이후 작업은 별도 worktree(`D:\backseat-codex`, node_modules는 접합)에서 했다. 같은 폴더에서 여러 세션이 브랜치를 바꾸지 않는다.
+
+### 검증하지 못한 것
+- 실제 OS에서 다른 창에 붙여넣기가 성공하는지(F05·F09는 창 숨김/표시와 전송 대상까지), 실제 ONNX 충돌(F11은 가짜 Worker), 실제 디스크 가득 참(F13은 쓰기 함수 대체), 여러 AI 앱을 동시에 띄운 실제 MCP 결합(F03은 프로세스 트리 모형 + 이 PC의 실제 스냅샷), 개발 환경 없는 PC에서 설치판 설치.

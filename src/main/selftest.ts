@@ -923,7 +923,7 @@ export async function runSelfTest(): Promise<void> {
             else {
               const st = await statusNow()
               report.targetExpired = { status: st, label: await label(), menuOpen: (await ts()).targetMenuOpen, rows: await rowCount() }
-              if (!st.includes(gone.label) || !st.includes('보내지 않았습니다')) errors.push(`target-expired status: ${st}`)
+              if (!st.includes(gone.label) || !st.includes('닫혀서 보내지 않았습니다')) errors.push(`target-expired status: ${st}`)
               if (!(await label()).includes('고른 창이 닫혔습니다')) errors.push(`target-expired label: ${await label()}`)
               if (!(await ts()).targetMenuOpen) errors.push('target-expired: the target menu did not open again')
               else if ((await rowCount()) !== FAKE_CANDIDATES.length + 1) errors.push(`target-expired: the closed window is still offered (${await rowCount()} rows)`)
@@ -945,6 +945,80 @@ export async function runSelfTest(): Promise<void> {
               if (o4.targetHwnd !== undefined || o4.clipboardOnly !== undefined) errors.push(`send options not reset after target-expired: ${JSON.stringify(o4)}`)
             }
           }
+        }
+      }
+
+      // Codex review F10 / F12 in the real editor (no microphone): a manual speech link must not come back through
+      // undo after a new recording, and a recording whose recognition failed must stop 전송 with a question.
+      // The target is set to "clipboard only" first, so even a broken check cannot paste into a real window.
+      step = 'recording-replace'
+      {
+        type RecState = { links: [number, number | null][]; transcript: number; annotations: unknown[] }
+        const js = <T>(code: string): Promise<T> => ed.webContents.executeJavaScript(code) as Promise<T>
+        const rs = (): Promise<RecState> => state() as unknown as Promise<RecState>
+        const statusNow = (): Promise<string> => js<string>(`document.getElementById('status').textContent`)
+        const ctrlT = async (): Promise<void> => {
+          ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'T', modifiers: ['control'] })
+          ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'T', modifiers: ['control'] })
+          await sleep(150)
+        }
+        const transcript = {
+          text: '이거 키워 주세요', audioStartMs: 0, durationMs: 2000, model: 'selftest', language: 'korean',
+          segments: [{ start: 100, end: 900, text: '이거' }, { start: 1000, end: 1900, text: '키워 주세요' }]
+        }
+        await js(`window.dispatchEvent(new CustomEvent('backseat:debug-transcript', { detail: ${JSON.stringify(transcript)} })); true`)
+        await js(`window.__backseat.addAnnotations([{ kind: 'badge', x: 30, y: 30, n: 1, color: '#E5484D', size: 22, tStart: 500, tEnd: 500 }]); true`)
+        const nAnn = (await rs()).annotations.length
+        await js(`window.__backseat.linkSegment(0, ${nAnn - 1}); true`)
+        await js(`window.__backseat.addAnnotations([{ kind: 'badge', x: 60, y: 30, n: 2, color: '#E5484D', size: 22, tStart: 600, tEnd: 600 }]); true`)
+        if ((await rs()).links.length !== 1) errors.push(`recording-replace: link not set: ${JSON.stringify((await rs()).links)}`)
+        await js(`window.__backseat.fakeFailedRecording(); true`)
+        const afterNew = await rs()
+        if (afterNew.links.length !== 0 || afterNew.transcript !== 0) errors.push(`new recording kept old links / transcript: ${JSON.stringify(afterNew.links)}`)
+        await js(`document.getElementById('undo').click(); true`)
+        await sleep(100)
+        const undone = await rs()
+        report.recordingReplace = { annotationsBefore: nAnn + 1, afterUndo: undone.annotations.length, linksAfterUndo: undone.links }
+        if (undone.annotations.length !== nAnn) errors.push(`undo after a new recording did not undo the annotation (${undone.annotations.length} vs ${nAnn})`)
+        if (undone.links.length !== 0) errors.push(`undo brought back a link into the previous recording: ${JSON.stringify(undone.links)}`)
+        await js(`document.getElementById('redo').click(); true`)
+        await sleep(100)
+        if ((await rs()).links.length !== 0) errors.push('redo brought back a link into the previous recording')
+
+        step = 'stt-failure'
+        await ctrlT()
+        await js(`document.querySelector('#target-menu .tm-item:last-of-type').click(); true`)
+        await sleep(100)
+        const so = await js<{ clipboardOnly?: boolean }>(`window.__backseat.sendOptions()`)
+        if (so.clipboardOnly !== true) errors.push('stt-failure: could not switch to clipboard only; send checks skipped')
+        else {
+          await js(`document.getElementById('send').click(); true`)
+          await sleep(400)
+          const asked = await js<boolean>(`window.__backseat.sttChoiceOpen()`)
+          const sttFailure: Record<string, unknown> = { asked, status: await statusNow() }
+          report.sttFailure = sttFailure
+          if (!asked) errors.push(`전송 after a failed recognition did not ask first: ${await statusNow()}`)
+          else {
+            await js(`document.getElementById('stt-retry').click(); true`)
+            await sleep(2500) // one byte of "audio" cannot be decoded: the retry fails and the question comes back
+            if (!(await js<boolean>(`window.__backseat.sttChoiceOpen()`))) errors.push(`after 다시 시도 failed, the question did not come back: ${await statusNow()}`)
+            else {
+              await js(`document.getElementById('stt-cancel').click(); true`)
+              await sleep(200)
+              sttFailure.afterCancel = await statusNow()
+              if (ed.isDestroyed()) errors.push('stt-failure: the editor closed after cancel')
+              else {
+                if (!String(sttFailure.afterCancel).includes('보내지 않았습니다')) errors.push(`cancel status: ${String(sttFailure.afterCancel)}`)
+                if (await js<boolean>(`window.__backseat.busy()`)) errors.push('editor still busy after cancelling 전송')
+              }
+            }
+          }
+        }
+        // cleanup: automatic target, no recording
+        if (!ed.isDestroyed()) {
+          await ctrlT()
+          await js(`document.querySelector('#target-menu .tm-item').click(); window.__backseat.clearRecording(); true`)
+          await sleep(100)
         }
       }
 

@@ -121,9 +121,9 @@ export function installEditorIpc(): void {
     if (chosen?.hwnd) rememberTarget(chosen)
     if (opts.pinTarget === true && chosen?.hwnd && chosen.process) {
       const p = pinParts(chosen)
-      void saveSettings({ pinnedTargetProcess: p.process, pinnedTargetTitle: p.title })
+      saveSettings({ pinnedTargetProcess: p.process, pinnedTargetTitle: p.title }).catch(() => undefined) // reported by the tray
     } else if (opts.pinTarget === false) {
-      void saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' })
+      saveSettings({ pinnedTargetProcess: '', pinnedTargetTitle: '' }).catch(() => undefined)
     }
     return sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, chosen, opts)
   })

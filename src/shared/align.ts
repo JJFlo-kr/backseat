@@ -251,8 +251,9 @@ export function sessionEnd(annotations: readonly Annotation[], segments: Segment
 }
 
 export function fmtClock(ms: number): string {
-  const s = Math.max(0, ms) / 1000
-  const m = Math.floor(s / 60)
-  const rest = (s - m * 60).toFixed(1).padStart(4, '0')
+  // Round to whole tenths first so the seconds part can never print as 60 (Codex review F15).
+  const tenths = Math.round(Math.max(0, ms) / 100)
+  const m = Math.floor(tenths / 600)
+  const rest = ((tenths - m * 600) / 10).toFixed(1).padStart(4, '0')
   return `${String(m).padStart(2, '0')}:${rest}`
 }

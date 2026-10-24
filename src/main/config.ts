@@ -2,8 +2,9 @@
 // same file to find the sessions root, so keep it flat JSON.
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir } from 'fs/promises'
 import { join } from 'path'
+import { writeFileAtomic } from './fsutil'
 
 export interface Settings {
   version: number
@@ -121,12 +122,43 @@ export function sttApiKey(): string {
   return process.env.BACKSEAT_STT_API_KEY ?? ''
 }
 
-export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  const next = { ...loadSettings(), ...patch }
-  cached = next
-  await mkdir(app.getPath('userData'), { recursive: true })
-  await writeFile(configPath(), JSON.stringify(next, null, 2), 'utf8')
-  return next
+let saveError: ((err: unknown) => void) | null = null
+
+/**
+ * Called whenever a saveSettings() write fails (disk full, permission, ...), so the UI can tell the user
+ * instead of failing silently — Codex review F13. saveSettings still rejects for callers that await it.
+ */
+export function onSettingsSaveError(listener: (err: unknown) => void): void {
+  saveError = listener
+}
+
+/** Saves run strictly one after another so concurrent patches cannot reach the disk out of order. */
+let saveChain: Promise<unknown> = Promise.resolve()
+
+/**
+ * Merge `patch` into the settings and persist it. The in-memory cache changes only after the file was
+ * written, so loadSettings() never returns values that were not saved (Codex review F13).
+ */
+export function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+  const run = async (): Promise<Settings> => {
+    const next = { ...loadSettings(), ...patch }
+    try {
+      await mkdir(app.getPath('userData'), { recursive: true })
+      await writeFileAtomic(configPath(), JSON.stringify(next, null, 2))
+    } catch (err) {
+      try {
+        saveError?.(err)
+      } catch {
+        // a broken listener must not mask the save error
+      }
+      throw err
+    }
+    cached = next
+    return next
+  }
+  const result = saveChain.then(run, run)
+  saveChain = result.catch(() => undefined)
+  return result
 }
 
 /** Make sure config.json exists with the current sessions root so backseat-mcp can find it. */
