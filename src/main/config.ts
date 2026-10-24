@@ -15,8 +15,15 @@ export interface Settings {
   pressEnter: boolean
   /** transformers.js model id for speech recognition. */
   sttModel: string
-  /** Whisper language hint. */
+  /**
+   * Whisper language hint: 'auto' = the UI language (default), 'detect' = let Whisper detect it,
+   * or a Whisper language name ('korean', 'english', …).
+   */
   sttLanguage: string
+  /** UI language: 'auto' (Windows display language) or a Locale from src/shared/i18n.ts. */
+  locale: string
+  /** Language of brief.md and the pasted instruction: 'follow' = the UI language, 'en' = always English. */
+  briefLocale: 'follow' | 'en'
   /**
    * 'local' runs Whisper in-process (default). 'openai' posts the audio to an OpenAI-compatible
    * /audio/transcriptions endpoint; the API key comes ONLY from the BACKSEAT_STT_API_KEY
@@ -43,11 +50,13 @@ export interface Settings {
 }
 
 const DEFAULTS: Omit<Settings, 'sessionsRoot'> = {
-  version: 1,
+  version: 2,
   autoRecord: false,
   pressEnter: false,
   sttModel: 'onnx-community/whisper-small_timestamped',
-  sttLanguage: 'korean',
+  sttLanguage: 'auto',
+  locale: 'auto',
+  briefLocale: 'follow',
   sttBackend: 'local',
   sttApiBase: 'https://api.openai.com/v1',
   sttCloudModel: 'whisper-1',
@@ -73,8 +82,11 @@ export function loadSettings(): Settings {
   } catch (err) {
     console.error('[backseat] config unreadable, using defaults:', err)
   }
-  cached = { ...DEFAULTS, sessionsRoot: sessionsRoot(), ...stored }
+  // v1 files stored the then-default 'korean' hint; v2 follows the UI language instead.
+  if ((stored.version ?? 1) < 2 && stored.sttLanguage === 'korean') delete stored.sttLanguage
+  cached = { ...DEFAULTS, sessionsRoot: sessionsRoot(), ...stored, version: DEFAULTS.version }
   if (cached.sttBackend !== 'openai') cached.sttBackend = 'local'
+  if (cached.briefLocale !== 'en') cached.briefLocale = 'follow'
   return cached
 }
 

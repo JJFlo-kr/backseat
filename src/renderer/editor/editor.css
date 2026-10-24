@@ -47,6 +47,10 @@ body { display: flex; flex-direction: column; }
 .btn.primary:hover { background: #ee5a5f; }
 .btn.primary:active { background: #cf3b40; }
 #toolbar .btn { padding: 0 6px; font-size: 12px; }
+/* set by fitToolbar() when the language's labels do not fit at the usual width */
+#toolbar.tight { gap: 2px; padding: 0 6px; }
+#toolbar.tight .group { gap: 2px; }
+#toolbar.tight .btn { padding: 0 4px; font-size: 11.5px; letter-spacing: -0.1px; }
 
 #toolbar2, #textbar {
   flex: none;

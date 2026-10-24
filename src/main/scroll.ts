@@ -3,6 +3,7 @@
 // when frames stop matching, or when the user presses Esc.
 import { BrowserWindow, desktopCapturer, globalShortcut, nativeImage, screen, type Display, type NativeImage } from 'electron'
 import type { Rect, WindowInfo } from '../shared/types'
+import { t } from '../shared/i18n'
 import { frameDiff, Stitcher, type Frame } from '../shared/stitch'
 import { getCursorPos, postWheel, sendWheel, sendWheelDelta, setCursorPos, WHEEL_DELTA, win32Available, windowAtPoint } from './native/win32'
 
@@ -72,9 +73,13 @@ async function grabSettled(display: Display, rect: Rect, pollMs: number): Promis
   return prev
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 /** Tiny always-on-top badge placed in a display corner that does not overlap the captured window. */
 function progressBadge(display: Display, avoidDip: Rect): BrowserWindow | null {
-  const W = 230
+  const W = 300
   const H = 36
   const wa = display.workArea
   const corners = [
@@ -95,7 +100,7 @@ function progressBadge(display: Display, avoidDip: Rect): BrowserWindow | null {
   })
   win.setMenu(null)
   win.setAlwaysOnTop(true, 'screen-saver')
-  const html = `<body style="margin:0;background:#1b1b1f;color:#eee;font:12px system-ui,'Malgun Gothic',sans-serif;display:flex;align-items:center;justify-content:center;height:36px;border:1px solid #E5484D;box-sizing:border-box"><span id=t>스크롤 캡처 중… Esc 중단</span></body>`
+  const html = `<body style="margin:0;background:#1b1b1f;color:#eee;font:12px system-ui,'Malgun Gothic',sans-serif;display:flex;align-items:center;justify-content:center;height:36px;border:1px solid #E5484D;box-sizing:border-box"><span id=t>${escapeHtml(t('scroll.badge.start'))}</span></body>`
   void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive() })
   return win
@@ -187,7 +192,7 @@ export async function scrollCapture(
       opts.onProgress?.(stitcher.frames, stitcher.totalHeight)
       if (badge && !badge.isDestroyed()) {
         void badge.webContents
-          .executeJavaScript(`document.getElementById('t').textContent='스크롤 캡처 중… ${stitcher.frames}장 · ${stitcher.totalHeight}px · Esc 중단'`)
+          .executeJavaScript(`document.getElementById('t').textContent=${JSON.stringify(t('scroll.badge.progress', { n: stitcher.frames, height: stitcher.totalHeight }))}`)
           .catch(() => undefined)
       }
     }

@@ -3,7 +3,7 @@
 
 export interface Palette {
   id: string
-  label: string
+  labelKey: string
   /** '#RRGGBB', uppercase */
   colors: string[]
 }
@@ -11,7 +11,7 @@ export interface Palette {
 export const PALETTES: Palette[] = [
   {
     id: 'vivid',
-    label: '선명',
+    labelKey: 'palette.vivid',
     colors: [
       '#E5484D', '#F76B15', '#FFC53D', '#30A46C', '#12A594', '#0090FF',
       '#3E63DD', '#6E56CF', '#D6409F', '#FFFFFF', '#8B8D98', '#1C2024'
@@ -19,7 +19,7 @@ export const PALETTES: Palette[] = [
   },
   {
     id: 'calm',
-    label: '차분',
+    labelKey: 'palette.calm',
     colors: [
       '#E03131', '#E16919', '#F1AC4B', '#099268', '#4CB05E', '#4465E9',
       '#4BA1F1', '#AE3EC9', '#E085F4', '#F87777', '#9FA8B2', '#1D1D1D'
@@ -27,7 +27,7 @@ export const PALETTES: Palette[] = [
   },
   {
     id: 'pastel',
-    label: '파스텔',
+    labelKey: 'palette.pastel',
     colors: [
       '#FFC9C9', '#FFD8A8', '#FFEC99', '#B2F2BB', '#96F2D7', '#A5D8FF',
       '#BAC8FF', '#D0BFFF', '#FCC2D7', '#F1F3F5', '#DEE2E6', '#CED4DA'
@@ -35,7 +35,7 @@ export const PALETTES: Palette[] = [
   },
   {
     id: 'mono',
-    label: '모노',
+    labelKey: 'palette.mono',
     colors: [
       '#FFFFFF', '#F1F3F5', '#DEE2E6', '#ADB5BD', '#868E96',
       '#495057', '#343A40', '#212529', '#000000'

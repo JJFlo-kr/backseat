@@ -7,6 +7,7 @@ import { Hotkeys } from './hotkeys'
 import { Timeline } from './timeline'
 import { ColorPicker, colorButton, setColorButton } from './colorpicker'
 import { normalizeHex } from '../../shared/palette'
+import { t, setMessages, applyDom, isLocale, getLocale, type Locale } from '../../shared/i18n'
 import '@fontsource/noto-sans-kr/500.css'
 import '@fontsource/noto-sans-kr/700.css'
 import '@fontsource/nanum-gothic/700.css'
@@ -26,13 +27,24 @@ type BlurAnn = Extract<Annotation, { kind: 'blur' }>
 type TextAnn = Extract<Annotation, { kind: 'text' }>
 
 const DEFAULT_FONT = 'Noto Sans KR'
-const FALLBACK_FONTS = 'system-ui, "Malgun Gothic", sans-serif'
+/** Text tool default per UI language: the Japanese / Chinese faces have the glyphs Noto Sans KR lacks. */
+const LOCALE_FONT: Partial<Record<Locale, string>> = { ja: 'Noto Sans JP', 'zh-CN': 'Noto Sans SC', 'zh-TW': 'Noto Sans TC' }
+const FALLBACK_FONTS = 'system-ui, "Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei UI", "Microsoft JhengHei UI", sans-serif'
+/**
+ * The Japanese and Chinese faces are large (≈7 MB of subsets each): their @font-face rules are only
+ * added when one of them is used (UI language, font menu, or a text annotation that names it).
+ */
+const LAZY_FONT_CSS: Record<string, () => Promise<unknown>> = {
+  'Noto Sans JP': () => Promise.all([import('@fontsource/noto-sans-jp/400.css'), import('@fontsource/noto-sans-jp/700.css')]),
+  'Noto Sans SC': () => Promise.all([import('@fontsource/noto-sans-sc/400.css'), import('@fontsource/noto-sans-sc/700.css')]),
+  'Noto Sans TC': () => Promise.all([import('@fontsource/noto-sans-tc/400.css'), import('@fontsource/noto-sans-tc/700.css')])
+}
 /** Families shipped with the app (@fontsource); everything else is the system UI font. */
 const BUNDLED_FONTS: ReadonlySet<string> = new Set([
-  'Noto Sans KR', 'Nanum Gothic', 'Nanum Pen Script', 'Jua', 'Do Hyeon', 'Black Han Sans'
+  'Noto Sans KR', 'Nanum Gothic', 'Nanum Pen Script', 'Jua', 'Do Hyeon', 'Black Han Sans', ...Object.keys(LAZY_FONT_CSS)
 ])
 /** Gothic faces are bundled bold; the display / handwriting faces only have a regular cut. */
-const BOLD_FONTS: ReadonlySet<string> = new Set(['Noto Sans KR', 'Nanum Gothic'])
+const BOLD_FONTS: ReadonlySet<string> = new Set(['Noto Sans KR', 'Nanum Gothic', ...Object.keys(LAZY_FONT_CSS)])
 const ERASE_TOLERANCE = 6 // CSS px around the eraser path
 const BADGE_SIZE = 22 // CSS px diameter
 const BLUR_BLOCK = 14 // CSS px per pixelation block
@@ -106,16 +118,27 @@ const styleBtns = Array.from(byId('text-style').querySelectorAll<HTMLButtonEleme
 const textBar = byId<HTMLElement>('textbar')
 const boldBtn = byId<HTMLButtonElement>('text-bold')
 const italicBtn = byId<HTMLButtonElement>('text-italic')
-const colorBtn = colorButton({ id: 'color', label: '', title: '색 (펜·도형·번호·글자)' })
+const colorBtn = colorButton({ id: 'color', label: '', title: '' }) // titles are set in applyColorTitles() once the language is known
 byId('color-group').append(colorBtn)
-const bgBtn = colorButton({ id: 'text-bg', label: '', title: '배경 상자 색' })
+const bgBtn = colorButton({ id: 'text-bg', label: '', title: '' })
 const bgAutoBtn = byId<HTMLButtonElement>('text-bg-auto')
 bgAutoBtn.before(bgBtn)
 const bgOpacityInput = byId<HTMLInputElement>('text-bg-opacity')
 const invertBtn = byId<HTMLButtonElement>('text-invert')
-const outlineBtn = colorButton({ id: 'text-outline', label: '', title: '윤곽선 색' })
+const outlineBtn = colorButton({ id: 'text-outline', label: '', title: '' })
 byId('outline-group').append(outlineBtn)
 const shadowBtn = byId<HTMLButtonElement>('text-shadow')
+
+function setColorTitle(btn: HTMLButtonElement, title: string): void {
+  btn.title = title
+  btn.setAttribute('aria-label', title)
+}
+/** The colour buttons are created in code (module scope runs before the language arrives): name them after init. */
+function applyColorTitles(): void {
+  setColorTitle(colorBtn, t('editor.toolbar.colorTip'))
+  setColorTitle(bgBtn, t('editor.text.plateColor'))
+  setColorTitle(outlineBtn, t('editor.text.outlineColor'))
+}
 
 let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
@@ -203,10 +226,10 @@ async function togglePin(): Promise<void> {
   try {
     pinned = await window.backseat.editor.pin()
     document.body.classList.toggle('pinned', pinned)
-    setStatus(pinned ? '고정됨: 항상 위에 떠 있고 전송 후에도 남습니다 (Ctrl+P 해제)' : '고정 해제')
+    setStatus(pinned ? t('editor.status.pinned') : t('editor.status.unpinned'))
     layout()
   } catch (err) {
-    setStatus(`고정 실패: ${err instanceof Error ? err.message : String(err)}`, true)
+    setStatus(t('editor.status.pinFailed', { error: err instanceof Error ? err.message : String(err) }), true)
   }
 }
 
@@ -246,14 +269,31 @@ function fontString(family: string | undefined, sizePx: number, bold?: boolean, 
 }
 
 const fontLoads = new Set<string>() // "font|text" combos already requested
+const fontCss = new Map<string, Promise<unknown>>() // lazily added @font-face rules, by family
+const fontCssReady = new Set<string>()
+
+/** Add a lazy family's @font-face rules once (no-op for the always-declared faces). */
+function loadFontCss(family: string | undefined): Promise<unknown> {
+  const load = family ? LAZY_FONT_CSS[family] : undefined
+  if (!family || !load) return Promise.resolve()
+  let p = fontCss.get(family)
+  if (!p) {
+    p = load().then(() => { fontCssReady.add(family) }, () => undefined)
+    fontCss.set(family, p)
+  }
+  return p
+}
 
 /** Bundled faces load lazily (and per unicode-range subset): request them once and repaint when ready. */
 function ensureFont(font: string, text: string): void {
-  if (!BUNDLED_FONTS.has(font.split('"')[1] ?? '')) return
+  const family = font.split('"')[1] ?? ''
+  if (!BUNDLED_FONTS.has(family)) return
   const key = `${font}|${text}`
-  if (fontLoads.has(key) || document.fonts.check(font, text)) return
+  if (fontLoads.has(key) || (!LAZY_FONT_CSS[family] || fontCssReady.has(family)) && document.fonts.check(font, text)) return
   fontLoads.add(key)
-  void document.fonts.load(font, text).then(() => { render(); timeline.refresh() }, () => undefined)
+  void loadFontCss(family)
+    .then(() => document.fonts.load(font, text))
+    .then(() => { render(); timeline.refresh() }, () => undefined)
 }
 
 /** Resolves once every bundled font the document uses is available (before exporting pixels). */
@@ -262,7 +302,7 @@ async function loadDocFonts(): Promise<void> {
   for (const a of annotations) {
     if (a.kind !== 'text') continue
     const f = fontString(a.font, a.fontSize, a.bold, a.italic)
-    if (BUNDLED_FONTS.has(a.font ?? '')) jobs.push(document.fonts.load(f, a.text).catch(() => undefined))
+    if (BUNDLED_FONTS.has(a.font ?? '')) jobs.push(loadFontCss(a.font).then(() => document.fonts.load(f, a.text)).catch(() => undefined))
   }
   if (jobs.length) await Promise.all(jobs)
 }
@@ -717,11 +757,11 @@ function applyCropSelection(sel: Rect): void {
     links: nextLinks,
     crop: { x: crop.x + x, y: crop.y + y, width: w, height: h }
   }
-  history.commit('자르기', doc, after)
+  history.commit(t('editor.history.crop'), doc, after)
   setDoc(after)
   afterChange()
   const dropped = before - kept.length
-  setStatus(`잘라냄: ${w}×${h} px${dropped > 0 ? ` · 바깥 주석 ${dropped}개 제거` : ''} (Ctrl+Z로 되돌리기)`)
+  setStatus(dropped > 0 ? t('editor.status.croppedDropped', { w, h, n: dropped }) : t('editor.status.cropped', { w, h }))
 }
 
 // ---------- before/after comparison ----------
@@ -758,13 +798,17 @@ function renderCompare(): void {
     cmpCtx.font = `bold ${fs}px system-ui, "Malgun Gothic", sans-serif`
     cmpCtx.textBaseline = 'top'
     cmpCtx.fillStyle = 'rgba(0,0,0,0.6)'
-    cmpCtx.fillRect(Math.max(0, wx - fs * 3.2), 0, fs * 3.2, fs * 1.5)
-    cmpCtx.fillRect(wx, 0, fs * 3.2, fs * 1.5)
+    const before = t('editor.compare.before')
+    const after = t('editor.compare.after')
+    // wide enough for the (language-dependent) labels; 3.2 font sizes fits the Korean ones
+    const boxW = Math.max(fs * 3.2, cmpCtx.measureText(before).width + 8, cmpCtx.measureText(after).width + 8)
+    cmpCtx.fillRect(Math.max(0, wx - boxW), 0, boxW, fs * 1.5)
+    cmpCtx.fillRect(wx, 0, boxW, fs * 1.5)
     cmpCtx.fillStyle = '#fff'
     cmpCtx.textAlign = 'right'
-    cmpCtx.fillText('이전', wx - 4, fs * 0.25)
+    cmpCtx.fillText(before, wx - 4, fs * 0.25)
     cmpCtx.textAlign = 'left'
-    cmpCtx.fillText('현재', wx + 4, fs * 0.25)
+    cmpCtx.fillText(after, wx + 4, fs * 0.25)
   } else {
     // |current - previous|: identical areas go black, changes light up.
     cmpCtx.drawImage(base, 0, 0)
@@ -808,16 +852,16 @@ function syncCompareUi(): void {
   opacityInput.parentElement?.classList.toggle('off', cmpMode !== 'overlay')
   wipeInput.parentElement?.classList.toggle('off', cmpMode !== 'wipe')
   compareBar.classList.toggle('on', cmpOn)
-  if (compareImg) diffLabel.textContent = `달라진 픽셀 ${diffPercent()}%`
+  if (compareImg) diffLabel.textContent = t('editor.compare.diffLabel', { percent: diffPercent() })
 }
 
 function setCompare(on: boolean): void {
-  if (!compareImg) { setStatus('비교할 이전 캡처가 없습니다 (트레이 "마지막 영역 다시 캡처"로 찍으면 생깁니다)'); return }
+  if (!compareImg) { setStatus(t('editor.compare.none', { item: t('tray.recaptureLast') })); return }
   cmpOn = on
   if (on) cmpUsed = true
   syncCompareUi()
   renderCompare()
-  setStatus(on ? `이전 캡처와 비교 중 (${CMP_LABELS[cmpMode]}) · O로 끄기` : '비교 끔')
+  setStatus(on ? t('editor.compare.status', { mode: cmpLabel(cmpMode) }) : t('editor.compare.off'))
 }
 
 function setCompareMode(m: CompareMode): void {
@@ -825,10 +869,16 @@ function setCompareMode(m: CompareMode): void {
   if (!cmpOn && compareImg) { cmpOn = true; cmpUsed = true }
   syncCompareUi()
   renderCompare()
-  if (cmpOn) setStatus(`이전 캡처와 비교 중 (${CMP_LABELS[m]}) · O로 끄기`)
+  if (cmpOn) setStatus(t('editor.compare.status', { mode: cmpLabel(m) }))
 }
 
-const CMP_LABELS: Record<CompareMode, string> = { overlay: '겹치기', wipe: '와이프', diff: '차이' }
+function cmpLabel(m: CompareMode): string {
+  switch (m) {
+    case 'overlay': return t('editor.compare.overlay')
+    case 'wipe': return t('editor.compare.wipe')
+    case 'diff': return t('editor.compare.diff')
+  }
+}
 
 /** Base image + every annotation on one canvas (image px). */
 function flattenCanvas(): HTMLCanvasElement {
@@ -871,13 +921,13 @@ const timeline = new Timeline(byId('timeline'), {
     if (links.has(segmentIndex) && links.get(segmentIndex) === annotationIndex) return
     const next = new Map(links)
     next.set(segmentIndex, annotationIndex)
-    commitLinks('발화 연결', next)
+    commitLinks(t('editor.history.linkAdd'), next)
   },
   onUnlink(segmentIndex) {
     if (!links.has(segmentIndex)) return
     const next = new Map(links)
     next.delete(segmentIndex)
-    commitLinks('발화 연결 해제', next)
+    commitLinks(t('editor.history.linkRemove'), next)
   },
   getAudio: () => (audioUrl ? player : null),
   getAudioStartMs: () => audioStartMs,
@@ -896,8 +946,8 @@ function afterChange(): void {
   timeline.refresh()
   undoBtn.disabled = !history.canUndo
   redoBtn.disabled = !history.canRedo
-  undoBtn.title = history.undoLabel ? `되돌리기: ${history.undoLabel} (Ctrl+Z)` : hotkeys.label('undo')
-  redoBtn.title = history.redoLabel ? `다시 실행: ${history.redoLabel} (Ctrl+Shift+Z)` : hotkeys.label('redo')
+  undoBtn.title = history.undoLabel ? t('editor.history.undoTip', { label: history.undoLabel }) : hotkeys.label('undo')
+  redoBtn.title = history.redoLabel ? t('editor.history.redoTip', { label: history.redoLabel }) : hotkeys.label('redo')
   timelineBtn.classList.toggle('has-items', annotations.length > 0 || transcript !== null)
 }
 
@@ -1002,10 +1052,10 @@ function finishText(sess: TextSession, commitIt: boolean): void {
     if (unchanged || annotations[sess.index] !== o) { render(); return }
     const next = [...annotations]
     next[sess.index] = { ...withExtras(o, ex), text, color: sess.color, font: sess.font, style: sess.style, fontSize, tEnd: now() }
-    commit('텍스트 수정', next)
+    commit(t('editor.history.textEdit'), next)
     return
   }
-  commit('텍스트', [
+  commit(t('editor.history.text'), [
     ...annotations,
     {
       kind: 'text', text, x: sess.at.x, y: sess.at.y, color: sess.color, fontSize,
@@ -1118,7 +1168,7 @@ function endMove(commitIt: boolean): void {
   if (commitIt && m.moved && annotations[m.index] === m.orig) {
     const next = [...annotations]
     next[m.index] = m.ann
-    commit('텍스트 이동', next)
+    commit(t('editor.history.textMove'), next)
   } else render()
 }
 
@@ -1218,10 +1268,10 @@ function endErase(commitIt: boolean): void {
     }
   }
   const after: Doc = { annotations: renumbered, links: nextLinks, crop }
-  history.commit('지우기', doc, after)
+  history.commit(t('editor.history.erase'), doc, after)
   setDoc(after)
   afterChange()
-  setStatus(`지우기: ${hits.size}개 삭제 (Ctrl+Z로 되돌리기)`)
+  setStatus(t('editor.status.erased', { n: hits.size }))
 }
 
 // ---------- pen tool ----------
@@ -1268,14 +1318,21 @@ function buildShape(
   }
 }
 
-const LABELS: Record<DragTool, string> = { arrow: '화살표', rect: '사각형', badge: '번호', blur: '블러' }
+function shapeLabel(k: DragTool): string {
+  switch (k) {
+    case 'arrow': return t('editor.history.arrow')
+    case 'rect': return t('editor.history.rect')
+    case 'badge': return t('editor.history.badge')
+    case 'blur': return t('editor.history.blur')
+  }
+}
 
 function endShape(commitIt: boolean): void {
   if (!shape || !init) return
   const s = shape
   shape = null
   const a = commitIt ? buildShape(s.tool, s.start, s.cur, s.tStart, now(), init.meta.scaleFactor) : null
-  if (a) commit(LABELS[s.tool], [...annotations, a])
+  if (a) commit(shapeLabel(s.tool), [...annotations, a])
   else render() // drop the preview
 }
 
@@ -1369,7 +1426,7 @@ function endStroke(): void {
   drawing.tEnd = now()
   const done = drawing
   drawing = null
-  commit('펜', [...annotations, done])
+  commit(t('editor.history.pen'), [...annotations, done])
 }
 function endCrop(commitIt: boolean, at?: Point): void {
   if (!cropDrag) return
@@ -1461,18 +1518,18 @@ function errText(err: unknown): string {
 async function save(): Promise<void> {
   if (busy || !init) return
   busy = true
-  setStatus('저장 중…')
+  setStatus(t('editor.status.saving'))
   try {
     await settleRecording()
     const payload = buildPayload()
     if (!payload) return
-    setStatus('저장 중…')
+    setStatus(t('editor.status.saving'))
     const r = await window.backseat.editor.save(payload)
-    if (r.ok) setStatus(`저장됨: ${r.path ?? ''}`)
-    else if (r.canceled) setStatus('저장 취소')
-    else setStatus(`저장 실패: ${r.error ?? '알 수 없는 오류'}`, true)
+    if (r.ok) setStatus(t('editor.status.saved', { path: r.path ?? '' }))
+    else if (r.canceled) setStatus(t('editor.status.saveCanceled'))
+    else setStatus(t('editor.status.saveFailed', { error: r.error ?? t('editor.status.unknownError') }), true)
   } catch (err) {
-    setStatus(`저장 실패: ${errText(err)}`, true)
+    setStatus(t('editor.status.saveFailed', { error: errText(err) }), true)
   } finally {
     busy = false
   }
@@ -1481,34 +1538,32 @@ async function save(): Promise<void> {
 async function send(): Promise<void> {
   if (busy || !init) return
   busy = true
-  setStatus('전송 중…')
+  setStatus(t('editor.status.sending'))
   let closing = false
   try {
     await settleRecording()
     const payload = buildPayload()
     if (!payload) return
-    setStatus('전송 중…')
+    setStatus(t('editor.status.sending'))
     const r = await window.backseat.editor.send(payload, sendOptions())
     setStatus(r.message, !r.ok)
     if (r.ok && r.delivered === 'clipboard') {
       // nothing was pasted anywhere: keep the editor open so the user sees what happened
-      targetNote = '대상 창이 없어 클립보드에 복사했습니다. 채팅창이나 터미널에 Ctrl+V 하세요.'
+      targetNote = t('editor.target.clipboardNote')
       showTarget()
     } else if (r.ok && r.delivered === 'pasted') {
       closing = true // stay busy: no double send while the status is visible
       if (!pinned) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
     }
   } catch (err) {
-    setStatus(`전송 실패: ${errText(err)}`, true)
+    setStatus(t('editor.status.sendFailed', { error: errText(err) }), true)
   } finally {
     if (!closing) busy = false
   }
 }
 
-const METHOD_HINT: Record<AgentTarget['method'], string> = {
-  'paste-path': '붙여넣기',
-  'paste-image': '붙여넣기',
-  clipboard: '클립보드'
+function methodHint(m: AgentTarget['method']): string {
+  return m === 'clipboard' ? t('editor.target.hintClipboard') : t('editor.target.hintPaste')
 }
 
 // ---------- send target (detected, or picked from the Ctrl+T menu for this send only) ----------
@@ -1534,14 +1589,16 @@ function showTarget(): void {
     return
   }
   if (!target) {
-    label.textContent = '대상 없음 · 전송하면 클립보드에 복사됩니다'
+    label.textContent = t('editor.target.none')
     hint.textContent = ''
     targetBtn.title = menuTitle
     return
   }
-  const tag = chosenTarget ? ' (선택)' : initData?.targetPinned ? ' (고정)' : ''
-  label.textContent = `→ ${target.label}${tag}`
-  hint.textContent = METHOD_HINT[target.method]
+  label.textContent = t(
+    chosenTarget ? 'editor.target.labelChosen' : initData?.targetPinned ? 'editor.target.labelPinned' : 'editor.target.label',
+    { label: target.label }
+  )
+  hint.textContent = methodHint(target.method)
   targetBtn.title = `${menuTitle}\n${target.title} (${target.process})`
 }
 
@@ -1553,26 +1610,36 @@ function sendOptions(): SendOptions {
   return o
 }
 
-const KIND_CHIP: Record<AgentKind, string> = {
-  'claude-code': 'Claude Code', 'claude-desktop': 'Claude 앱', cursor: 'Cursor', vscode: 'VS Code', codex: 'Codex',
-  orca: 'Orca', terminal: '터미널', chat: '웹 채팅', unknown: '창'
+function kindName(k: AgentKind): string {
+  switch (k) {
+    case 'claude-code': return 'Claude Code'
+    case 'claude-desktop': return t('editor.target.kindClaudeDesktop')
+    case 'cursor': return 'Cursor'
+    case 'vscode': return 'VS Code'
+    case 'codex': return 'Codex'
+    case 'orca': return 'Orca'
+    case 'terminal': return t('editor.target.kindTerminal')
+    case 'chat': return t('editor.target.kindChat')
+    case 'unknown': return t('editor.target.kindUnknown')
+  }
 }
-function kindChip(t: AgentTarget): string {
-  if (t.kind === 'chat') return /^slack/i.test(t.label) ? 'Slack' : /^discord/i.test(t.label) ? 'Discord' : '웹 채팅'
-  return KIND_CHIP[t.kind]
+function kindChip(tg: AgentTarget): string {
+  if (tg.kind === 'chat') return /^slack/i.test(tg.label) ? 'Slack' : /^discord/i.test(tg.label) ? 'Discord' : kindName('chat')
+  return kindName(tg.kind)
 }
-const METHOD_ROW_HINT: Record<AgentTarget['method'], string> = {
-  'paste-path': '경로 붙여넣기',
-  'paste-image': '이미지 붙여넣기',
-  clipboard: '클립보드'
+function methodRowHint(m: AgentTarget['method']): string {
+  switch (m) {
+    case 'paste-path': return t('editor.target.hintPastePath')
+    case 'paste-image': return t('editor.target.hintPasteImage')
+    case 'clipboard': return t('editor.target.hintClipboard')
+  }
 }
 
 const targetMenu = document.createElement('div')
 targetMenu.id = 'target-menu'
 targetMenu.hidden = true
 targetMenu.setAttribute('role', 'listbox')
-targetMenu.setAttribute('aria-label', '전송 대상')
-document.body.append(targetMenu)
+document.body.append(targetMenu) // its aria-label is set in the init handler
 let menuRows: { el: HTMLElement; target: AgentTarget | null }[] = []
 let menuActive = 0
 
@@ -1628,7 +1695,7 @@ function openTargetMenu(): void {
   const list = document.createElement('div')
   list.className = 'tm-list'
   menuRows = []
-  const addRow = (t: AgentTarget | null, chip: string, agent: boolean, text: string, hint: string, current: boolean): void => {
+  const addRow = (tg: AgentTarget | null, chip: string, agent: boolean, text: string, hint: string, current: boolean): void => {
     const el = document.createElement('div')
     el.className = 'tm-item'
     el.setAttribute('role', 'option')
@@ -1650,24 +1717,26 @@ function openTargetMenu(): void {
     const idx = menuRows.length
     el.addEventListener('click', () => pickMenuRow(idx))
     el.addEventListener('mousemove', () => { if (menuActive !== idx) setMenuActive(idx) })
-    menuRows.push({ el, target: t })
+    menuRows.push({ el, target: tg })
     list.append(el)
   }
   const pinned = initData.targetPinned === true
   addRow(
-    null, pinned ? '고정' : '자동', true,
-    detected ? `${pinned ? '고정' : '자동'}: ${detected.label}` : '자동: 대상 없음 (클립보드)',
-    detected ? METHOD_ROW_HINT[detected.method] : '', chosenTarget === null
+    null, pinned ? t('editor.target.chipPinned') : t('editor.target.chipAuto'), true,
+    detected
+      ? t(pinned ? 'editor.target.rowPinned' : 'editor.target.rowAuto', { label: detected.label })
+      : t('editor.target.rowAutoNone'),
+    detected ? methodRowHint(detected.method) : '', chosenTarget === null
   )
   let sepDone = false
-  for (const t of cands) {
-    if (!sepDone && t.kind === 'unknown') {
+  for (const tg of cands) {
+    if (!sepDone && tg.kind === 'unknown') {
       sepDone = true
       const sep = document.createElement('div')
       sep.className = 'tm-sep'
       list.append(sep)
     }
-    addRow(t, kindChip(t), t.kind !== 'unknown', t.title.slice(0, 40) || t.process, METHOD_ROW_HINT[t.method], chosenTarget?.hwnd === t.hwnd)
+    addRow(tg, kindChip(tg), tg.kind !== 'unknown', tg.title.slice(0, 40) || tg.process, methodRowHint(tg.method), chosenTarget?.hwnd === tg.hwnd)
   }
   const foot = document.createElement('div')
   foot.className = 'tm-foot'
@@ -1677,7 +1746,7 @@ function openTargetMenu(): void {
   box.type = 'checkbox'
   box.checked = pinChecked
   box.addEventListener('change', () => { pinChecked = box.checked })
-  pin.append(box, '이 창을 기본 대상으로 고정')
+  pin.append(box, t('editor.target.pinDefault'))
   foot.append(pin)
   targetMenu.replaceChildren(list, foot)
 
@@ -1714,10 +1783,10 @@ async function copy(): Promise<void> {
     const payload = buildPayload()
     if (!payload) return
     const r = await window.backseat.editor.copy(payload)
-    if (r.ok) setStatus('클립보드에 복사됨')
-    else setStatus(`복사 실패: ${r.error ?? '알 수 없는 오류'}`, true)
+    if (r.ok) setStatus(t('editor.status.copied'))
+    else setStatus(t('editor.status.copyFailed', { error: r.error ?? t('editor.status.unknownError') }), true)
   } catch (err) {
-    setStatus(`복사 실패: ${errText(err)}`, true)
+    setStatus(t('editor.status.copyFailed', { error: errText(err) }), true)
   } finally {
     busy = false
   }
@@ -1729,7 +1798,7 @@ async function copy(): Promise<void> {
  */
 async function exportVideo(): Promise<void> {
   if (busy || !init) return
-  if (annotations.length === 0) { setStatus('내보낼 주석이 없습니다'); return }
+  if (annotations.length === 0) { setStatus(t('editor.video.noAnnotations')); return }
   commitPendingText()
   const first = Math.min(...annotations.map((a) => a.tStart))
   const start = Math.max(0, first - 400)
@@ -1748,7 +1817,7 @@ async function exportVideo(): Promise<void> {
     ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ??
     'video/webm'
   busy = true
-  setStatus(`녹화 중… (${((end - start) / 1000).toFixed(1)}초)`)
+  setStatus(t('editor.video.exporting', { seconds: ((end - start) / 1000).toFixed(1) }))
   try {
     await loadDocFonts()
     const stream = c.captureStream(30)
@@ -1773,11 +1842,11 @@ async function exportVideo(): Promise<void> {
     const blob = new Blob(chunks, { type: mime })
     const bytes = new Uint8Array(await blob.arrayBuffer())
     const r = await window.backseat.editor.saveVideo({ bytes, mimeType: mime, durationMs: end - start })
-    if (r.ok) setStatus(`녹화 저장됨: ${r.path ?? ''}`)
-    else if (r.canceled) setStatus('녹화 저장 취소')
-    else setStatus(`녹화 실패: ${r.error ?? '알 수 없는 오류'}`, true)
+    if (r.ok) setStatus(t('editor.video.saved', { path: r.path ?? '' }))
+    else if (r.canceled) setStatus(t('editor.video.canceled'))
+    else setStatus(t('editor.video.failed', { error: r.error ?? t('editor.status.unknownError') }), true)
   } catch (err) {
-    setStatus(`녹화 실패: ${errText(err)}`, true)
+    setStatus(t('editor.video.failed', { error: errText(err) }), true)
   } finally {
     busy = false
   }
@@ -1811,7 +1880,8 @@ const mmss = (ms: number): string => {
 
 function updateMicUi(): void {
   micBtn.classList.toggle('recording', active !== null)
-  micBtn.textContent = active ? `■ 정지 ${mmss(performance.now() - active.startedPerf)}` : '🎤 녹음'
+  micBtn.textContent = active ? t('editor.mic.stop', { time: mmss(performance.now() - active.startedPerf) }) : t('editor.mic.start')
+  fitToolbar()
 }
 
 function releaseMic(a: ActiveRecording): void {
@@ -1822,12 +1892,12 @@ function releaseMic(a: ActiveRecording): void {
 window.backseat.editor.onSttProgress?.((p) => {
   if (!transcribing) return
   switch (p.stage) {
-    case 'loading': setStatus(p.message ?? '음성 모델 불러오는 중…'); break
+    case 'loading': setStatus(p.message ?? t('editor.mic.loadingModel')); break
     case 'downloading':
-      setStatus(`모델 내려받는 중 ${p.file ?? ''} ${Math.round(p.progress ?? 0)}%`.replace(/\s+/g, ' '))
+      setStatus(t('editor.mic.downloading', { file: p.file ?? '', percent: Math.round(p.progress ?? 0) }).replace(/\s+/g, ' '))
       break
-    case 'transcribing': setStatus('전사 중…'); break
-    case 'error': setStatus(p.message ?? '전사 오류', true); break
+    case 'transcribing': setStatus(t('editor.mic.transcribing')); break
+    case 'error': setStatus(p.message ?? t('editor.mic.transcribeError'), true); break
     case 'done': break
   }
 })
@@ -1840,7 +1910,7 @@ async function startRecording(): Promise<void> {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true })
   } catch (err) {
     startingMic = false
-    setStatus(`마이크를 사용할 수 없습니다: ${errText(err)}`, true)
+    setStatus(t('editor.mic.unavailable', { error: errText(err) }), true)
     return
   }
   try {
@@ -1854,16 +1924,16 @@ async function startRecording(): Promise<void> {
     }
     rec.addEventListener('dataavailable', (e) => { if (e.data.size > 0) a.chunks.push(e.data) })
     rec.addEventListener('start', () => { a.startMs = now() }, { once: true })
-    rec.addEventListener('error', () => setStatus('녹음 오류가 발생했습니다', true))
+    rec.addEventListener('error', () => setStatus(t('editor.mic.recordError'), true))
     active = a
     rec.start(250)
     updateMicUi()
-    setStatus('녹음 중')
+    setStatus(t('editor.mic.recording'))
   } catch (err) {
     stream.getTracks().forEach((t) => t.stop())
     active = null
     updateMicUi()
-    setStatus(`녹음을 시작하지 못했습니다: ${errText(err)}`, true)
+    setStatus(t('editor.mic.startFailed', { error: errText(err) }), true)
   } finally {
     startingMic = false
   }
@@ -1924,18 +1994,18 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
     if (a.rec.state !== 'inactive') a.rec.stop()
     await a.stopped
   } catch (err) {
-    setStatus(`녹음 종료 실패: ${errText(err)}`, true)
+    setStatus(t('editor.mic.stopFailed', { error: errText(err) }), true)
   } finally {
     releaseMic(a) // the microphone is free again, whatever happened
   }
   const wallMs = performance.now() - a.startedPerf
-  if (a.chunks.length === 0) { setStatus('녹음된 소리가 없습니다', true); return }
+  if (a.chunks.length === 0) { setStatus(t('editor.mic.noSound'), true); return }
   const blob = new Blob(a.chunks, { type: a.mime })
   let buf: ArrayBuffer
   try {
     buf = await blob.arrayBuffer()
   } catch (err) {
-    setStatus(`녹음 읽기 실패: ${errText(err)}`, true)
+    setStatus(t('editor.mic.readFailed', { error: errText(err) }), true)
     return
   }
   if (a.gen !== recGen) return // a newer recording already took over
@@ -1948,7 +2018,7 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
 
   transcribing = true
   try {
-    setStatus('음성 해석 중…')
+    setStatus(t('editor.mic.processing'))
     let pcm16k: Float32Array
     const ac = new AudioContext({ sampleRate: 16000 })
     try {
@@ -1958,7 +2028,7 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
     } finally {
       void ac.close()
     }
-    const r = await window.backseat.editor.transcribe({ pcm16k, audioStartMs: a.startMs, language: 'korean' })
+    const r = await window.backseat.editor.transcribe({ pcm16k, audioStartMs: a.startMs })
     if (a.gen !== recGen) return
     if (r.ok && r.transcript) {
       transcript = r.transcript
@@ -1966,12 +2036,12 @@ async function finishRecording(a: ActiveRecording): Promise<void> {
         (n, seg) => n + (seg.words ? seg.words.length : seg.text.split(/\s+/).filter(Boolean).length), 0
       )
       afterChange()
-      setStatus(`전사 완료: ${words} 단어`)
+      setStatus(t('editor.mic.transcribed', { n: words }))
     } else {
-      setStatus(`전사 실패: ${r.error ?? '알 수 없는 오류'}`, true)
+      setStatus(t('editor.mic.transcribeFailed', { error: r.error ?? t('editor.status.unknownError') }), true)
     }
   } catch (err) {
-    if (a.gen === recGen) setStatus(`전사 실패: ${errText(err)}`, true)
+    if (a.gen === recGen) setStatus(t('editor.mic.transcribeFailed', { error: errText(err) }), true)
   } finally {
     if (a.gen === recGen) transcribing = false
   }
@@ -2001,7 +2071,7 @@ function syncTextBar(): void {
   shadowBtn.setAttribute('aria-pressed', String(textShadow))
   setColorButton(bgBtn, textBg ?? auto.hex)
   bgBtn.classList.toggle('auto', textBg === undefined)
-  bgBtn.title = textBg === undefined ? '배경 상자 색 (지금은 자동)' : '배경 상자 색'
+  bgBtn.title = textBg === undefined ? t('editor.text.plateColorAuto') : t('editor.text.plateColor')
   bgAutoBtn.setAttribute('aria-pressed', String(textBg === undefined))
   bgOpacityInput.value = String(Math.round((textBgOpacity ?? auto.alpha) * 100))
   setColorButton(outlineBtn, textOutline ?? '#000000')
@@ -2130,6 +2200,7 @@ function textPropChanged(sel: HTMLElement): void {
 }
 fontSelect.addEventListener('change', () => {
   fontFamily = fontSelect.value || undefined
+  void loadFontCss(fontFamily)
   textPropChanged(fontSelect)
 })
 sizeSelect.addEventListener('change', () => {
@@ -2171,7 +2242,7 @@ const picker = new ColorPicker()
 function sampleFromCanvas(): Promise<string | null> {
   return new Promise((resolve) => {
     if (!init) { resolve(null); return }
-    setStatus('캡처 화면을 클릭해 색을 집으세요 (Esc 취소)')
+    setStatus(t('editor.status.pickColor'))
     stage.classList.add('sampling')
     let done = false
     const finish = (c: string | null): void => {
@@ -2181,7 +2252,7 @@ function sampleFromCanvas(): Promise<string | null> {
       document.removeEventListener('mousedown', onMouse, true)
       window.removeEventListener('keydown', onKey, true)
       stage.classList.remove('sampling')
-      setStatus(c ? `색 ${c}` : '색 집기 취소')
+      setStatus(c ? t('editor.status.colorPicked', { color: c }) : t('editor.status.pickCanceled'))
       resolve(c)
     }
     const swallowClick = (ev: MouseEvent): void => ev.stopPropagation() // the click that ends sampling must not hit a button
@@ -2224,48 +2295,48 @@ function openPicker(anchor: HTMLButtonElement, title: string, value: string, onP
   })
 }
 
-colorBtn.addEventListener('click', () => openPicker(colorBtn, '색', color, (c) => {
+colorBtn.addEventListener('click', () => openPicker(colorBtn, t('editor.color.title'), color, (c) => {
   setColor(c, false)
   try { localStorage.setItem(LS_COLOR, c) } catch { /* storage unavailable */ }
 }))
-bgBtn.addEventListener('click', () => openPicker(bgBtn, '배경 상자 색', textBg ?? autoPlate(color).hex, (c) => setTextBg(c, false)))
-outlineBtn.addEventListener('click', () => openPicker(outlineBtn, '윤곽선 색', textOutline ?? '#000000', (c) => setTextOutline(c, false)))
+bgBtn.addEventListener('click', () => openPicker(bgBtn, t('editor.text.plateColor'), textBg ?? autoPlate(color).hex, (c) => setTextBg(c, false)))
+outlineBtn.addEventListener('click', () => openPicker(outlineBtn, t('editor.text.outlineColor'), textOutline ?? '#000000', (c) => setTextOutline(c, false)))
 
 const hotkeys = new Hotkeys([
   {
-    id: 'send', label: '전송', keys: ['Enter', 'Ctrl+Enter'],
+    id: 'send', label: () => t('editor.hotkey.send'), keys: ['Enter', 'Ctrl+Enter'],
     run: (e) => {
       if (e.code === 'Enter' && textSession) return false // Enter belongs to the open text box
       void send()
     }
   },
-  { id: 'save', label: '저장', keys: ['Ctrl+KeyS'], context: 'global', run: () => void save() },
-  { id: 'copy', label: '복사', keys: ['Ctrl+KeyC'], run: () => void copy() },
-  { id: 'undo', label: '되돌리기', keys: ['Ctrl+KeyZ'], run: undo },
-  { id: 'redo', label: '다시 실행', keys: ['Ctrl+Shift+KeyZ', 'Ctrl+KeyY'], run: redo },
-  { id: 'pen', label: '펜', keys: ['KeyP'], run: () => setTool('pen') },
-  { id: 'text', label: '텍스트', keys: ['KeyT'], run: () => setTool('text') },
-  { id: 'target', label: '전송 대상 바꾸기', keys: ['Ctrl+KeyT'], context: 'global', run: toggleTargetMenu },
-  { id: 'arrow', label: '화살표', keys: ['KeyA'], run: () => setTool('arrow') },
-  { id: 'rect', label: '사각형', keys: ['KeyR'], run: () => setTool('rect') },
-  { id: 'badge', label: '번호', keys: ['KeyN'], run: () => setTool('badge') },
-  { id: 'blur', label: '블러', keys: ['KeyB'], run: () => setTool('blur') },
-  { id: 'crop', label: '자르기', keys: ['KeyC'], run: () => setTool('crop') },
-  { id: 'eraser', label: '지우개', keys: ['KeyE'], run: () => setTool('eraser') },
-  { id: 'width-down', label: '굵기 줄이기', keys: ['BracketLeft'], run: () => setWidth(widthCss - 1) },
-  { id: 'width-up', label: '굵기 늘리기', keys: ['BracketRight'], run: () => setWidth(widthCss + 1) },
-  { id: 'compare', label: '이전 캡처와 비교', keys: ['KeyO'], run: () => setCompare(!cmpOn) },
-  { id: 'timeline', label: '타임라인', keys: ['KeyL'], run: () => { timeline.toggle(); syncToolbar() } },
-  { id: 'play', label: '재생/일시정지', keys: ['Space'], run: () => { if (!timeline.isOpen) return false; timeline.togglePlay() } },
-  { id: 'step-back', label: '0.2초 뒤로', keys: ['ArrowLeft'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(-200) } },
-  { id: 'step-fwd', label: '0.2초 앞으로', keys: ['ArrowRight'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(200) } },
-  { id: 'home', label: '처음으로', keys: ['Home'], run: () => { if (!timeline.isOpen) return false; timeline.pause(); timeline.seek(0) } },
-  { id: 'live', label: '라이브로', keys: ['End'], run: () => { if (!timeline.isOpen) return false; timeline.setLive() } },
-  { id: 'mic', label: '녹음', keys: ['KeyM'], run: () => void toggleRecording() },
-  { id: 'video', label: '녹화 내보내기', keys: ['Ctrl+KeyE'], run: () => void exportVideo() },
-  { id: 'pin', label: '고정 (참조창)', keys: ['Ctrl+KeyP'], run: () => void togglePin() },
+  { id: 'save', label: () => t('editor.hotkey.save'), keys: ['Ctrl+KeyS'], context: 'global', run: () => void save() },
+  { id: 'copy', label: () => t('editor.hotkey.copy'), keys: ['Ctrl+KeyC'], run: () => void copy() },
+  { id: 'undo', label: () => t('editor.hotkey.undo'), keys: ['Ctrl+KeyZ'], run: undo },
+  { id: 'redo', label: () => t('editor.hotkey.redo'), keys: ['Ctrl+Shift+KeyZ', 'Ctrl+KeyY'], run: redo },
+  { id: 'pen', label: () => t('editor.hotkey.pen'), keys: ['KeyP'], run: () => setTool('pen') },
+  { id: 'text', label: () => t('editor.hotkey.text'), keys: ['KeyT'], run: () => setTool('text') },
+  { id: 'target', label: () => t('editor.hotkey.target'), keys: ['Ctrl+KeyT'], context: 'global', run: toggleTargetMenu },
+  { id: 'arrow', label: () => t('editor.hotkey.arrow'), keys: ['KeyA'], run: () => setTool('arrow') },
+  { id: 'rect', label: () => t('editor.hotkey.rect'), keys: ['KeyR'], run: () => setTool('rect') },
+  { id: 'badge', label: () => t('editor.hotkey.badge'), keys: ['KeyN'], run: () => setTool('badge') },
+  { id: 'blur', label: () => t('editor.hotkey.blur'), keys: ['KeyB'], run: () => setTool('blur') },
+  { id: 'crop', label: () => t('editor.hotkey.crop'), keys: ['KeyC'], run: () => setTool('crop') },
+  { id: 'eraser', label: () => t('editor.hotkey.eraser'), keys: ['KeyE'], run: () => setTool('eraser') },
+  { id: 'width-down', label: () => t('editor.hotkey.widthDown'), keys: ['BracketLeft'], run: () => setWidth(widthCss - 1) },
+  { id: 'width-up', label: () => t('editor.hotkey.widthUp'), keys: ['BracketRight'], run: () => setWidth(widthCss + 1) },
+  { id: 'compare', label: () => t('editor.hotkey.compare'), keys: ['KeyO'], run: () => setCompare(!cmpOn) },
+  { id: 'timeline', label: () => t('editor.hotkey.timeline'), keys: ['KeyL'], run: () => { timeline.toggle(); syncToolbar() } },
+  { id: 'play', label: () => t('editor.hotkey.play'), keys: ['Space'], run: () => { if (!timeline.isOpen) return false; timeline.togglePlay() } },
+  { id: 'step-back', label: () => t('editor.hotkey.stepBack'), keys: ['ArrowLeft'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(-200) } },
+  { id: 'step-fwd', label: () => t('editor.hotkey.stepFwd'), keys: ['ArrowRight'], run: () => { if (!timeline.isOpen) return false; timeline.stepFrames(200) } },
+  { id: 'home', label: () => t('editor.hotkey.home'), keys: ['Home'], run: () => { if (!timeline.isOpen) return false; timeline.pause(); timeline.seek(0) } },
+  { id: 'live', label: () => t('editor.hotkey.live'), keys: ['End'], run: () => { if (!timeline.isOpen) return false; timeline.setLive() } },
+  { id: 'mic', label: () => t('editor.hotkey.mic'), keys: ['KeyM'], run: () => void toggleRecording() },
+  { id: 'video', label: () => t('editor.hotkey.video'), keys: ['Ctrl+KeyE'], run: () => void exportVideo() },
+  { id: 'pin', label: () => t('editor.hotkey.pin'), keys: ['Ctrl+KeyP'], run: () => void togglePin() },
   {
-    id: 'close', label: '닫기', keys: ['Escape'], context: 'global',
+    id: 'close', label: () => t('editor.hotkey.close'), keys: ['Escape'], context: 'global',
     run: (e) => {
       if (e.target === memoInput) { memoInput.blur(); return }
       if (e.target instanceof HTMLSelectElement) { e.target.blur(); return }
@@ -2281,11 +2352,22 @@ const hotkeys = new Hotkeys([
   }
 ])
 hotkeys.install()
-hotkeys.applyTooltips()
+hotkeys.applyTooltips() // binds the click handlers; the titles are refreshed in the init handler once the language is known
+
+/**
+ * Longer languages (de, fr, es, pt-BR) need a little more room than the toolbar has at its usual
+ * 820 px: drop to a tighter button style only when the labels do not fit on one line.
+ */
+function fitToolbar(): void {
+  const bar = byId('toolbar')
+  bar.classList.remove('tight')
+  if (bar.scrollWidth > bar.clientWidth) bar.classList.add('tight')
+}
 
 window.addEventListener('resize', () => {
   commitPendingText()
   layout()
+  fitToolbar()
 })
 
 // ---------- init ----------
@@ -2293,6 +2375,16 @@ window.addEventListener('resize', () => {
 window.backseat.editor.onInit((data) => {
   if (started) return
   started = true
+  // The language first: nothing may use t() before this (module scope runs before init arrives).
+  setMessages(isLocale(data.locale) ? data.locale : 'ko', data.messages ?? {})
+  applyDom(document)
+  hotkeys.applyTooltips()
+  applyColorTitles()
+  targetMenu.setAttribute('aria-label', t('editor.target.menuLabel'))
+  requestAnimationFrame(fitToolbar) // after the rest of init has set the labels
+  const localeFont = LOCALE_FONT[getLocale()]
+  if (localeFont && fontFamily === DEFAULT_FONT) fontFamily = localeFont
+  void loadFontCss(fontFamily)
   t0 = performance.now()
   document.title = 'Backseat'
   syncToolbar()
@@ -2302,7 +2394,7 @@ window.backseat.editor.onInit((data) => {
   if (data.request) {
     const q = document.createElement('span')
     q.className = 'ask'
-    q.textContent = ` · ❓ ${data.request.agent || '에이전트'}: ${data.request.question}`
+    q.textContent = t('editor.target.ask', { agent: data.request.agent || t('editor.target.agentFallback'), question: data.request.question })
     q.title = data.request.question
     targetBar.appendChild(q)
   }
@@ -2311,7 +2403,7 @@ window.backseat.editor.onInit((data) => {
     window.addEventListener('backseat:debug-transcript', (e) => {
       transcript = (e as CustomEvent<Transcript>).detail
       afterChange()
-      setStatus(`디버그 전사 주입: ${transcript.segments.length} 세그먼트`)
+      setStatus(t('editor.debug.transcriptInjected', { count: transcript.segments.length }))
     })
     const w = window as unknown as { __backseat?: unknown }
     w.__backseat = {
@@ -2345,7 +2437,7 @@ window.backseat.editor.onInit((data) => {
       /** Crop programmatically (image px of the current canvas); same path as a pointer drag. */
       crop: (x: number, y: number, w: number, h: number) => applyCropSelection({ x, y, width: w, height: h }),
       /** Commit annotations (image px of the current canvas) as ONE history step; undo removes them together. */
-      addAnnotations: (list: Annotation[]) => { commit('주석 추가 (디버그)', [...annotations, ...list]) },
+      addAnnotations: (list: Annotation[]) => { commit(t('editor.debug.addAnnotations'), [...annotations, ...list]) },
       /** Restore the pen colour without the popover (self-test cleanup). */
       setColor: (c: string) => setColor(c, false),
       /** The SendOptions 전송 would pass right now (nothing is sent). */
@@ -2368,13 +2460,13 @@ window.backseat.editor.onInit((data) => {
         compareDir = data.compare?.sessionDir ?? ''
         diffCache = null
         syncCompareUi()
-        setStatus('이전 캡처가 있습니다: O 키로 전/후 비교')
+        setStatus(t('editor.compare.available'))
       }
-      prev.onerror = () => setStatus('이전 캡처를 불러오지 못했습니다', true)
+      prev.onerror = () => setStatus(t('editor.compare.loadFailed'), true)
       prev.src = data.compare.imageDataUrl
     }
     if (data.autoRecord) void startRecording()
   }
-  img.onerror = () => setStatus('이미지를 불러오지 못했습니다', true)
+  img.onerror = () => setStatus(t('editor.status.imageFailed'), true)
   img.src = data.imageDataUrl
 })

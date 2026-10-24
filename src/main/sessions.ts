@@ -6,6 +6,7 @@ import { join } from 'path'
 import type { AgentTarget, CompareSource, ExportPayload } from '../shared/types'
 import { alignSegments } from '../shared/align'
 import { buildBrief } from './brief'
+import { briefTranslator } from './locales'
 
 export interface SessionPackage {
   id: string
@@ -64,7 +65,7 @@ export async function writeSessionPackage(
   const hasShot = Boolean(payload.basePngDataUrl)
   const writes: Promise<void>[] = [
     writeFile(pkg.annotatedPng, pngBuffer(payload.pngDataUrl)),
-    writeFile(pkg.briefMd, buildBrief(payload, 'annotated.png', target, hasShot ? { screenshotFileName: 'screenshot.png' } : {}), 'utf8'),
+    writeFile(pkg.briefMd, buildBrief(payload, 'annotated.png', target, { ...(hasShot ? { screenshotFileName: 'screenshot.png' } : {}), t: briefTranslator() }), 'utf8'),
     writeFile(pkg.strokesJson, JSON.stringify({ annotations: payload.annotations }, null, 2), 'utf8')
   ]
   if (payload.basePngDataUrl) {

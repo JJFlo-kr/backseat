@@ -17,8 +17,9 @@ aligned to the annotation the user was drawing at that moment (`src/shared/align
 (`out/main/mcp-server.js`) lets agents pull packages (`backseat_latest/list/get/wait`) and ask the user to
 draw an answer (`backseat_ask`).
 
-UI strings, the brief and the docs are in **Korean** on purpose (the author's language). Keep them Korean
-unless a task says otherwise; code, identifiers and comments are English.
+The UI, the brief and the MCP text come in 9 languages (ko, en, ja, zh-CN, zh-TW, es, pt-BR, de, fr) through
+message keys — see **i18n** below. Korean is the source language (the author's); `PLAN.md` and
+`README.ko.md` are Korean, `README.md` is English. Code, identifiers and comments are English.
 
 ## Layout
 
@@ -28,6 +29,8 @@ unless a task says otherwise; code, identifiers and comments are English.
 | `src/shared/ipc.ts` | IPC channel names. Never use string literals for channels elsewhere. |
 | `src/shared/align.ts`, `transcript.ts`, `stitch.ts`, `palette.ts` | Pure logic (no Electron, no DOM) — unit-tested in `tests/`. |
 | `src/shared/links.ts` | Repo / support URLs (single source; README repeats them). |
+| `src/shared/i18n.ts`, `bundles.ts`, `src/main/locales.ts` | i18n: `t()`, locale resolution, fallbacks; all bundles (main / MCP only); UI / brief / speech language from config. |
+| `src/locales/*.json`, `_context.json`, `GLOSSARY.md` | Message bundles (flat keys), where each key appears (for translators), terminology. |
 | `src/main/index.ts` | App start, hotkeys, capture flow (`startCapture`), target selection. |
 | `src/main/capture.ts`, `selector.ts`, `scroll.ts` | Screen capture (desktopCapturer), per-display selector windows, scroll capture + stitching. |
 | `src/main/editor.ts` | Editor window + its IPC (save, copy, send, transcribe, pin, video). |
@@ -55,6 +58,7 @@ npm test                         # unit tests (pure logic) — runs on any OS
 npm run build                    # electron-vite → out/
 npm start                        # run the tray app (Ctrl+Shift+A / Ctrl+Shift+W)
 npm run selftest -- --selftest-shots=<dir> [--selftest-wav=<korean.wav>] [--selftest-no-stt] [--selftest-no-scroll]
+npm run selftest -- --selftest-locale=all --selftest-shots=<dir>      # per-language screenshots + checks
 node scripts/mcp-check.mjs <sessionsRoot> [out/main/mcp-server.js]   # MCP server against the official client
 npm run dist                     # NSIS installer → dist/
 ```
@@ -81,6 +85,15 @@ static review of the rest and say clearly what you could not run.
 - `koffi`, `onnxruntime-node` and `@huggingface/transformers` are native/large and stay external
   (asarUnpack). The MCP SDK and zod are bundled into `out/main/mcp-server.js` on purpose (installed app has no
   node_modules for plain Node).
+- **i18n**: every user-visible string is a key — never hardcode text in any language. Add a new key to
+  `ko.json` and `en.json` together (natural English, `GLOSSARY.md` terms), describe it in `_context.json`, and
+  give the other 7 bundles a translation, or the English text when none is at hand (runtime fallback is
+  en → ko; `npm test` fails while any bundle lacks a key, has a different `{placeholder}` or an empty string).
+  Plurals: `<key>.one` + `<key>.other`, called as `t(key, { n })`. Text an agent reads (brief.md, the pasted
+  instruction, MCP replies) uses the brief language (`briefTranslator()`), everything else the UI language.
+  Renderers: `t()` only after the init message (module scope runs first — make labels lazy), static HTML
+  via `data-i18n` / `data-i18n-title` / `-placeholder` / `-aria-label`. Toolbar labels must fit 820 px
+  (the locale self-test checks it). Adding a language: PLAN.md §21.
 - **Do not copy code from StykAnimate** (GPL-3.0). It was studied for timeline design only (PLAN.md §11).
 - Commits: small and focused, message body explains why. Work on a branch; do not push to `main` directly.
 

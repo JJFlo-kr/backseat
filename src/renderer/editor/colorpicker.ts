@@ -1,5 +1,6 @@
 import './colorpicker.css'
 import { PALETTES, contrastText, normalizeHex, pushRecent } from '../../shared/palette'
+import { t } from '../../shared/i18n'
 
 export interface PickOptions {
   /** The popover opens below it (flips above if there is no room; clamped inside the window). */
@@ -79,6 +80,9 @@ export class ColorPicker {
   private nativeInput: HTMLInputElement
   private hexInput: HTMLInputElement
   private dropBtn: HTMLButtonElement
+  private dropLabel: HTMLElement
+  private recentLabel: HTMLElement
+  private chip: HTMLElement
 
   constructor(host: HTMLElement = document.body) {
     const saved = lsGet(LS_PALETTE)
@@ -87,7 +91,6 @@ export class ColorPicker {
     const root = el('div', 'cp-root')
     root.id = 'color-pop'
     root.setAttribute('role', 'dialog')
-    root.setAttribute('aria-label', '색 선택')
     root.hidden = true
     this.root = root
 
@@ -96,7 +99,7 @@ export class ColorPicker {
     this.tabsEl = el('div', 'cp-tabs')
     this.tabsEl.setAttribute('role', 'tablist')
     for (const p of PALETTES) {
-      const b = el('button', 'cp-tab', { type: 'button', textContent: p.label })
+      const b = el('button', 'cp-tab', { type: 'button', textContent: '' })
       b.dataset.id = p.id
       b.setAttribute('role', 'tab')
       b.addEventListener('click', () => {
@@ -114,21 +117,20 @@ export class ColorPicker {
 
     // recents
     const recentRow = el('div', 'cp-recent-row')
-    const recentLabel = el('span', 'cp-label', { textContent: '최근' })
+    const recentLabel = el('span', 'cp-label')
+    this.recentLabel = recentLabel
     this.recentEl = el('div', 'cp-recent')
     recentRow.append(recentLabel, this.recentEl)
 
     // bottom row
     const chip = el('label', 'cp-native')
-    chip.title = '직접 선택'
+    this.chip = chip
     this.nativeInput = el('input', undefined, { type: 'color' })
-    this.nativeInput.setAttribute('aria-label', '직접 선택')
     this.nativeInput.addEventListener('input', () => this.apply(this.nativeInput.value, false))
     this.nativeInput.addEventListener('change', () => this.remember(this.nativeInput.value))
     chip.append(this.nativeInput, el('span', 'cp-native-plus', { textContent: '+' }))
 
     this.hexInput = el('input', 'cp-hex', { type: 'text', maxLength: 24, spellcheck: false })
-    this.hexInput.setAttribute('aria-label', '16진수 색 코드')
     this.hexInput.placeholder = '#RRGGBB'
     this.hexInput.addEventListener('input', () => {
       const v = this.hexInput.value.trim()
@@ -145,9 +147,9 @@ export class ColorPicker {
     })
 
     this.dropBtn = el('button', 'cp-drop', { type: 'button' })
-    this.dropBtn.title = '화면에서 색 집기'
-    this.dropBtn.setAttribute('aria-label', '스포이트: 화면에서 색 집기')
-    this.dropBtn.innerHTML = EYEDROPPER_SVG + '<span>스포이트</span>'
+    this.dropLabel = el('span')
+    this.dropBtn.innerHTML = EYEDROPPER_SVG
+    this.dropBtn.append(this.dropLabel)
     this.dropBtn.addEventListener('click', () => void this.eyedrop())
 
     const bottom = el('div', 'cp-bottom')
@@ -162,6 +164,22 @@ export class ColorPicker {
     root.addEventListener('contextmenu', (e) => e.preventDefault())
 
     host.append(root)
+  }
+
+  /** Texts are set here (not in the constructor): the editor picks the language after this module loads. */
+  private localize(): void {
+    this.root.setAttribute('aria-label', t('colorpicker.dialog'))
+    for (const b of Array.from(this.tabsEl.children) as HTMLElement[]) {
+      const p = PALETTES.find((x) => x.id === b.dataset.id)
+      if (p) b.textContent = t(p.labelKey)
+    }
+    this.recentLabel.textContent = t('colorpicker.recent')
+    this.chip.title = t('colorpicker.custom')
+    this.nativeInput.setAttribute('aria-label', t('colorpicker.custom'))
+    this.hexInput.setAttribute('aria-label', t('colorpicker.hexCode'))
+    this.dropBtn.title = t('colorpicker.eyedropperTitle')
+    this.dropBtn.setAttribute('aria-label', t('colorpicker.eyedropperAria'))
+    this.dropLabel.textContent = t('colorpicker.eyedropper')
   }
 
   isOpen(): boolean {
@@ -185,6 +203,7 @@ export class ColorPicker {
     this.syncHex()
     this.nativeInput.value = this.value.toLowerCase()
 
+    this.localize()
     this.root.hidden = false
     this.root.style.visibility = 'hidden'
     this.position()
@@ -293,7 +312,7 @@ export class ColorPicker {
   private renderRecent(): void {
     this.recentEl.replaceChildren(...this.recent.map((c) => this.swatch(c)))
     if (this.recent.length === 0) {
-      this.recentEl.append(el('span', 'cp-empty', { textContent: '아직 없음' }))
+      this.recentEl.append(el('span', 'cp-empty', { textContent: t('colorpicker.noRecent') }))
     }
     this.markCurrent()
   }
@@ -331,8 +350,8 @@ export class ColorPicker {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (this.picking || !this.opts) return
-    const t = e.target as Node | null
-    if (t && (this.root.contains(t) || this.opts.anchor.contains(t))) return
+    const target = e.target as Node | null
+    if (target && (this.root.contains(target) || this.opts.anchor.contains(target))) return
     this.close()
   }
 

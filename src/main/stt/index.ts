@@ -7,6 +7,8 @@ import { Worker } from 'worker_threads'
 import type { SttProgress, TranscribeRequest, TranscribeResult } from '../../shared/types'
 import { toTranscript } from '../../shared/transcript'
 import { loadSettings, sttApiKey } from '../config'
+import { sttLanguage } from '../locales'
+import { t } from '../../shared/i18n'
 import { transcribeOpenAi } from './openai'
 import type { WorkerOut } from './worker'
 
@@ -85,17 +87,19 @@ export async function transcribe(
   override?: { backend?: SttBackend; apiBase?: string; apiKey?: string; model?: string }
 ): Promise<TranscribeResult> {
   const s = loadSettings()
+  // The editor sends no language: the hint comes from config.sttLanguage ('auto' follows the UI language).
+  if (req.language === undefined) req = { ...req, language: sttLanguage() }
   const backend = override?.backend ?? s.sttBackend
   if (backend !== 'openai') return transcribeLocal(req, onProgress)
   const t0 = Date.now()
   const apiBase = override?.apiBase ?? s.sttApiBase
-  onProgress?.({ stage: 'transcribing', message: `클라우드 전사 중… (${apiBase})` })
+  onProgress?.({ stage: 'transcribing', message: t('stt.cloudTranscribing', { api: apiBase }) })
   try {
     const transcript = await transcribeOpenAi(req.pcm16k, {
       apiBase,
       apiKey: override?.apiKey ?? sttApiKey(),
       model: override?.model ?? s.sttCloudModel,
-      language: req.language ?? s.sttLanguage,
+      language: req.language,
       audioStartMs: req.audioStartMs
     })
     onProgress?.({ stage: 'done', message: `${transcript.segments.length} segments` })

@@ -5,7 +5,8 @@ export type CommandContext = 'global' | 'editor'
 
 export interface Command {
   id: string
-  label: string
+  /** Shown in tooltips. Pass a function when the text comes from i18n: it is read lazily, after the language is set. */
+  label: string | (() => string)
   /** e.g. 'Ctrl+KeyS', 'Ctrl+Shift+KeyZ', 'Space', 'Escape'. First one is shown in tooltips. */
   keys: string[]
   /** 'global' also fires while typing in an input; 'editor' (default) does not. */
@@ -20,6 +21,8 @@ interface Binding {
   shift: boolean
   alt: boolean
 }
+
+const labelOf = (cmd: Command): string => (typeof cmd.label === 'function' ? cmd.label() : cmd.label)
 
 function parse(binding: string): Binding {
   const parts = binding.split('+')
@@ -75,6 +78,8 @@ export function isTyping(e: KeyboardEvent): boolean {
 export class Hotkeys {
   private readonly commands: Command[]
   private readonly byId = new Map<string, Command>()
+  /** Elements that already have their click handler (applyTooltips may run again after the language is known). */
+  private readonly bound = new WeakSet<HTMLElement>()
 
   constructor(commands: Command[]) {
     this.commands = commands
@@ -105,7 +110,9 @@ export class Hotkeys {
     root.querySelectorAll<HTMLElement>('[data-command]').forEach((el) => {
       const cmd = this.byId.get(el.dataset.command ?? '')
       if (!cmd) return
-      el.title = cmd.keys.length ? `${cmd.label} (${bindingLabel(cmd.keys[0])})` : cmd.label
+      el.title = this.label(cmd.id)
+      if (this.bound.has(el)) return
+      this.bound.add(el)
       el.addEventListener('click', (ev) => {
         ev.preventDefault()
         cmd.run(new KeyboardEvent('keydown'))
@@ -116,6 +123,7 @@ export class Hotkeys {
   label(id: string): string {
     const cmd = this.byId.get(id)
     if (!cmd) return id
-    return cmd.keys.length ? `${cmd.label} (${bindingLabel(cmd.keys[0])})` : cmd.label
+    const label = labelOf(cmd)
+    return cmd.keys.length ? `${label} (${bindingLabel(cmd.keys[0])})` : label
   }
 }

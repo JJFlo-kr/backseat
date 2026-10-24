@@ -10,97 +10,100 @@
   </head>
   <body>
     <header id="toolbar">
-      <div class="group" role="group" aria-label="도구">
-        <button type="button" class="btn active" data-tool="pen" title="펜">펜</button>
-        <button type="button" class="btn" data-tool="text" title="텍스트">텍스트</button>
-        <button type="button" class="btn" data-tool="arrow" title="화살표">화살</button>
-        <button type="button" class="btn" data-tool="rect" title="사각형">사각</button>
-        <button type="button" class="btn" data-tool="badge" title="번호">번호</button>
-        <button type="button" class="btn" data-tool="blur" title="블러">블러</button>
-        <button type="button" class="btn" data-tool="crop" title="자르기">자르기</button>
-        <button type="button" class="btn" data-tool="eraser" title="지우개 (E)">지우개</button>
+      <div class="group" role="group" aria-label="도구" data-i18n-aria-label="editor.toolbar.tools">
+        <button type="button" class="btn active" data-tool="pen" title="펜" data-i18n-title="editor.tool.pen" data-i18n="editor.tool.pen">펜</button>
+        <button type="button" class="btn" data-tool="text" title="텍스트" data-i18n-title="editor.tool.text" data-i18n="editor.tool.text">텍스트</button>
+        <button type="button" class="btn" data-tool="arrow" title="화살표" data-i18n-title="editor.tool.arrowTip" data-i18n="editor.tool.arrow">화살</button>
+        <button type="button" class="btn" data-tool="rect" title="사각형" data-i18n-title="editor.tool.rectTip" data-i18n="editor.tool.rect">사각</button>
+        <button type="button" class="btn" data-tool="badge" title="번호" data-i18n-title="editor.tool.badge" data-i18n="editor.tool.badge">번호</button>
+        <button type="button" class="btn" data-tool="blur" title="블러" data-i18n-title="editor.tool.blur" data-i18n="editor.tool.blur">블러</button>
+        <button type="button" class="btn" data-tool="crop" title="자르기" data-i18n-title="editor.tool.crop" data-i18n="editor.tool.crop">자르기</button>
+        <button type="button" class="btn" data-tool="eraser" title="지우개 (E)" data-i18n-title="editor.tool.eraserTip" data-i18n="editor.tool.eraser">지우개</button>
       </div>
-      <div class="group" id="color-group" role="group" aria-label="색상">
+      <div class="group" id="color-group" role="group" aria-label="색상" data-i18n-aria-label="editor.toolbar.colorGroup">
         <!-- #color: colorButton() is mounted here by editor.ts -->
       </div>
-      <div class="group" role="group" aria-label="히스토리">
-        <button type="button" class="btn" id="undo" data-command="undo" aria-label="되돌리기">↶</button>
-        <button type="button" class="btn" id="redo" data-command="redo" aria-label="다시 실행">↷</button>
+      <div class="group" role="group" aria-label="히스토리" data-i18n-aria-label="editor.toolbar.historyGroup">
+        <button type="button" class="btn" id="undo" data-command="undo" aria-label="되돌리기" data-i18n-aria-label="editor.hotkey.undo">↶</button>
+        <button type="button" class="btn" id="redo" data-command="redo" aria-label="다시 실행" data-i18n-aria-label="editor.hotkey.redo">↷</button>
       </div>
-      <button type="button" class="btn" id="timeline-toggle" data-command="timeline">타임라인</button>
-      <button type="button" class="btn" id="pin" data-command="pin" aria-label="고정">📌</button>
-      <button type="button" class="btn" id="mic" data-command="mic">🎤 녹음</button>
+      <button type="button" class="btn" id="timeline-toggle" data-command="timeline" data-i18n="editor.toolbar.timeline">타임라인</button>
+      <button type="button" class="btn" id="pin" data-command="pin" aria-label="고정" data-i18n-aria-label="editor.toolbar.pin">📌</button>
+      <button type="button" class="btn" id="mic" data-command="mic" data-i18n="editor.mic.start">🎤 녹음</button>
       <div class="spacer"></div>
-      <button type="button" class="btn" id="copy" data-command="copy">복사</button>
-      <button type="button" class="btn" id="save" data-command="save">저장</button>
-      <button type="button" class="btn primary" id="send" data-command="send">전송</button>
+      <button type="button" class="btn" id="copy" data-command="copy" data-i18n="editor.toolbar.copy">복사</button>
+      <button type="button" class="btn" id="save" data-command="save" data-i18n="editor.toolbar.save">저장</button>
+      <button type="button" class="btn primary" id="send" data-command="send" data-i18n="editor.toolbar.send">전송</button>
     </header>
 
     <div id="toolbar2">
-      <div class="group" role="group" aria-label="굵기">
-        <label class="lbl" for="width">굵기</label>
-        <input type="range" id="width" min="1" max="24" step="1" value="3" title="펜 굵기 ([ / ])" />
+      <div class="group" role="group" aria-label="굵기" data-i18n-aria-label="editor.toolbar.width">
+        <label class="lbl" for="width" data-i18n="editor.toolbar.width">굵기</label>
+        <input type="range" id="width" min="1" max="24" step="1" value="3" title="펜 굵기 ([ / ])" data-i18n-title="editor.toolbar.widthTip" />
         <span class="dot-box"><span id="width-dot" class="width-dot"></span></span>
       </div>
-      <div class="group" role="group" aria-label="글자">
-        <label class="lbl" for="font">글자</label>
-        <select id="font" title="글꼴">
-          <option value="">시스템</option>
+      <div class="group" role="group" aria-label="글자" data-i18n-aria-label="editor.toolbar.text">
+        <label class="lbl" for="font" data-i18n="editor.toolbar.text">글자</label>
+        <select id="font" title="글꼴" data-i18n-title="editor.toolbar.fontTip">
+          <option value="" data-i18n="editor.font.system">시스템</option>
           <option value="Noto Sans KR" selected>Noto Sans KR</option>
-          <option value="Nanum Gothic">나눔고딕</option>
-          <option value="Nanum Pen Script">나눔펜</option>
-          <option value="Jua">주아</option>
-          <option value="Do Hyeon">도현</option>
-          <option value="Black Han Sans">검은고딕</option>
+          <option value="Noto Sans JP">Noto Sans JP</option>
+          <option value="Noto Sans SC">Noto Sans SC</option>
+          <option value="Noto Sans TC">Noto Sans TC</option>
+          <option value="Nanum Gothic" data-i18n="editor.font.nanumGothic">나눔고딕</option>
+          <option value="Nanum Pen Script" data-i18n="editor.font.nanumPen">나눔펜</option>
+          <option value="Jua" data-i18n="editor.font.jua">주아</option>
+          <option value="Do Hyeon" data-i18n="editor.font.doHyeon">도현</option>
+          <option value="Black Han Sans" data-i18n="editor.font.blackHanSans">검은고딕</option>
         </select>
-        <select id="font-size" title="글자 크기">
+        <select id="font-size" title="글자 크기" data-i18n-title="editor.toolbar.fontSizeTip">
           <option value="14">14</option>
           <option value="18">18</option>
           <option value="24" selected>24</option>
           <option value="32">32</option>
           <option value="48">48</option>
         </select>
-        <button type="button" class="tgl tgl-b" id="text-bold" aria-pressed="false" title="굵게">B</button>
-        <button type="button" class="tgl tgl-i" id="text-italic" aria-pressed="false" title="기울임">I</button>
+        <button type="button" class="tgl tgl-b" id="text-bold" aria-pressed="false" title="굵게" data-i18n-title="editor.toolbar.boldTip">B</button>
+        <button type="button" class="tgl tgl-i" id="text-italic" aria-pressed="false" title="기울임" data-i18n-title="editor.toolbar.italicTip">I</button>
       </div>
     </div>
 
     <div id="textbar" hidden>
-      <div class="group" role="group" aria-label="글자 효과">
-        <span class="lbl">글자 효과</span>
-        <div id="text-style" class="seg" role="radiogroup" aria-label="글자 효과" title="글자를 화면 위에서 잘 읽히게 하는 효과">
-          <button type="button" role="radio" aria-checked="true" class="active" data-text-style="plate" title="글자 뒤에 반투명 상자를 깔아 어떤 화면 위에서도 읽히게 합니다 (Snagit·Canva·인스타 스토리의 텍스트 배경)"><span class="fx fx-plate">가</span>배경 상자</button>
-          <button type="button" role="radio" aria-checked="false" data-text-style="outline" title="글자 둘레에 어두운 테두리를 둘러 배경과 분리합니다 (PowerPoint·Photoshop의 윤곽선/획)"><span class="fx fx-outline">가</span>윤곽선</button>
-          <button type="button" role="radio" aria-checked="false" data-text-style="plain" title="글자만 그립니다"><span class="fx fx-plain">가</span>효과 없음</button>
+      <div class="group" role="group" aria-label="글자 효과" data-i18n-aria-label="editor.text.effect">
+        <span class="lbl" data-i18n="editor.text.effect">글자 효과</span>
+        <div id="text-style" class="seg" role="radiogroup" aria-label="글자 효과" title="글자를 화면 위에서 잘 읽히게 하는 효과" data-i18n-aria-label="editor.text.effect" data-i18n-title="editor.text.effectTip">
+          <button type="button" role="radio" aria-checked="true" class="active" data-text-style="plate" title="글자 뒤에 반투명 상자를 깔아 어떤 화면 위에서도 읽히게 합니다 (Snagit·Canva·인스타 스토리의 텍스트 배경)" data-i18n-title="editor.text.plateTip"><span class="fx fx-plate" data-i18n="editor.text.sampleGlyph">가</span><span data-i18n="editor.text.plate">배경 상자</span></button>
+          <button type="button" role="radio" aria-checked="false" data-text-style="outline" title="글자 둘레에 어두운 테두리를 둘러 배경과 분리합니다 (PowerPoint·Photoshop의 윤곽선/획)" data-i18n-title="editor.text.outlineTip"><span class="fx fx-outline" data-i18n="editor.text.sampleGlyph">가</span><span data-i18n="editor.text.outline">윤곽선</span></button>
+          <button type="button" role="radio" aria-checked="false" data-text-style="plain" title="글자만 그립니다" data-i18n-title="editor.text.plainTip"><span class="fx fx-plain" data-i18n="editor.text.sampleGlyph">가</span><span data-i18n="editor.text.plain">효과 없음</span></button>
         </div>
       </div>
-      <div class="group" id="bg-group" role="group" aria-label="배경">
-        <span class="lbl">배경</span>
+      <div class="group" id="bg-group" role="group" aria-label="배경" data-i18n-aria-label="editor.text.background">
+        <span class="lbl" data-i18n="editor.text.background">배경</span>
         <!-- #text-bg: colorButton() mounted by editor.ts -->
-        <button type="button" class="tgl tgl-auto" id="text-bg-auto" aria-pressed="true" title="자동: 글자색에 맞춰 어두운/흰 상자를 고릅니다">자동</button>
-        <input type="range" id="text-bg-opacity" min="10" max="100" step="1" value="85" title="배경 불투명도" aria-label="배경 불투명도" />
+        <button type="button" class="tgl tgl-auto" id="text-bg-auto" aria-pressed="true" title="자동: 글자색에 맞춰 어두운/흰 상자를 고릅니다" data-i18n-title="editor.text.autoTip" data-i18n="editor.text.auto">자동</button>
+        <input type="range" id="text-bg-opacity" min="10" max="100" step="1" value="85" title="배경 불투명도" aria-label="배경 불투명도" data-i18n-title="editor.text.bgOpacity" data-i18n-aria-label="editor.text.bgOpacity" />
       </div>
-      <button type="button" class="btn tgl-btn" id="text-invert" title="글자색과 배경색 맞바꾸기">⇄ 반전</button>
-      <div class="group" id="outline-group" role="group" aria-label="윤곽선">
-        <span class="lbl">윤곽선</span>
+      <button type="button" class="btn tgl-btn" id="text-invert" title="글자색과 배경색 맞바꾸기" data-i18n-title="editor.text.invertTip" data-i18n="editor.text.invert">⇄ 반전</button>
+      <div class="group" id="outline-group" role="group" aria-label="윤곽선" data-i18n-aria-label="editor.text.outline">
+        <span class="lbl" data-i18n="editor.text.outline">윤곽선</span>
         <!-- #text-outline: colorButton() mounted by editor.ts -->
       </div>
-      <button type="button" class="tgl tgl-shadow" id="text-shadow" aria-pressed="false" title="그림자">그림자</button>
+      <button type="button" class="tgl tgl-shadow" id="text-shadow" aria-pressed="false" title="그림자" data-i18n-title="editor.text.shadow" data-i18n="editor.text.shadow">그림자</button>
     </div>
 
     <div id="targetbar">
       <button type="button" class="target-btn" id="target-btn" data-command="target" aria-haspopup="listbox" aria-expanded="false"><span class="tb-label"></span><span class="hint"></span><span class="tb-caret" aria-hidden="true">▾</span></button>
     </div>
 
-    <div id="comparebar" hidden aria-label="이전 캡처와 비교">
-      <button type="button" class="btn cmp-btn" id="compare-toggle" data-command="compare">전/후 비교</button>
-      <span class="cmp-modes" role="group" aria-label="비교 모드">
-        <button type="button" class="btn cmp-btn active" data-cmp-mode="overlay" title="이전 캡처를 반투명으로 겹침">겹치기</button>
-        <button type="button" class="btn cmp-btn" data-cmp-mode="wipe" title="세로선 왼쪽은 이전, 오른쪽은 현재">와이프</button>
-        <button type="button" class="btn cmp-btn" data-cmp-mode="diff" title="달라진 부분만 밝게">차이</button>
+    <div id="comparebar" hidden aria-label="이전 캡처와 비교" data-i18n-aria-label="editor.compare.label">
+      <button type="button" class="btn cmp-btn" id="compare-toggle" data-command="compare" data-i18n="editor.compare.toggle">전/후 비교</button>
+      <span class="cmp-modes" role="group" aria-label="비교 모드" data-i18n-aria-label="editor.compare.modes">
+        <button type="button" class="btn cmp-btn active" data-cmp-mode="overlay" title="이전 캡처를 반투명으로 겹침" data-i18n-title="editor.compare.overlayTip" data-i18n="editor.compare.overlay">겹치기</button>
+        <button type="button" class="btn cmp-btn" data-cmp-mode="wipe" title="세로선 왼쪽은 이전, 오른쪽은 현재" data-i18n-title="editor.compare.wipeTip" data-i18n="editor.compare.wipe">와이프</button>
+        <button type="button" class="btn cmp-btn" data-cmp-mode="diff" title="달라진 부분만 밝게" data-i18n-title="editor.compare.diffTip" data-i18n="editor.compare.diff">차이</button>
       </span>
-      <label class="cmp-slider">불투명도 <input id="cmp-opacity" type="range" min="0" max="100" value="50" /></label>
-      <label class="cmp-slider off">위치 <input id="cmp-wipe" type="range" min="0" max="100" value="50" /></label>
+      <label class="cmp-slider"><span data-i18n="editor.compare.opacity">불투명도</span> <input id="cmp-opacity" type="range" min="0" max="100" value="50" /></label>
+      <label class="cmp-slider off"><span data-i18n="editor.compare.position">위치</span> <input id="cmp-wipe" type="range" min="0" max="100" value="50" /></label>
       <span id="cmp-diff" class="cmp-diff"></span>
     </div>
 
@@ -112,14 +115,14 @@
       </div>
     </main>
 
-    <section id="timeline" hidden aria-label="타임라인">
+    <section id="timeline" hidden aria-label="타임라인" data-i18n-aria-label="editor.toolbar.timeline">
       <div class="tl-bar">
-        <button type="button" class="btn tl-btn" data-tl="play" title="재생/일시정지 (Space)">▶</button>
-        <button type="button" class="btn tl-btn" data-tl="live" title="라이브로 (End)">LIVE</button>
+        <button type="button" class="btn tl-btn" data-tl="play" title="재생/일시정지 (Space)" data-i18n-title="editor.timeline.playTip">▶</button>
+        <button type="button" class="btn tl-btn" data-tl="live" title="라이브로 (End)" data-i18n-title="editor.timeline.liveTip">LIVE</button>
         <span class="tl-clock" data-tl="clock"></span>
         <span class="spacer"></span>
-        <span class="tl-hint">드래그로 스크럽 · ←→ 0.2초 · Home 처음</span>
-        <button type="button" class="btn tl-btn" data-command="video">녹화</button>
+        <span class="tl-hint" data-i18n="editor.timeline.hint">드래그로 스크럽 · ←→ 0.2초 · Home 처음</span>
+        <button type="button" class="btn tl-btn" data-command="video" data-i18n="editor.timeline.video">녹화</button>
       </div>
       <canvas id="tl-canvas"></canvas>
     </section>
@@ -127,7 +130,7 @@
     <audio id="player" hidden preload="auto"></audio>
 
     <footer>
-      <input id="memo" type="text" autocomplete="off" spellcheck="false" placeholder="이 이미지에 대한 한 줄 메모 (선택)" />
+      <input id="memo" type="text" autocomplete="off" spellcheck="false" placeholder="이 이미지에 대한 한 줄 메모 (선택)" data-i18n-placeholder="editor.memo.placeholder" />
       <span id="status" role="status"></span>
     </footer>
   </body>

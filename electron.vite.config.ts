@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import type { Plugin } from 'vite'
 
 // Paths are resolved against the project root (process.cwd()), like the official
 // electron-vite templates.
@@ -8,6 +9,22 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 // Local\Packages\...\LocalCache and the renderer build fails except from Git Bash.
 // Keep the project in a normal folder such as D:\backseat.
 const root = process.cwd()
+
+/**
+ * @fontsource CSS lists every face as woff2 plus a woff fallback. Chromium always takes the woff2, so
+ * the woff copies only made the installer bigger (≈10 MB for the Korean fonts, ≈20 MB more with the
+ * Japanese / Chinese ones): drop them before Vite resolves the url()s.
+ */
+function woff2Only(): Plugin {
+  return {
+    name: 'backseat-woff2-only',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!/@fontsource[\\/].+\.css(\?|$)/.test(id)) return null
+      return { code: code.replace(/,\s*url\([^)]*\.woff\)\s*format\('woff'\)/g, ''), map: null }
+    }
+  }
+}
 
 export default defineConfig({
   main: {
@@ -37,6 +54,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(root, 'src/renderer'),
+    plugins: [woff2Only()],
     build: {
       rollupOptions: {
         input: {

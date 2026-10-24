@@ -14,12 +14,12 @@
     <img id="shot" alt="" draggable="false" />
     <canvas id="overlay"></canvas>
     <div id="size"></div>
-    <div id="hint">드래그로 영역 선택 · Enter 확인 · Esc 취소</div>
+    <div id="hint" data-i18n="selector.hint.rect">드래그로 영역 선택 · Enter 확인 · Esc 취소</div>
     <div id="modes">
-      <button type="button" tabindex="-1" data-mode="rect">사각형 R</button>
-      <button type="button" tabindex="-1" data-mode="window">창 W</button>
-      <button type="button" tabindex="-1" data-mode="full">전체 F</button>
-      <button type="button" tabindex="-1" data-mode="scroll">스크롤 S</button>
+      <button type="button" tabindex="-1" data-mode="rect"><span data-i18n="selector.mode.rect">사각형</span> R</button>
+      <button type="button" tabindex="-1" data-mode="window"><span data-i18n="selector.mode.window">창</span> W</button>
+      <button type="button" tabindex="-1" data-mode="full"><span data-i18n="selector.mode.full">전체</span> F</button>
+      <button type="button" tabindex="-1" data-mode="scroll"><span data-i18n="selector.mode.scroll">스크롤</span> S</button>
     </div>
     <script type="module" src="./selector.ts"></script>
   </body>

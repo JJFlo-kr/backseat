@@ -1,6 +1,6 @@
 {
   "name": "backseat",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "AI 소통기 Backseat - point, talk, let the AI drive",
   "main": "./out/main/index.js",
@@ -16,6 +16,15 @@
     "dist": "electron-vite build && electron-builder --win --x64"
   },
   "devDependencies": {
+    "@fontsource/black-han-sans": "^5.3.0",
+    "@fontsource/do-hyeon": "^5.3.0",
+    "@fontsource/jua": "^5.3.0",
+    "@fontsource/nanum-gothic": "^5.3.0",
+    "@fontsource/nanum-pen-script": "^5.3.0",
+    "@fontsource/noto-sans-jp": "^5.3.1",
+    "@fontsource/noto-sans-kr": "^5.3.1",
+    "@fontsource/noto-sans-sc": "^5.3.1",
+    "@fontsource/noto-sans-tc": "^5.3.1",
     "@types/node": "^26.6.5",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
@@ -24,12 +33,6 @@
     "vite": "^8.3.5"
   },
   "dependencies": {
-    "@fontsource/black-han-sans": "^5.3.0",
-    "@fontsource/do-hyeon": "^5.3.0",
-    "@fontsource/jua": "^5.3.0",
-    "@fontsource/nanum-gothic": "^5.3.0",
-    "@fontsource/nanum-pen-script": "^5.3.0",
-    "@fontsource/noto-sans-kr": "^5.3.1",
     "@huggingface/transformers": "^4.3.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "koffi": "^3.3.3",

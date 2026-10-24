@@ -1,14 +1,16 @@
 import type { SelectorInit, SelectionResult, Rect, WindowInfo, CaptureMode } from '../../shared/types'
+import { applyDom, isLocale, setMessages, t } from '../../shared/i18n'
 
 const MIN_SIZE = 3 // DIP; anything smaller is treated as a click
 const DIM = 'rgba(0, 0, 0, 0.45)'
 const TITLE_MAX = 40
 
-const HINTS: Record<CaptureMode, string> = {
-  rect: '드래그로 영역 선택 · Enter 확인 · Esc 취소',
-  window: '창 위에 마우스를 올리고 클릭 · Esc 취소',
-  full: 'Enter로 전체 화면 캡처 · Esc 취소',
-  scroll: '스크롤할 창을 클릭 → 끝까지 자동 스크롤하며 이어붙임 (진행 중 Esc 중단) · Esc 취소'
+/** Hint text per mode (message keys; resolved when the mode is set, after the language is known). */
+const HINT_KEYS: Record<CaptureMode, string> = {
+  rect: 'selector.hint.rect',
+  window: 'selector.hint.window',
+  full: 'selector.hint.full',
+  scroll: 'selector.hint.scroll'
 }
 
 const MODE_KEYS: Record<string, CaptureMode> = { KeyR: 'rect', KeyW: 'window', KeyF: 'full', KeyS: 'scroll' }
@@ -67,7 +69,7 @@ function setMode(m: CaptureMode): void {
   rect = null
   document.body.classList.remove('dragging', 'mode-rect', 'mode-window', 'mode-full', 'mode-scroll')
   document.body.classList.add(`mode-${m}`)
-  hintEl.textContent = HINTS[m]
+  hintEl.textContent = t(HINT_KEYS[m])
   for (const b of modeButtons) b.classList.toggle('active', b.dataset.mode === m)
   hover = lastPos ? hitTest(lastPos) : null
   render()
@@ -131,7 +133,7 @@ function render(): void {
     text = `${px(rect.width)} × ${px(rect.height)} px`
   } else if (picksWindow(mode) && hover) {
     target = hover.bounds
-    text = mode === 'scroll' ? `${windowLabel(hover)} · 스크롤 캡처` : windowLabel(hover)
+    text = mode === 'scroll' ? t('selector.scrollLabel', { label: windowLabel(hover) }) : windowLabel(hover)
   }
   if (!target) {
     sizeLabel.style.display = 'none'
@@ -314,5 +316,7 @@ for (const type of ['contextmenu', 'selectstart', 'dragstart']) {
 
 window.backseat.selector.onInit((i) => {
   if (init) return // ignore duplicate init
+  setMessages(isLocale(i.locale) ? i.locale : 'ko', i.messages ?? {})
+  applyDom(document)
   setup(i)
 })

@@ -4,8 +4,10 @@
 import { BrowserWindow, clipboard, ClipboardItem } from 'electron'
 import { readFile } from 'fs/promises'
 import type { AgentTarget, ExportPayload, SendOptions, SendResult } from '../shared/types'
+import { t } from '../shared/i18n'
 import { instructionLine } from './agents'
 import { loadSettings } from './config'
+import { briefTranslator } from './locales'
 import { focusWindow, getForegroundWindow, sendCtrlV, sendEnter, win32Available } from './native/win32'
 import { markAnswered } from './requests'
 import { sessionsRoot, writeSessionPackage } from './sessions'
@@ -34,18 +36,20 @@ export async function sendToTarget(
     const pkg = await writeSessionPackage(payload, target)
     sessionDir = pkg.dir
     if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
-    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, Boolean(target?.mcp))
+    // The line and the image prefix are read by the agent: brief language. Status messages below: UI language.
+    const line = instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, Boolean(target?.mcp), briefTranslator())
     // Chat UIs get the image itself: say up front that the drawn marks are the user's Backseat annotations.
-    const imageLine = `[Backseat 주석 포함] ${line}`
+    const imageLine = `${briefTranslator()('send.imageNotice')} ${line}`
 
     if (!target || target.method === 'clipboard' || !target.hwnd || !win32Available()) {
       await clipboardImageAndText(pkg.annotatedPng, imageLine)
-      const viaMcp = target?.mcp ? ' · 에이전트는 backseat_latest/backseat_wait로 받을 수 있음' : ''
       return {
         ok: true,
         delivered: 'clipboard',
         sessionDir,
-        message: target ? `${target.label}: 클립보드에 복사됨 (Ctrl+V)${viaMcp}` : '대상 없음 · 클립보드에 복사됨 (Ctrl+V)'
+        message: target
+          ? t(target.mcp ? 'send.clipboard.targetMcp' : 'send.clipboard.target', { target: target.label })
+          : t('send.clipboard.noTarget')
       }
     }
 
@@ -63,7 +67,7 @@ export async function sendToTarget(
         ok: true,
         delivered: 'clipboard',
         sessionDir,
-        message: `${target.label} 창을 앞으로 가져오지 못해 클립보드에만 복사됨 (Ctrl+V)`
+        message: t('send.focusFailed', { target: target.label })
       }
     }
     await sleep(80)
@@ -77,11 +81,11 @@ export async function sendToTarget(
       ok: true,
       delivered: 'pasted',
       sessionDir,
-      message: `${target.label} 에 붙여넣음${pressEnter ? '' : ' · Enter를 눌러 보내세요'}`
+      message: t(pressEnter ? 'send.pasted' : 'send.pastedPressEnter', { target: target.label })
     }
   } catch (err) {
     editorWin?.show()
     const error = err instanceof Error ? err.message : String(err)
-    return { ok: false, delivered: 'file-only', sessionDir, message: `전송 실패: ${error}`, error }
+    return { ok: false, delivered: 'file-only', sessionDir, message: t('send.failed', { error }), error }
   }
 }

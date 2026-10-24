@@ -44,6 +44,9 @@ export interface SelectorInit {
   mode: CaptureMode
   /** Top-level windows overlapping this display, front-most first, bounds clipped to the display. */
   windows: WindowInfo[]
+  /** UI language and its merged message bundle (see EditorInit.locale). */
+  locale?: string
+  messages?: Record<string, string>
 }
 
 /** selector renderer -> main when the user confirms a region. */
@@ -159,6 +162,9 @@ export interface EditorInit {
   compare?: CompareSource
   /** Self-test only: lets the harness inject a transcript via a DOM event. */
   debug?: boolean
+  /** UI language (src/shared/i18n.ts Locale) and its merged message bundle; set by main when sending. */
+  locale?: string
+  messages?: Record<string, string>
 }
 
 export interface Point {
@@ -409,6 +415,9 @@ export interface AboutInfo {
   repoUrl: string
   supportUrl: string
   issuesUrl: string
+  /** UI language and its merged message bundle (see EditorInit.locale). */
+  locale?: string
+  messages?: Record<string, string>
 }
 
 declare global {

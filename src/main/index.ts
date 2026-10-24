@@ -12,6 +12,7 @@ import { cancelSelector, runSelector, selectorActive } from './selector'
 import { runSelfTest } from './selftest'
 import { latestCompareSource, sessionsRoot } from './sessions'
 import { createTray } from './tray'
+import { applyLocale } from './locales'
 
 let capturing = false
 /** Last confirmed selection, for "마지막 영역 다시 캡처" (before/after comparisons). */
@@ -156,6 +157,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
       ['media', 'clipboard-read', 'clipboard-sanitized-write'].includes(permission)
     )
+    applyLocale()
     installEditorIpc()
     if (process.argv.includes('--selftest')) {
       await runSelfTest()

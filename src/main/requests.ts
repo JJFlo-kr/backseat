@@ -5,6 +5,7 @@ import { existsSync, watch, type FSWatcher } from 'fs'
 import { mkdir, readdir, readFile, rename } from 'fs/promises'
 import { join } from 'path'
 import type { AskRequest } from '../shared/types'
+import { t } from '../shared/i18n'
 
 let watcher: FSWatcher | null = null
 const seen = new Set<string>()
@@ -71,8 +72,8 @@ export async function startRequestWatcher(root: string, onCapture: (r: AskReques
     pendingRequest = r
     if (Notification.isSupported()) {
       const n = new Notification({
-        title: `${r.agent || '에이전트'}의 요청`,
-        body: `${r.question}\n클릭하면 캡처를 시작합니다.`,
+        title: t('requests.title', { agent: r.agent || t('requests.agentFallback') }),
+        body: t('requests.body', { question: r.question }),
         silent: false
       })
       n.on('click', () => onCapture(r))
