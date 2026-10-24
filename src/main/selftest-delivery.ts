@@ -22,7 +22,7 @@ import { resolveForCapture } from './destination'
 import { createEditorWindow } from './editor'
 import { classifyTarget } from './agents'
 import { judgeInput } from './delivery'
-import { closeWindow, describeWindow, focusWindow, foregroundHwnd, getForegroundWindow, listTopLevelWindows, processStartMs, tapKeys } from './native/win32'
+import { closeWindow, describeWindow, focusWindow, foregroundHwnd, getForegroundWindow, listTopLevelWindows, processNameOf, processStartMs, tapKeys } from './native/win32'
 import { stopUia, uiaFocus } from './native/uia'
 import { identityOf, toView } from './targets'
 import { observeForeground, recentAgents, resetTracker, setPicked } from './tracker'
@@ -298,7 +298,8 @@ export async function runRealAppCheck(hwnd: number): Promise<void> {
       out.fronted = fronted
       await sleep(400)
       const f = await uiaFocus()
-      const v = judgeInput(f, { pid: identity.pid, method: t.method, kind: t.kind })
+      const consoleHostFocus = win.className === 'ConsoleWindowClass' && f !== null && ['conhost.exe', 'openconsole.exe'].includes(processNameOf(f.pid).toLowerCase())
+      const v = judgeInput(f, { pid: identity.pid, method: t.method, kind: t.kind, consoleHostFocus })
       out.element = f ? { controlType: f.controlType, className: f.className, frameworkId: f.frameworkId, isPassword: f.isPassword, readOnly: f.valueReadOnly, samePid: f.pid === identity.pid } : null
       out.verdict = v
       // Clear only the field the paste went into: the same window still in front, its own editable non-password field.
@@ -521,7 +522,7 @@ export async function runDeliverySelfTest(): Promise<void> {
         same = s1 === s2
       }
       const pass6 = Boolean(r2?.status?.reached.includes('pasted')) && f2.A?.prompt?.marker === true && same
-      record('6 retry the same content after the failure', r2, pass6, [`same annotations in both packages: ${same}`, `first view after close: ${views[0]?.source}`])
+      record('6 retry the same content after the failure', r2, pass6, [`same annotations in both packages: ${same}`, `first view after close: ${views[0]?.source}`, `A offered: ${Boolean(again)}`, `menu: ${views.map((v) => `${v.source}:${v.kind ?? ''}`).join(',')}`])
       ed.destroy()
     }
   } catch (err) {

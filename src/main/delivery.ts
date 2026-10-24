@@ -54,10 +54,21 @@ export type InputVerdict =
  * area of a terminal target, or an enabled edit / document whose value is not read-only. A focused page,
  * button or list is 'notEditable': the active window alone never counts as an input (request (1) item 2).
  */
-export function judgeInput(focus: FocusInfo | null, target: Pick<AgentTarget, 'method' | 'kind'> & { pid: number }): InputVerdict {
+export function judgeInput(
+  focus: FocusInfo | null,
+  target: Pick<AgentTarget, 'method' | 'kind'> & {
+    pid: number
+    /**
+     * The target is a classic console window (ConsoleWindowClass) and the focused element belongs to its console
+     * host process (conhost.exe / OpenConsole.exe): there the text area is a nameless Document of that host.
+     */
+    consoleHostFocus?: boolean
+  }
+): InputVerdict {
   if (!focus) return { ok: false, reason: 'notEditable' }
   if (focus.isPassword) return { ok: false, reason: 'passwordField' }
-  const terminal = target.method === 'paste-path' && TERMINAL_CLASSES.has(focus.className)
+  const consoleText = Boolean(target.consoleHostFocus) && focus.controlType === UIA_CONTROL.document
+  const terminal = target.method === 'paste-path' && (TERMINAL_CLASSES.has(focus.className) || consoleText)
   // Console windows report the shell's pid for the window but conhost's for the element: the class decides.
   if (focus.pid !== target.pid && !terminal) return { ok: false, reason: 'focusLost' }
   if (terminal) return { ok: true, via: 'terminal' }
@@ -65,6 +76,14 @@ export function judgeInput(focus: FocusInfo | null, target: Pick<AgentTarget, 'm
   const textual = focus.controlType === UIA_CONTROL.edit || focus.controlType === UIA_CONTROL.document
   if (textual && focus.valuePattern && focus.valueReadOnly === false) return { ok: true, via: 'field' }
   return { ok: false, reason: 'notEditable' }
+}
+
+/**
+ * Chromium (Chrome, Edge, Electron apps) builds its accessibility tree only once a UIA client asks: the first
+ * answers name the window's own pane instead of the focused element. Worth asking again shortly.
+ */
+export function isChromiumRootPane(focus: FocusInfo | null): boolean {
+  return Boolean(focus && focus.frameworkId === 'Chrome' && focus.controlType === UIA_CONTROL.pane && /^Chrome_WidgetWin_/.test(focus.className))
 }
 
 /** Claude / ChatGPT·Codex apps: the only kinds where Backseat may focus the message box itself (UIA SetFocus). */

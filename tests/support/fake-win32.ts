@@ -25,6 +25,7 @@ export function fakeWin32(overrides: Record<string, unknown> = {}): Record<strin
     windowTitle: () => '',
     describeWindow: (): WindowInfo | null => null,
     closeWindow: () => true,
+    processNameOf: () => '',
     tapKeys: () => true,
     ...overrides
   }

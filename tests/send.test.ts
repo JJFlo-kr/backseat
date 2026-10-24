@@ -41,7 +41,7 @@ mock.module('../src/main/native/win32.ts', {
       return W.focusOk
     },
     describeWindow: (h: number) => {
-      if (W.describeThrows) throw new Error('window vanished mid-way')
+      if (W.describeThrows && W.pastes > 0) throw new Error('window vanished mid-way')
       const l = W.live.get(h)
       return l ? { hwnd: h, pid: l.pid, title: l.title, process: PROCESS[h] ?? 'x.exe', bounds: { x: 0, y: 0, width: 1, height: 1 } } : null
     }

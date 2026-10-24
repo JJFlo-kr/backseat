@@ -11,16 +11,17 @@ import type { DeliveryStopReason, ExportPayload, SendOptions, SendResult } from 
 import { t } from '../shared/i18n'
 import { classifyTarget, instructionLine } from './agents'
 import { loadSettings } from './config'
-import { compareIdentity, DeliveryTracker, elementForLog, judgeInput, mayFocusSoleInput, mayPressEnter, type DeliveryLogEntry } from './delivery'
+import { compareIdentity, DeliveryTracker, elementForLog, isChromiumRootPane, judgeInput, mayFocusSoleInput, mayPressEnter, type DeliveryLogEntry } from './delivery'
 import { logDelivery } from './diaglog'
 import { briefTranslator } from './locales'
-import { describeWindow, focusWindow, foregroundHwnd, liveWindow, win32Available } from './native/win32'
+import { describeWindow, focusWindow, foregroundHwnd, liveWindow, processNameOf, win32Available } from './native/win32'
 import { uiaClear, uiaEnterIfUnchanged, uiaFocusSoleInput, uiaInputCheck, uiaPasteIfUnchanged, type FocusInfo } from './native/uia'
 import { markAnswered } from './requests'
 import { sessionsRoot, writeSessionPackage } from './sessions'
 import type { Resolved } from './targets'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+const CONSOLE_HOSTS = new Set(['conhost.exe', 'openconsole.exe'])
 
 async function clipboardText(text: string): Promise<void> {
   await clipboard.write([new ClipboardItem({ 'text/plain': text })])
@@ -157,17 +158,35 @@ async function deliver(
 
     // 3. The focused element must be a field we may paste into — never a password field.
     let focus: FocusInfo | null
+    // A classic console window's text area is a nameless Document of its console host process (conhost.exe).
+    const consoleWindow = describeWindow(target.hwnd)?.className === 'ConsoleWindowClass'
+    const judge = (f: FocusInfo | null) =>
+      judgeInput(f, {
+        pid: identity.pid,
+        method: target.method,
+        kind: target.kind,
+        consoleHostFocus: consoleWindow && f !== null && CONSOLE_HOSTS.has(processNameOf(f.pid).toLowerCase())
+      })
+    // Chromium's first answers may name its window pane until its accessibility tree is on: ask again shortly.
+    const check = async (): Promise<FocusInfo | null> => {
+      let f = await uiaInputCheck()
+      for (let i = 0; i < 5 && isChromiumRootPane(f); i++) {
+        await sleep(200)
+        f = await uiaInputCheck()
+      }
+      return f
+    }
     try {
       await sleep(80) // let the app restore its own focus after activation
-      focus = await uiaInputCheck()
-      let verdict = judgeInput(focus, { pid: identity.pid, method: target.method, kind: target.kind })
+      focus = await check()
+      let verdict = judge(focus)
       if (!verdict.ok && verdict.reason === 'notEditable' && mayFocusSoleInput(target.kind)) {
         const sole = await uiaFocusSoleInput(target.hwnd)
         log('soleInput', { detail: `candidates=${sole.candidates} passwordFields=${sole.passwordFields} focused=${sole.focused}` })
         if (sole.focused) {
           await sleep(120)
-          focus = await uiaInputCheck()
-          verdict = judgeInput(focus, { pid: identity.pid, method: target.method, kind: target.kind })
+          focus = await check()
+          verdict = judge(focus)
         }
       }
       log('inputCheck', { element: elementForLog(focus, identity.pid), detail: verdict.ok ? `ok:${verdict.via}` : verdict.reason })

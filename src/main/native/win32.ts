@@ -14,7 +14,6 @@ const DWMWA_CLOAKED = 14
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9
 const SW_RESTORE = 9
 const KEYEVENTF_KEYUP = 2
-const VK_MENU = 0x12
 const VK_CONTROL = 0x11
 const VK_RETURN = 0x0d
 const VK_V = 0x56
@@ -56,6 +55,9 @@ interface Api {
   CloseHandleI: Fn
   IsWindow: Fn
   GetProcessTimes: Fn
+  GetCurrentThreadId: Fn
+  AttachThreadInput: Fn
+  BringWindowToTop: Fn
 }
 
 let api: Api | null | undefined
@@ -103,7 +105,10 @@ function load(): Api | null {
       IsWindow: user32.func('bool IsWindow(uintptr_t hwnd)') as Fn,
       GetProcessTimes: kernel32.func(
         'bool GetProcessTimes(uintptr_t h, _Out_ uint8_t *creation, _Out_ uint8_t *exit, _Out_ uint8_t *kernel, _Out_ uint8_t *user)'
-      ) as Fn
+      ) as Fn,
+      GetCurrentThreadId: kernel32.func('uint32_t GetCurrentThreadId()') as Fn,
+      AttachThreadInput: user32.func('bool AttachThreadInput(uint32_t idAttach, uint32_t idAttachTo, bool attach)') as Fn,
+      BringWindowToTop: user32.func('bool BringWindowToTop(uintptr_t hwnd)') as Fn
     }
   } catch (err) {
     console.error('[backseat] win32 layer unavailable:', err)
@@ -163,6 +168,17 @@ function processName(a: Api, pid: number): string {
     return name
   } finally {
     a.CloseHandle(h)
+  }
+}
+
+/** Executable base name of a process ('' when it cannot be read). */
+export function processNameOf(pid: number): string {
+  const a = load()
+  if (!a || !pid) return ''
+  try {
+    return processName(a, pid)
+  } catch {
+    return ''
   }
 }
 
@@ -333,15 +349,29 @@ export function getForegroundWindow(): WindowInfo | null {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-/** Bring a window to the front; resolves true when it really is the foreground window. */
+/**
+ * Bring a window to the front; resolves true when it really is the foreground window. No key is pressed:
+ * the old "tap Alt first" trick let the Alt release reach the target, and Chrome / Edge answer a lone Alt by
+ * focusing their menu button — so the paste then went into the menu, not the page's input box. While one of
+ * our windows is in front (the editor's Send) Windows lets us hand the foreground on directly; otherwise our
+ * thread briefly shares input state with the foreground window's thread (AttachThreadInput).
+ */
 export async function focusWindow(hwnd: number): Promise<boolean> {
   const a = load()
   if (!a) return false
   if (a.IsIconic(hwnd)) a.ShowWindow(hwnd, SW_RESTORE)
-  // Tapping Alt first lifts Windows' foreground lock for the next SetForegroundWindow.
-  a.keybd_event(VK_MENU, 0, 0, 0)
-  a.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
-  a.SetForegroundWindow(hwnd)
+  const fg = Number(a.GetForegroundWindow())
+  const pidOut = new Uint32Array(1)
+  const fgThread = fg ? Number(a.GetWindowThreadProcessId(fg, pidOut)) : 0
+  const me = Number(a.GetCurrentThreadId())
+  const attach = fgThread !== 0 && fgThread !== me && pidOut[0] !== process.pid
+  if (attach) a.AttachThreadInput(me, fgThread, true)
+  try {
+    a.BringWindowToTop(hwnd)
+    a.SetForegroundWindow(hwnd)
+  } finally {
+    if (attach) a.AttachThreadInput(me, fgThread, false)
+  }
   for (let i = 0; i < 10; i++) {
     await sleep(40)
     if ((a.GetForegroundWindow() as number) === hwnd) return true

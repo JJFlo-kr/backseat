@@ -3,7 +3,7 @@
 // log line without anything the user typed. src/main/delivery.ts.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { compareIdentity, DeliveryTracker, elementForLog, judgeInput, mayFocusSoleInput, mayPressEnter, sameInstance } from '../src/main/delivery.ts'
+import { compareIdentity, DeliveryTracker, elementForLog, isChromiumRootPane, judgeInput, mayFocusSoleInput, mayPressEnter, sameInstance } from '../src/main/delivery.ts'
 import { UIA_CONTROL, type FocusInfo } from '../src/main/native/uia-types.ts'
 import type { TargetIdentity } from '../src/shared/types.ts'
 
@@ -105,4 +105,19 @@ test('log element: type and flags only — no name, value or title can get in; p
   assert.equal(elementForLog(field({ className: 'secret-user-name-css-class', frameworkId: 'Chrome' }), 500)?.className, '(web)')
   assert.equal(elementForLog(field({ className: 'Chrome_RenderWidgetHostHWND', frameworkId: 'Chrome' }), 500)?.className, 'Chrome_RenderWidgetHostHWND')
   assert.equal(elementForLog(null, 1), undefined)
+})
+
+test('a Chromium window pane (accessibility tree not on yet) is asked again; real elements and other panes are not', () => {
+  assert.equal(isChromiumRootPane(field({ controlType: UIA_CONTROL.pane, className: 'Chrome_WidgetWin_1', frameworkId: 'Chrome', valuePattern: false, valueReadOnly: null })), true)
+  assert.equal(isChromiumRootPane(field()), false)
+  assert.equal(isChromiumRootPane(field({ controlType: UIA_CONTROL.pane, className: 'ConsoleWindowClass', frameworkId: 'Win32' })), false)
+  assert.equal(isChromiumRootPane(null), false)
+})
+
+test('classic console: the console host process’s nameless Document is the text area — only for a console window target', () => {
+  const doc = field({ pid: 4321, controlType: UIA_CONTROL.document, className: '', frameworkId: '', valuePattern: false, valueReadOnly: null })
+  assert.deepEqual(judgeInput(doc, { ...terminal, consoleHostFocus: true }), { ok: true, via: 'terminal' })
+  assert.deepEqual(judgeInput(doc, terminal), { ok: false, reason: 'focusLost' }, 'without the console-host proof it is another process')
+  assert.deepEqual(judgeInput(doc, { ...chat, consoleHostFocus: true }), { ok: false, reason: 'focusLost' }, 'never for a chat target')
+  assert.deepEqual(judgeInput({ ...doc, isPassword: true }, { ...terminal, consoleHostFocus: true }), { ok: false, reason: 'passwordField' })
 })
