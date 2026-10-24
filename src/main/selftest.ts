@@ -448,6 +448,136 @@ export async function runSelfTest(): Promise<void> {
         if (ed.isDestroyed()) errors.push('Esc closed the editor instead of the comparison')
       }
 
+      // Text styling (round 2): multi-line plate with custom colour / opacity / shadow / bold, outline colour + italic,
+      // plain text and badges are added as ONE history step, must round-trip through the payload, then shot and undone.
+      step = 'text-style'
+      {
+        const sz = (await state()).size
+        const sf = cap.display.scaleFactor
+        const count = async (): Promise<number> => (await state()).annotations.length
+        const base0 = await count()
+        const T = { tStart: 100, tEnd: 200 }
+        // the timeline panel eats the stage height; close it so the shot shows the image at a readable size
+        const tlWasOpen = (await ed.webContents.executeJavaScript(`!document.getElementById('timeline').hidden`)) as boolean
+        if (tlWasOpen) { await ed.webContents.executeJavaScript(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+        const styled: Annotation[] = [
+          { kind: 'text', text: '첫 줄\n둘째 줄', x: Math.round(sz[0] * 0.06), y: Math.round(sz[1] * 0.12), color: '#FFFFFF', fontSize: 30 * sf, font: 'Jua', style: 'plate', bg: '#1E5EFF', bgOpacity: 0.7, shadow: true, bold: true, ...T },
+          { kind: 'text', text: '윤곽선 이탤릭\nOutline two', x: Math.round(sz[0] * 0.06), y: Math.round(sz[1] * 0.45), color: '#FFE066', fontSize: 30 * sf, font: 'Noto Sans KR', style: 'outline', outline: '#1A1AFF', italic: true, ...T },
+          { kind: 'text', text: '효과 없음', x: Math.round(sz[0] * 0.06), y: Math.round(sz[1] * 0.8), color: '#E5484D', fontSize: 30 * sf, font: 'Nanum Pen Script', style: 'plain', shadow: true, ...T },
+          { kind: 'badge', x: Math.round(sz[0] * 0.5), y: Math.round(sz[1] * 0.3), n: 1, color: '#E5484D', size: 22 * sf, ...T },
+          { kind: 'badge', x: Math.round(sz[0] * 0.6), y: Math.round(sz[1] * 0.3), n: 2, color: '#2F80ED', size: 22 * sf, ...T }
+        ]
+        await ed.webContents.executeJavaScript(`window.__backseat.addAnnotations(${JSON.stringify(styled)}); document.querySelector('[data-tool="text"]').click(); true`)
+        await sleep(500) // fonts load lazily, then the canvas repaints
+        if ((await count()) !== base0 + styled.length) errors.push(`styled annotations were not added: ${base0} -> ${await count()}`)
+        const stPayload = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }
+        const texts = stPayload.annotations.filter((a): a is Extract<Annotation, { kind: 'text' }> => a.kind === 'text').slice(-3)
+        const [pl, ou, pn] = texts
+        if (!pl || !ou || !pn) errors.push('styled texts missing from the payload')
+        else {
+          if (!pl.text.includes('\n') || pl.bg !== '#1E5EFF' || pl.bgOpacity !== 0.7 || pl.shadow !== true || pl.bold !== true || pl.style !== 'plate') errors.push(`plate text did not round-trip: ${JSON.stringify(pl)}`)
+          if (!ou.text.includes('\n') || ou.outline !== '#1A1AFF' || ou.italic !== true || ou.style !== 'outline') errors.push(`outline text did not round-trip: ${JSON.stringify(ou)}`)
+          if (pn.style !== 'plain' || pn.shadow !== true || pn.bg !== undefined) errors.push(`plain text did not round-trip: ${JSON.stringify(pn)}`)
+          const stBrief = buildBrief({ pngDataUrl: '', memo: '', annotations: stPayload.annotations, meta: (await state()).meta as CaptureMeta }, 'annotated.png')
+          if (!stBrief.includes('텍스트(굵게·그림자) "첫 줄 / 둘째 줄"') || !stBrief.includes('텍스트(기울임) "윤곽선 이탤릭 / Outline two"')) errors.push('brief lacks the text style note / one-line multi-line text')
+        }
+        const bar = (await ed.webContents.executeJavaScript(
+          `(() => { const fit = (id) => { const e = document.getElementById(id); return { hidden: e.hidden, fits: e.scrollWidth <= e.clientWidth, w: e.clientWidth, sw: e.scrollWidth, h: e.clientHeight }; };
+             return { textbar: fit('textbar'), toolbar2: fit('toolbar2'), win: window.innerWidth }; })()`
+        )) as { textbar: { hidden: boolean; fits: boolean; w: number; sw: number; h: number }; toolbar2: { fits: boolean; w: number; sw: number; h: number }; win: number }
+        report.textbar = bar
+        if (bar.textbar.hidden) errors.push('#textbar is hidden while the text tool is active')
+        if (!bar.textbar.fits || !bar.toolbar2.fits) errors.push(`toolbar rows overflow at ${bar.win}px: ${JSON.stringify(bar)}`)
+        await shot(ed, join(shotsDir, 'editor-text.png'), warnings)
+
+        // Re-editing: double-click a styled text -> the toolbar adopts its props and the box mirrors them.
+        const at = (x: number, y: number): Promise<{ x: number; y: number }> => ed.webContents.executeJavaScript(
+          `(() => { const i = document.getElementById('ink'), r = i.getBoundingClientRect(); return { x: Math.round(r.left + ${x} * r.width / i.width), y: Math.round(r.top + ${y} * r.height / i.height) }; })()`
+        ) as Promise<{ x: number; y: number }>
+        const boxOpen = (): Promise<boolean> => ed.webContents.executeJavaScript(`document.querySelector('textarea.textbox') !== null`) as Promise<boolean>
+        const dbl = async (p: { x: number; y: number }): Promise<void> => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            for (const clickCount of [1, 2]) {
+              ed.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount })
+              ed.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount })
+              await sleep(40)
+            }
+            await sleep(300)
+            if (await boxOpen()) return
+          }
+        }
+        // Enter with no box open would be the editor's "send" hotkey: only press it while a box exists.
+        const enterInBox = async (): Promise<void> => {
+          if (!(await boxOpen())) { errors.push('expected an open text box before pressing Enter'); return }
+          ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+          ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+        }
+        const editInfo = (): Promise<{ value: string; bgChip: string; bold: string; italic: string; shadow: string; auto: string; outline: string; barHidden: boolean } | null> =>
+          ed.webContents.executeJavaScript(
+            `(() => { const b = document.querySelector('textarea.textbox'); if (!b) return null; const g = (id) => document.getElementById(id);
+               return { value: b.value, bgChip: g('text-bg').value, bold: g('text-bold').getAttribute('aria-pressed'), italic: g('text-italic').getAttribute('aria-pressed'),
+                        shadow: g('text-shadow').getAttribute('aria-pressed'), auto: g('text-bg-auto').getAttribute('aria-pressed'), outline: g('text-outline').value, barHidden: g('textbar').hidden }; })()`
+          ) as Promise<{ value: string; bgChip: string; bold: string; italic: string; shadow: string; auto: string; outline: string; barHidden: boolean } | null>
+        await dbl(await at(sz[0] * 0.06 + 30, sz[1] * 0.12))
+        const e1 = await editInfo()
+        if (!e1 || e1.value !== '첫 줄\n둘째 줄' || e1.bgChip !== '#1e5eff' || e1.bold !== 'true' || e1.shadow !== 'true' || e1.auto !== 'false') errors.push(`editing the plate text did not adopt its props: ${JSON.stringify(e1)}`)
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }) // collapse the selection so the styled text is visible
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' })
+        await sleep(100)
+        await shot(ed, join(shotsDir, 'editor-text-edit.png'), warnings)
+        await enterInBox() // unchanged -> no history step
+        await sleep(200)
+        await dbl(await at(sz[0] * 0.06 + 30, sz[1] * 0.45))
+        const e2 = await editInfo()
+        if (!e2 || !e2.value.includes('\n') || e2.outline !== '#1a1aff' || e2.italic !== 'true' || e2.shadow !== 'false') errors.push(`editing the outline text did not adopt its props: ${JSON.stringify(e2)}`)
+        await ed.webContents.executeJavaScript(`document.getElementById('text-shadow').click(); document.getElementById('text-bold').click(); true`)
+        await sleep(150)
+        const e3 = await editInfo()
+        if (!e3 || e3.value !== e2?.value || e3.shadow !== 'true') errors.push(`toggling an effect lost the text box content: ${JSON.stringify(e3)}`)
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }) // collapse the selection so the styled text is visible
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' })
+        await sleep(100)
+        await shot(ed, join(shotsDir, 'editor-text-edit2.png'), warnings)
+        await enterInBox()
+        await sleep(250)
+        const edited = ((await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }).annotations.filter((a): a is Extract<Annotation, { kind: 'text' }> => a.kind === 'text')[1]
+        if (!edited || edited.shadow !== true || edited.italic !== true || edited.bold !== false || edited.outline !== '#1A1AFF') errors.push(`edited text fields wrong: ${JSON.stringify(edited)}`)
+        await ed.webContents.executeJavaScript(`document.getElementById('undo').click(); true`) // back to the styled batch
+        await sleep(150)
+
+        // Real input path: type two lines with Shift+Enter, commit with Enter, expect one text containing a newline.
+        const ib = (await ed.webContents.executeJavaScript(
+          `(() => { const r = document.getElementById('ink').getBoundingClientRect(); return { x: r.left + r.width * 0.55, y: r.top + r.height * 0.75 }; })()`
+        )) as { x: number; y: number }
+        const px = Math.round(ib.x)
+        const py = Math.round(ib.y)
+        ed.webContents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 })
+        ed.webContents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 })
+        await sleep(250)
+        for (const ch of 'ab') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
+        ed.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return', modifiers: ['shift'] })
+        ed.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return', modifiers: ['shift'] })
+        for (const ch of 'cd') ed.webContents.sendInputEvent({ type: 'char', keyCode: ch })
+        await sleep(100)
+        const boxState = (await ed.webContents.executeJavaScript(
+          `(() => { const b = document.querySelector('textarea.textbox'); return b ? { value: b.value, h: b.getBoundingClientRect().height } : null; })()`
+        )) as { value: string; h: number } | null
+        if (!boxState || boxState.value !== 'ab\ncd') errors.push(`Shift+Enter did not insert a newline: ${JSON.stringify(boxState)}`)
+        await shot(ed, join(shotsDir, 'editor-text-live.png'), warnings)
+        await enterInBox()
+        await sleep(300)
+        const multi = (await ed.webContents.executeJavaScript(`window.__backseat.payload()`)) as { annotations: Annotation[] }
+        const last = multi.annotations[multi.annotations.length - 1]
+        if (multi.annotations.length !== base0 + styled.length + 1 || last.kind !== 'text' || last.text !== 'ab\ncd') errors.push(`typed multi-line text wrong: ${JSON.stringify(last)}`)
+        report.textStyle = { typed: last.kind === 'text' ? last.text : null, boxHeight: boxState?.h }
+
+        // Undo the typed text and the styled batch so later steps see the original document.
+        await ed.webContents.executeJavaScript(`document.getElementById('undo').click(); document.getElementById('undo').click(); document.querySelector('[data-tool="pen"]').click(); true`)
+        await sleep(200)
+        if ((await count()) !== base0) errors.push(`undo did not remove the styled annotations: ${await count()} vs ${base0}`)
+        if (tlWasOpen) { await ed.webContents.executeJavaScript(`document.getElementById('timeline-toggle').click(); true`); await sleep(200) }
+      }
+
       // Microphone path: start/stop a real recording (silence is fine) and let it run through STT.
       step = 'mic'
       const statusText = (): Promise<string> =>
@@ -511,7 +641,7 @@ export async function runSelfTest(): Promise<void> {
         )) as string
         report.textTool = { before, afterText, lastKind }
         if (afterText !== before + 1 || lastKind !== 'text') errors.push(`text tool did not add a text: ${JSON.stringify(report.textTool)}`)
-        await shot(ed, join(shotsDir, 'editor-text.png'), warnings)
+        await shot(ed, join(shotsDir, 'editor-text-typed.png'), warnings)
 
         await ed.webContents.executeJavaScript(`document.querySelector('[data-tool="eraser"]').click(); true`)
         ed.webContents.sendInputEvent({ type: 'mouseDown', x: cx - 90, y: cy - 90, button: 'left', clickCount: 1 })

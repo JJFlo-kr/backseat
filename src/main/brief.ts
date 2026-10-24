@@ -30,12 +30,22 @@ function lineColors(annotations: Annotation[]): Set<string> {
   return colors
 }
 
+/** Compact style note for text that deviates from the plain look, e.g. "(굵게·기울임)"; empty by default. */
+function textStyleNote(a: Extract<Annotation, { kind: 'text' }>): string {
+  const parts: string[] = []
+  if (a.bold === true) parts.push('굵게')
+  else if (a.bold === false) parts.push('보통 굵기')
+  if (a.italic) parts.push('기울임')
+  if (a.shadow) parts.push('그림자')
+  return parts.length ? `(${parts.join('·')})` : ''
+}
+
 function describe(a: Annotation, i: number, withColor: boolean, withSpan: boolean): string {
   const span = withSpan ? ` [${fmtTime(a.tStart)}–${fmtTime(a.tEnd)}]` : ''
   const color = (c: string): string => (withColor ? ` ${c}` : '')
   switch (a.kind) {
     case 'text':
-      return `${badge(i)} 텍스트 "${oneLine(a.text)}" @(${r(a.x)},${r(a.y)})${span}`
+      return `${badge(i)} 텍스트${textStyleNote(a)} "${oneLine(a.text)}" @(${r(a.x)},${r(a.y)})${span}`
     case 'stroke': {
       const xs = a.points.map((p) => p.x)
       const ys = a.points.map((p) => p.y)

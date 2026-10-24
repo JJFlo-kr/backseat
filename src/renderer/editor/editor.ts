@@ -101,6 +101,15 @@ const widthDot = byId<HTMLElement>('width-dot')
 const fontSelect = byId<HTMLSelectElement>('font')
 const sizeSelect = byId<HTMLSelectElement>('font-size')
 const styleBtns = Array.from(byId('text-style').querySelectorAll<HTMLButtonElement>('[data-text-style]'))
+const textBar = byId<HTMLElement>('textbar')
+const boldBtn = byId<HTMLButtonElement>('text-bold')
+const italicBtn = byId<HTMLButtonElement>('text-italic')
+const bgInput = byId<HTMLInputElement>('text-bg')
+const bgAutoBtn = byId<HTMLButtonElement>('text-bg-auto')
+const bgOpacityInput = byId<HTMLInputElement>('text-bg-opacity')
+const invertBtn = byId<HTMLButtonElement>('text-invert')
+const outlineInput = byId<HTMLInputElement>('text-outline')
+const shadowBtn = byId<HTMLButtonElement>('text-shadow')
 
 let started = false // init received (guards double init)
 let init: EditorInit | null = null // set once the image is drawn
@@ -111,6 +120,16 @@ let widthCss = 3
 let fontFamily: string | undefined = DEFAULT_FONT // undefined = system UI font
 let fontSizeCss = 24
 let textStyle: TextStyle = 'plate'
+/** Plate colour '#RRGGBB'; undefined = automatic (dark or white by text brightness). */
+let textBg: string | undefined
+/** Plate opacity 0..1; undefined = the automatic plate's own alpha. */
+let textBgOpacity: number | undefined
+/** Outline colour '#RRGGBB'; undefined = translucent black. */
+let textOutline: string | undefined
+let textShadow = false
+/** undefined = the font's default weight (see defaultBold). */
+let textBold: boolean | undefined
+let textItalic = false
 let view = 1 // displayed size / natural on-screen size
 let doc: Doc = { annotations: [], links: new Map(), crop: { x: 0, y: 0, width: 0, height: 0 } }
 let annotations: readonly Annotation[] = doc.annotations
@@ -141,7 +160,7 @@ let cmpWipe = 0.5
 let diffCache: number | null = null
 /** The open text input: a new text (index -1) or an edit of annotations[index]. */
 interface TextSession {
-  box: HTMLInputElement
+  box: HTMLTextAreaElement
   index: number
   orig: TextAnn | null
   at: Point
@@ -150,8 +169,16 @@ interface TextSession {
   font: string | undefined
   sizeCss: number
   style: TextStyle
+  bg: string | undefined
+  bgOpacity: number | undefined
+  outline: string | undefined
+  shadow: boolean
+  bold: boolean | undefined
+  italic: boolean
 }
 let textSession: TextSession | null = null
+/** Keeps the text bar visible while an annotation is being re-edited with another tool active. */
+let textbarPin = false
 let busy = false
 let pinned = false // small always-on-top reference window; 전송 no longer closes it
 let scrubT: number | null = null // non-null while the timeline is scrubbed/replaying
@@ -192,11 +219,14 @@ function applyStroke(ctx: CanvasRenderingContext2D, a: StrokeAnn): void {
   ctx.lineJoin = 'round'
 }
 
-/** Canvas / CSS font shorthand for a text annotation's family and size (px). */
-function fontString(family: string | undefined, sizePx: number): string {
-  if (!family) return `700 ${sizePx}px ${FALLBACK_FONTS}`
-  const weight = BOLD_FONTS.has(family) ? 700 : 400
-  return `${weight} ${sizePx}px "${family}", ${FALLBACK_FONTS}`
+/** Gothic faces and the system font default to bold; display / handwriting faces to regular. */
+const defaultBold = (family: string | undefined): boolean => !family || BOLD_FONTS.has(family)
+
+/** Canvas / CSS font shorthand for a text annotation's family, size (px), weight and slant. bold undefined = the font's default. */
+function fontString(family: string | undefined, sizePx: number, bold?: boolean, italic?: boolean): string {
+  const weight = (bold ?? defaultBold(family)) ? 700 : 400
+  const slant = italic ? 'italic ' : ''
+  return `${slant}${weight} ${sizePx}px ${family ? `"${family}", ` : ''}${FALLBACK_FONTS}`
 }
 
 const fontLoads = new Set<string>() // "font|text" combos already requested
@@ -215,7 +245,7 @@ async function loadDocFonts(): Promise<void> {
   const jobs: Promise<unknown>[] = []
   for (const a of annotations) {
     if (a.kind !== 'text') continue
-    const f = fontString(a.font, a.fontSize)
+    const f = fontString(a.font, a.fontSize, a.bold, a.italic)
     if (BUNDLED_FONTS.has(a.font ?? '')) jobs.push(document.fonts.load(f, a.text).catch(() => undefined))
   }
   if (jobs.length) await Promise.all(jobs)
@@ -223,26 +253,45 @@ async function loadDocFonts(): Promise<void> {
 
 const measureCtx = ctxOf(document.createElement('canvas'))
 
-interface TextMetrics { font: string; width: number; ascent: number; descent: number; pad: number }
+const LINE_HEIGHT = 1.3 // text line height, in font sizes
 
+interface TextMetrics {
+  font: string
+  lines: string[]
+  /** Widest line. */
+  width: number
+  /** Ink ascent of the first line / descent of the last, relative to the middle baseline. */
+  ascent: number
+  descent: number
+  pad: number
+  lineH: number
+  /** Ink height from the first line's top to the last line's bottom (no padding). */
+  height: number
+}
+
+/** Multi-line box of a text annotation: a.y is the middle of the FIRST line, lines are left-aligned. */
 function measureText(a: TextAnn): TextMetrics {
-  const font = fontString(a.font, a.fontSize)
+  const font = fontString(a.font, a.fontSize, a.bold, a.italic)
   measureCtx.font = font
   measureCtx.textBaseline = 'middle'
-  const m = measureCtx.measureText(a.text)
-  return {
-    font,
-    width: m.width,
-    ascent: m.actualBoundingBoxAscent,
-    descent: m.actualBoundingBoxDescent,
-    pad: a.fontSize * 0.35
-  }
+  const lines = a.text.split('\n')
+  let width = 0
+  for (const l of lines) width = Math.max(width, measureCtx.measureText(l).width)
+  // a blank line has no ink: measure a CJK glyph instead so the box keeps its height
+  const edge = (l: string): ReturnType<CanvasRenderingContext2D['measureText']> => measureCtx.measureText(l.trim() ? l : '가')
+  const lineH = a.fontSize * LINE_HEIGHT
+  const ascent = edge(lines[0]).actualBoundingBoxAscent
+  const descent = edge(lines[lines.length - 1]).actualBoundingBoxDescent
+  return { font, lines, width, ascent, descent, pad: a.fontSize * 0.35, lineH, height: ascent + (lines.length - 1) * lineH + descent }
+}
+
+function rectOf(a: TextAnn, m: TextMetrics): Rect {
+  return { x: a.x - m.pad, y: a.y - m.ascent - m.pad, width: m.width + m.pad * 2, height: m.height + m.pad * 2 }
 }
 
 /** Rect (image px) the text occupies including its plate padding: used for drawing and hit-testing. */
 function textRect(a: TextAnn): Rect {
-  const m = measureText(a)
-  return { x: a.x - m.pad, y: a.y - m.ascent - m.pad, width: m.width + m.pad * 2, height: m.ascent + m.descent + m.pad * 2 }
+  return rectOf(a, measureText(a))
 }
 
 /** '#rrggbb' or 'rgb(r, g, b)' -> perceived brightness 0..1 (unknown strings count as dark). */
@@ -263,10 +312,29 @@ function brightness(c: string): number {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255
 }
 
-/** Light text gets a dark plate, dark / saturated text a white one. */
-function plateColor(textColor: string): string {
-  return brightness(textColor) > 0.6 ? 'rgba(20,20,24,0.78)' : 'rgba(255,255,255,0.85)'
+/** The automatic plate: light text gets a dark plate, dark / saturated text a white one. */
+function autoPlate(textColor: string): { hex: string; alpha: number } {
+  return brightness(textColor) > 0.6 ? { hex: '#141418', alpha: 0.78 } : { hex: '#FFFFFF', alpha: 0.85 }
 }
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1]
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+
+/** Plate fill as a CSS colour: bg (or the automatic plate) at bgOpacity (or the automatic alpha). */
+function plateColor(textColor: string, bg?: string, bgOpacity?: number): string {
+  const auto = autoPlate(textColor)
+  const [r, g, b] = hexToRgb(bg ?? auto.hex) ?? hexToRgb(auto.hex) ?? [0, 0, 0]
+  return `rgba(${r},${g},${b},${bgOpacity ?? auto.alpha})`
+}
+
+/** Soft drop shadow shared by the canvas and the CSS preview (blur / offset scale with the font size). */
+const SHADOW_COLOR = 'rgba(0,0,0,0.55)'
+const shadowBlur = (fontSize: number): number => fontSize * 0.25
+const shadowDy = (fontSize: number): number => fontSize * 0.08
 
 /** Violet "made in Backseat" mark so an AI can tell typed text / numbered badges from real screen content. */
 const TAG_COLOR = '#6E56CF'
@@ -294,26 +362,37 @@ function drawTag(ctx: CanvasRenderingContext2D, x: number, y: number, s: number)
 function drawText(ctx: CanvasRenderingContext2D, a: TextAnn): void {
   const m = measureText(a)
   ensureFont(m.font, a.text)
+  const box = rectOf(a, m)
   ctx.save()
   ctx.font = m.font
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'start'
   const style = a.style ?? 'plate'
+  const shadowOn = (): void => {
+    ctx.shadowColor = SHADOW_COLOR
+    ctx.shadowBlur = shadowBlur(a.fontSize)
+    ctx.shadowOffsetY = shadowDy(a.fontSize)
+  }
+  const shadowOff = (): void => { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0 }
   if (style === 'plate') {
-    ctx.fillStyle = plateColor(a.color)
+    ctx.fillStyle = plateColor(a.color, a.bg, a.bgOpacity)
+    if (a.shadow) shadowOn()
     ctx.beginPath()
-    ctx.roundRect(a.x - m.pad, a.y - m.ascent - m.pad, m.width + m.pad * 2, m.ascent + m.descent + m.pad * 2, a.fontSize * 0.3)
+    ctx.roundRect(box.x, box.y, box.width, box.height, a.fontSize * 0.3)
     ctx.fill()
+    shadowOff()
   } else if (style === 'outline') {
     ctx.lineJoin = 'round'
     ctx.lineWidth = Math.max(1, a.fontSize / 9)
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)'
-    ctx.strokeText(a.text, a.x, a.y)
-  }
+    ctx.strokeStyle = a.outline ?? 'rgba(0,0,0,0.6)'
+    if (a.shadow) shadowOn() // the outlined silhouette casts the shadow; the fill below stays crisp
+    m.lines.forEach((l, i) => ctx.strokeText(l, a.x, a.y + i * m.lineH))
+    shadowOff()
+  } else if (a.shadow) shadowOn()
   ctx.fillStyle = a.color
-  ctx.fillText(a.text, a.x, a.y)
-  ctx.restore()
-  drawTag(ctx, a.x - m.pad, a.y - m.ascent - m.pad, Math.max(9 * (init?.meta.scaleFactor ?? 1), a.fontSize * 0.42))
+  m.lines.forEach((l, i) => ctx.fillText(l, a.x, a.y + i * m.lineH))
+  ctx.restore() // also clears the shadow before the tag
+  drawTag(ctx, box.x, box.y, Math.max(9 * (init?.meta.scaleFactor ?? 1), a.fontSize * 0.42))
 }
 
 /** Draw the first `count` points of a stroke (all when undefined). */
@@ -840,31 +919,68 @@ function ensureLive(): void {
 
 // ---------- text tool ----------
 
-/** Mirror the session's font, size, colour and plate onto the live text input. */
+/** The optional annotation fields of a text: written only when they differ from the default look, so old text stays byte-identical. */
+type TextExtras = Pick<TextAnn, 'bg' | 'bgOpacity' | 'outline' | 'shadow' | 'bold' | 'italic'>
+const EXTRA_KEYS = ['bg', 'bgOpacity', 'outline', 'shadow', 'bold', 'italic'] as const
+
+function textExtras(sess: TextSession): TextExtras {
+  const out: TextExtras = {}
+  if (sess.style === 'plate') {
+    if (sess.bg !== undefined) out.bg = sess.bg
+    if (sess.bgOpacity !== undefined && Math.abs(sess.bgOpacity - autoPlate(sess.color).alpha) > 0.004) {
+      out.bgOpacity = Math.round(sess.bgOpacity * 100) / 100
+    }
+  }
+  if (sess.style === 'outline' && sess.outline !== undefined) out.outline = sess.outline
+  if (sess.shadow) out.shadow = true
+  if (sess.bold !== undefined && sess.bold !== defaultBold(sess.font)) out.bold = sess.bold
+  if (sess.italic) out.italic = true
+  return out
+}
+
+/** A copy of the annotation whose optional style fields are exactly `ex`. */
+function withExtras(a: TextAnn, ex: TextExtras): TextAnn {
+  const next = { ...a }
+  for (const k of EXTRA_KEYS) delete next[k]
+  return Object.assign(next, ex)
+}
+
+/** Mirror the session's font, size, colour, plate, outline, shadow, weight and slant onto the live text box. */
 function styleTextBox(sess: TextSession): void {
   const box = sess.box
-  box.style.font = fontString(sess.font, sess.sizeCss * view)
-  box.style.lineHeight = '1.3'
+  const px = sess.sizeCss * view
+  const plate = sess.style === 'plate'
+  const outline = sess.style === 'outline'
+  const shadow = `0 ${shadowDy(px)}px ${shadowBlur(px)}px ${SHADOW_COLOR}`
+  box.style.font = fontString(sess.font, px, sess.bold, sess.italic)
+  box.style.lineHeight = String(LINE_HEIGHT)
   box.style.color = sess.color
-  box.style.background = sess.style === 'plate' ? plateColor(sess.color) : 'transparent'
-  box.classList.toggle('st-outline', sess.style === 'outline')
+  box.style.background = plate ? plateColor(sess.color, sess.bg, sess.bgOpacity) : 'transparent'
+  box.style.boxShadow = plate && sess.shadow ? shadow : 'none'
+  box.style.setProperty('-webkit-text-stroke', outline ? `${Math.max(1, px / 9)}px ${sess.outline ?? 'rgba(0,0,0,0.6)'}` : '0')
+  box.style.textShadow = !plate && sess.shadow ? shadow : 'none'
+  box.classList.toggle('st-outline', outline)
 }
 
 function finishText(sess: TextSession, commitIt: boolean): void {
   if (textSession !== sess) return
   textSession = null // first, so the blur fired by remove() is a no-op
+  textbarPin = false
   const text = sess.box.value.trim()
   sess.box.remove()
+  syncToolbar() // the text bar hides again unless the text tool is active
   if (!commitIt || !text || !init) { render(); return }
   const fontSize = sess.sizeCss * init.meta.scaleFactor
+  const ex = textExtras(sess)
   if (sess.orig) {
     const o = sess.orig
     const unchanged =
       o.text === text && o.color === sess.color && o.font === sess.font &&
-      (o.style ?? 'plate') === sess.style && Math.abs(o.fontSize - fontSize) < 0.01
+      (o.style ?? 'plate') === sess.style && Math.abs(o.fontSize - fontSize) < 0.01 &&
+      EXTRA_KEYS.every((k) => o[k] === ex[k])
     if (unchanged || annotations[sess.index] !== o) { render(); return }
     const next = [...annotations]
-    next[sess.index] = { ...o, text, color: sess.color, font: sess.font, style: sess.style, fontSize, tEnd: now() }
+    next[sess.index] = { ...withExtras(o, ex), text, color: sess.color, font: sess.font, style: sess.style, fontSize, tEnd: now() }
     commit('텍스트 수정', next)
     return
   }
@@ -872,7 +988,7 @@ function finishText(sess: TextSession, commitIt: boolean): void {
     ...annotations,
     {
       kind: 'text', text, x: sess.at.x, y: sess.at.y, color: sess.color, fontSize,
-      font: sess.font, style: sess.style, tStart: sess.tStart, tEnd: now()
+      font: sess.font, style: sess.style, ...ex, tStart: sess.tStart, tEnd: now()
     }
   ])
 }
@@ -883,16 +999,24 @@ function commitPendingText(): void {
 
 const isToolbarControl = (n: EventTarget | null): boolean =>
   n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range') ||
-  (n instanceof HTMLElement && n.closest('#toolbar2') !== null)
+  (n instanceof HTMLElement && n.closest('#toolbar2, #textbar') !== null)
 
-/** Controls that need the real mouse-down (focus / drag): selects and sliders. */
+/** Controls that need the real mouse-down (focus / drag): selects, sliders and colour inputs. */
 const isNativeToolbarControl = (n: EventTarget | null): boolean =>
-  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && n.type === 'range')
+  n instanceof HTMLSelectElement || (n instanceof HTMLInputElement && (n.type === 'range' || n.type === 'color'))
 
-/** Open the text input at (left, top) in wrap CSS px; `orig` = existing annotation being edited. */
+/** Shift+Enter: insert a line break at the caret (execCommand keeps the box's own undo history). */
+function insertNewline(box: HTMLTextAreaElement): void {
+  if (document.execCommand('insertText', false, '\n')) return
+  box.setRangeText('\n', box.selectionStart, box.selectionEnd, 'end')
+  box.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/** Open the text box at (left, top) in wrap CSS px; `orig` = existing annotation being edited. */
 function openTextBox(left: number, top: number, at: Point, index: number, orig: TextAnn | null, initial: string): void {
-  const box = document.createElement('input')
-  box.type = 'text'
+  const box = document.createElement('textarea')
+  box.rows = 1 // auto-grows with the text (field-sizing: content), no scrollbars
+  box.wrap = 'off'
   box.className = 'textbox'
   box.spellcheck = false
   box.value = initial
@@ -900,13 +1024,17 @@ function openTextBox(left: number, top: number, at: Point, index: number, orig: 
   box.style.top = `${top}px`
   const sess: TextSession = {
     box, index, orig, at, tStart: orig ? orig.tStart : now(),
-    color, font: fontFamily, sizeCss: fontSizeCss, style: textStyle
+    color, font: fontFamily, sizeCss: fontSizeCss, style: textStyle,
+    bg: textBg, bgOpacity: textBgOpacity, outline: textOutline, shadow: textShadow, bold: textBold, italic: textItalic
   }
   styleTextBox(sess)
   box.addEventListener('keydown', (ev) => {
     if (ev.isComposing) return // Korean IME: Enter confirms the composition
-    if (ev.key === 'Enter') { ev.preventDefault(); finishText(sess, true) }
-    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finishText(sess, false) }
+    if (ev.key === 'Enter') {
+      ev.preventDefault()
+      if (ev.shiftKey) insertNewline(box)
+      else finishText(sess, true)
+    } else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finishText(sess, false) }
   })
   box.addEventListener('blur', (ev) => {
     if (isToolbarControl(ev.relatedTarget)) return // picking a font / size / style keeps the box open
@@ -914,6 +1042,7 @@ function openTextBox(left: number, top: number, at: Point, index: number, orig: 
   })
   textSession = sess
   wrap.appendChild(box)
+  syncToolbar() // shows the text bar
   if (orig) render() // hide the original under the box
   setTimeout(() => { box.focus(); if (orig) box.select() }, 0) // after the browser's own mousedown focus handling
 }
@@ -925,7 +1054,7 @@ function startText(p: Point, e: PointerEvent): void {
 
 const SIZE_CHOICES = [14, 18, 24, 32, 48]
 
-/** Edit annotations[index] in place: the toolbar adopts its font / size / colour / style. */
+/** Edit annotations[index] in place: the toolbar adopts its font / size / colour / style / effects. */
 function startEditText(index: number): void {
   const a = annotations[index]
   if (!init || !a || a.kind !== 'text') return
@@ -933,8 +1062,15 @@ function startEditText(index: number): void {
   fontFamily = a.font
   textStyle = a.style ?? 'plate'
   color = a.color
+  textBg = a.bg
+  textBgOpacity = a.bgOpacity
+  textOutline = a.outline
+  textShadow = a.shadow === true
+  textBold = a.bold
+  textItalic = a.italic === true
   const css = a.fontSize / init.meta.scaleFactor
   fontSizeCss = SIZE_CHOICES.reduce((best, v) => (Math.abs(v - css) < Math.abs(best - css) ? v : best), SIZE_CHOICES[0])
+  textbarPin = true // the text bar shows (and the image is re-laid-out) before the box is positioned
   syncToolbar()
   const r = ink.getBoundingClientRect()
   openTextBox(a.x * (r.width / ink.width), a.y * (r.height / ink.height), { x: a.x, y: a.y }, index, a, a.text)
@@ -1648,6 +1784,32 @@ function setTool(next: Tool): void {
   syncToolbar()
 }
 
+/** Reflect the text props into toolbar row 2's B / I and the text bar; show the bar only for the text tool / an open box. */
+function syncTextBar(): void {
+  const show = tool === 'text' || textSession !== null || textbarPin
+  if (textBar.hidden === show) {
+    textBar.hidden = !show
+    layout() // the stage got shorter / taller
+  }
+  const auto = autoPlate(color)
+  const plate = textStyle === 'plate'
+  boldBtn.setAttribute('aria-pressed', String(textBold ?? defaultBold(fontFamily)))
+  italicBtn.setAttribute('aria-pressed', String(textItalic))
+  shadowBtn.setAttribute('aria-pressed', String(textShadow))
+  bgInput.value = (textBg ?? auto.hex).toLowerCase()
+  bgAutoBtn.setAttribute('aria-pressed', String(textBg === undefined))
+  bgOpacityInput.value = String(Math.round((textBgOpacity ?? auto.alpha) * 100))
+  outlineInput.value = (textOutline ?? '#000000').toLowerCase()
+  const dimGroup = (el: HTMLElement, off: boolean): void => {
+    const g = el.closest<HTMLElement>('.group')
+    if (!g) return
+    g.classList.toggle('dim', off)
+    g.inert = off // not clickable, not focusable: a click falls through to the bar, which keeps the box focused
+  }
+  dimGroup(bgInput, !plate)
+  dimGroup(outlineInput, textStyle !== 'outline')
+}
+
 function syncToolbar(): void {
   toolBtns.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool))
   colorBtns.forEach((b) => b.classList.toggle('active', b.dataset.color === color))
@@ -1661,6 +1823,7 @@ function syncToolbar(): void {
     b.classList.toggle('active', on)
     b.setAttribute('aria-checked', String(on))
   })
+  syncTextBar()
   wrap.classList.toggle('text-tool', tool === 'text')
   wrap.classList.toggle('eraser-tool', tool === 'eraser')
   if (tool !== 'text') wrap.classList.remove('over-text')
@@ -1684,11 +1847,12 @@ wipeInput.addEventListener('input', () => {
 compareBar.addEventListener('mousedown', (e) => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault() })
 
 toolBtns.forEach((b) => b.addEventListener('click', () => setTool(isTool(b.dataset.tool) ? b.dataset.tool : 'pen')))
-colorBtns.forEach((b) => b.addEventListener('click', () => {
-  color = b.dataset.color ?? color
-  if (textSession) { textSession.color = color; styleTextBox(textSession) }
-  syncToolbar()
-}))
+/** Pen / arrow / text colour (one shared colour). The open text box follows. */
+function setColor(c: string, refocus = false): void {
+  color = c
+  refreshTextSession(refocus)
+}
+colorBtns.forEach((b) => b.addEventListener('click', () => setColor(b.dataset.color ?? color)))
 function setWidth(v: number): void {
   widthCss = Math.min(24, Math.max(1, Math.round(v)))
   syncToolbar()
@@ -1696,15 +1860,67 @@ function setWidth(v: number): void {
 widthInput.addEventListener('input', () => setWidth(Number(widthInput.value) || widthCss))
 widthInput.addEventListener('change', () => widthInput.blur())
 
-/** A font / size / style pick applies to the open text box too, and hands focus back to it. */
+/** Push the module-level text props (colour, effects; not font / size) into the open box and, usually, hand focus back to it. */
+function refreshTextSession(refocus = true): void {
+  const s = textSession
+  if (s) {
+    s.color = color
+    s.style = textStyle
+    s.bg = textBg
+    s.bgOpacity = textBgOpacity
+    s.outline = textOutline
+    s.shadow = textShadow
+    s.bold = textBold
+    s.italic = textItalic
+    styleTextBox(s)
+  }
+  syncToolbar()
+  if (refocus) s?.box.focus()
+}
+
+// One setter per text prop: the toolbar controls (and a later colour popover) go through these.
+function setTextStyle(v: TextStyle, refocus = true): void { textStyle = v; refreshTextSession(refocus) }
+/** '#RRGGBB' or undefined = automatic plate colour. */
+function setTextBg(v: string | undefined, refocus = true): void { textBg = v?.toUpperCase(); refreshTextSession(refocus) }
+/** 0..1 or undefined = the automatic plate's own alpha. */
+function setTextBgOpacity(v: number | undefined, refocus = true): void {
+  textBgOpacity = v === undefined ? undefined : Math.min(1, Math.max(0.1, Math.round(v * 100) / 100))
+  refreshTextSession(refocus)
+}
+/** '#RRGGBB' or undefined = translucent black. */
+function setTextOutline(v: string | undefined, refocus = true): void { textOutline = v?.toUpperCase(); refreshTextSession(refocus) }
+function setTextShadow(on: boolean, refocus = true): void { textShadow = on; refreshTextSession(refocus) }
+/** undefined = the font's default weight. */
+function setTextBold(v: boolean | undefined, refocus = true): void { textBold = v; refreshTextSession(refocus) }
+function setTextItalic(on: boolean, refocus = true): void { textItalic = on; refreshTextSession(refocus) }
+
+/** '#RRGGBB' (upper case) for any hex colour, or null. */
+function normHex(c: string): string | null {
+  const rgb = hexToRgb(c)
+  return rgb ? `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`.toUpperCase() : null
+}
+
+/** Swap the text colour and the plate colour (an automatic plate counts as its effective colour); turns the plate on. */
+function invertTextColors(): void {
+  const auto = autoPlate(color)
+  const plateHex = normHex(textBg ?? auto.hex) ?? auto.hex
+  const alpha = textBgOpacity ?? auto.alpha
+  const textHex = normHex(color) ?? '#FFFFFF'
+  color = plateHex
+  textBg = textHex
+  // keep the plate as translucent as it was; "automatic" only if that matches the new text colour's own alpha
+  textBgOpacity = Math.abs(alpha - autoPlate(color).alpha) > 0.004 ? alpha : undefined
+  textStyle = 'plate'
+  refreshTextSession()
+}
+
+/** A font / size pick applies to the open text box too, and hands focus back to it. */
 function textPropChanged(sel: HTMLElement): void {
   if (textSession) {
     textSession.font = fontFamily
     textSession.sizeCss = fontSizeCss
-    textSession.style = textStyle
-    styleTextBox(textSession)
   }
-  syncToolbar()
+  refreshTextSession(false)
   sel.blur()
   textSession?.box.focus()
 }
@@ -1716,16 +1932,34 @@ sizeSelect.addEventListener('change', () => {
   fontSizeCss = Number(sizeSelect.value) || fontSizeCss
   textPropChanged(sizeSelect)
 })
-styleBtns.forEach((b) => {
-  b.addEventListener('mousedown', (ev) => ev.preventDefault()) // keep focus in the open text box
-  b.addEventListener('click', () => {
-    const v = b.dataset.textStyle ?? ''
-    if (isTextStyle(v)) textStyle = v
-    textPropChanged(b)
+styleBtns.forEach((b) => b.addEventListener('click', () => {
+  const v = b.dataset.textStyle ?? ''
+  if (isTextStyle(v)) setTextStyle(v)
+}))
+boldBtn.addEventListener('click', () => setTextBold(!(textBold ?? defaultBold(fontFamily))))
+italicBtn.addEventListener('click', () => setTextItalic(!textItalic))
+shadowBtn.addEventListener('click', () => setTextShadow(!textShadow))
+invertBtn.addEventListener('click', invertTextColors)
+bgAutoBtn.addEventListener('click', () => setTextBg(textBg === undefined ? autoPlate(color).hex : undefined))
+bgInput.addEventListener('input', () => setTextBg(bgInput.value, false))
+outlineInput.addEventListener('input', () => setTextOutline(outlineInput.value, false))
+bgOpacityInput.addEventListener('input', () => setTextBgOpacity(Number(bgOpacityInput.value) / 100, false))
+// native controls took the focus: give it back to the open box once they are done
+for (const el of [bgInput, outlineInput, bgOpacityInput]) {
+  el.addEventListener('change', () => textSession?.box.focus())
+  el.addEventListener('blur', (ev) => {
+    const sess = textSession
+    if (!sess || ev.relatedTarget === sess.box || isToolbarControl(ev.relatedTarget)) return
+    if (!document.hasFocus()) return // the colour dialog took the window focus: the box stays open
+    finishText(sess, true)
   })
+}
+window.addEventListener('focus', () => { // back from the colour dialog
+  const ae = document.activeElement
+  if (textSession && ae instanceof HTMLInputElement && ae.type === 'color') textSession.box.focus()
 })
 // keep focus (e.g. in the text box) when clicking toolbar buttons; selects and sliders need the mouse
-for (const bar of [byId('toolbar'), byId('toolbar2')]) {
+for (const bar of [byId('toolbar'), byId('toolbar2'), textBar]) {
   bar.addEventListener('mousedown', (e) => { if (!isNativeToolbarControl(e.target)) e.preventDefault() })
 }
 
@@ -1766,7 +2000,7 @@ const hotkeys = new Hotkeys([
     run: (e) => {
       if (e.target === memoInput) { memoInput.blur(); return }
       if (e.target instanceof HTMLSelectElement) { e.target.blur(); return }
-      if (e.target instanceof HTMLInputElement) return false // the text box handles its own Escape
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return false // the text box handles its own Escape
       if (moveDrag) { endMove(false); return }
       if (erasing) { endErase(false); return }
       if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first
@@ -1834,6 +2068,8 @@ window.backseat.editor.onInit((data) => {
       }),
       /** Crop programmatically (image px of the current canvas); same path as a pointer drag. */
       crop: (x: number, y: number, w: number, h: number) => applyCropSelection({ x, y, width: w, height: h }),
+      /** Commit annotations (image px of the current canvas) as ONE history step; undo removes them together. */
+      addAnnotations: (list: Annotation[]) => { commit('주석 추가 (디버그)', [...annotations, ...list]) },
       setCompare: (on: boolean, mode?: CompareMode) => { if (mode) setCompareMode(mode); setCompare(on) },
       payload: () => { const p = buildPayload(); return p ? { meta: p.meta, compare: p.compare, annotations: p.annotations, basePngDataUrl: p.basePngDataUrl } : null }
     }

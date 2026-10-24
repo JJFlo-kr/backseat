@@ -180,6 +180,19 @@ export type Annotation =
       font?: string
       /** How the text is made legible over the screenshot: dark outline, a translucent plate, or nothing. */
       style?: 'outline' | 'plate' | 'plain'
+      // Optional styling (round 2). Absent = the round-1 look, so older packages render unchanged.
+      // `text` may contain '\n' (Shift+Enter): lines are left-aligned, y is the middle of the first line.
+      /** Plate colour '#RRGGBB' for style 'plate'; undefined = automatic (dark or white by text brightness). */
+      bg?: string
+      /** Plate opacity 0..1; undefined = the automatic plate's own alpha. */
+      bgOpacity?: number
+      /** Outline colour '#RRGGBB' for style 'outline'; undefined = translucent black. */
+      outline?: string
+      /** Soft drop shadow (behind the plate for 'plate', behind the glyphs otherwise). */
+      shadow?: boolean
+      /** undefined = the font's default weight (gothic faces bold, display faces regular). */
+      bold?: boolean
+      italic?: boolean
       tStart: number
       tEnd: number
     }
