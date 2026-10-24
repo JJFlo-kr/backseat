@@ -40,7 +40,7 @@ Claude app scratch folder) the Electron sandbox and the Vite renderer build brea
   changed tab, focus moving away, target closed and a retry). It moves the focus between windows and uses the
   clipboard (restored afterwards): only while nobody uses the machine. Prints `BACKSEAT_DELIVERY_TEST {json}`.
 
-Self-tests that move the real focus, mouse or keyboard run one at a time: create `D:\backseat-ui-test.lock`
+Self-tests that move the real focus, mouse or keyboard run one at a time: create `D:\backseat-locks\ui-test.lock` (make the folder if needed)
 only when it does not exist, delete it afterwards (a lock older than an hour may be removed).
 
 ## Session packages

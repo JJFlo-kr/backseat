@@ -7,7 +7,7 @@
  *   electron . --selftest-delivery
  *
  * Prints one `BACKSEAT_DELIVERY_TEST {json}` line. It moves the focus between windows and uses the
- * clipboard (restored at the end): run it only while nobody uses the machine, and hold D:\backseat-ui-test.lock.
+ * clipboard (restored at the end): run it only while nobody uses the machine, and hold D:\backseat-locks\ui-test.lock.
  * Verdicts: nothing ever lands in a sign-in field, a changed / closed target stops the paste, the status
  * names exactly the steps that happened, and the same content can be sent again after a failure.
  */
