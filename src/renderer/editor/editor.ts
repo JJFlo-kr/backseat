@@ -51,7 +51,6 @@ const ERASE_TOLERANCE = 6 // CSS px around the eraser path
 const BADGE_SIZE = 22 // CSS px diameter
 const BLUR_BLOCK = 14 // CSS px per pixelation block
 const MIN_DRAG = 3 // image px
-const SEND_CLOSE_DELAY = 700 // ms the status stays visible before the editor closes
 const AUDIO_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
 
 
@@ -1552,7 +1551,6 @@ async function send(): Promise<void> {
   }
   busy = true
   setStatus(t('editor.status.sending'))
-  let stayBusy = false
   try {
     const o = await runSend(
       {
@@ -1571,8 +1569,7 @@ async function send(): Promise<void> {
           setStatus(t('editor.status.sending'))
           return window.backseat.editor.send(payload, sendOptions())
         }
-      },
-      () => pinned
+      }
     )
     const r = o.result
     if (!r) {
@@ -1594,12 +1591,11 @@ async function send(): Promise<void> {
       targetNote = t('editor.target.clipboardNote')
       showTarget()
     }
-    stayBusy = o.stayBusy // no double send while the status is visible and the editor closes
-    if (o.close) setTimeout(() => window.backseat.editor.close(), SEND_CLOSE_DELAY)
+    // The editor stays open after a send (also a pasted one): resend, another destination or copy in place.
   } catch (err) {
     setStatus(t('editor.status.sendFailed', { error: errText(err) }), true)
   } finally {
-    if (!stayBusy) busy = false
+    busy = false
   }
 }
 

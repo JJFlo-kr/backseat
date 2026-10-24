@@ -18,52 +18,46 @@ function steps(stt: SttOutcome[], choices: TranscriptChoice[], result: SendResul
   return { s, log }
 }
 
-test('F05: pinned editor is not left busy after a successful paste', async () => {
-  const { s } = steps(['none'], [])
-  const o = await runSend(s, () => true)
-  assert.equal(o.close, false)
-  assert.equal(o.stayBusy, false, 'copy / save / send must work again in the pinned window')
+// F05 and the 2026-10-25 decision: after any send the editor stays open and usable; runSend only reports.
+test('F05: a successful paste is reported and nothing is held back', async () => {
+  const { s, log } = steps(['none'], [])
+  const o = await runSend(s)
+  assert.equal(o.result?.delivered, 'pasted')
+  assert.equal(o.canceled, false)
+  assert.deepEqual(log, ['settle', 'deliver'])
+  assert.deepEqual(Object.keys(o).sort(), ['canceled', 'result'], 'no close / busy decision left in the flow')
 })
 
-test('F05: unpinned editor closes and stays busy until then (no double send)', async () => {
-  const { s } = steps(['ok'], [])
-  const o = await runSend(s, () => false)
-  assert.equal(o.close, true)
-  assert.equal(o.stayBusy, true)
-})
-
-test('clipboard-only delivery keeps the editor open and usable', async () => {
+test('clipboard-only delivery is reported the same way', async () => {
   const { s } = steps(['none'], [], CLIPBOARD)
-  const o = await runSend(s, () => false)
-  assert.deepEqual([o.close, o.stayBusy], [false, false])
+  assert.equal((await runSend(s)).result?.delivered, 'clipboard')
 })
 
 test('F12: a failed transcription asks first; cancel sends nothing', async () => {
   const { s, log } = steps(['failed'], ['cancel'])
-  const o = await runSend(s, () => false)
+  const o = await runSend(s)
   assert.deepEqual(log, ['settle', 'ask:cancel'])
   assert.equal(o.result, null)
   assert.equal(o.canceled, true)
-  assert.deepEqual([o.close, o.stayBusy], [false, false])
 })
 
 test('F12: retry until it works, then send', async () => {
   const { s, log } = steps(['failed', 'failed', 'ok'], ['retry', 'retry'])
-  const o = await runSend(s, () => false)
+  const o = await runSend(s)
   assert.deepEqual(log, ['settle', 'ask:retry', 'retry', 'ask:retry', 'retry', 'deliver'])
   assert.equal(o.result?.delivered, 'pasted')
 })
 
 test('F12: "image only" sends without the transcript after the user chose it', async () => {
   const { s, log } = steps(['failed'], ['image'])
-  await runSend(s, () => false)
+  await runSend(s)
   assert.deepEqual(log, ['settle', 'ask:image', 'deliver'])
 })
 
 test('no recording / transcript fine: no question', async () => {
   for (const stt of ['none', 'ok'] as const) {
     const { s, log } = steps([stt], [])
-    await runSend(s, () => false)
+    await runSend(s)
     assert.deepEqual(log, ['settle', 'deliver'])
   }
 })

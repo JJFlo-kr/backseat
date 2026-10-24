@@ -1,5 +1,5 @@
-// Codex review F05 (main side): a pinned (always-on-top) editor is visible again after a successful paste,
-// an unpinned one stays hidden (it is about to close). Real src/main/send.ts; Win32 is faked.
+// Codex review F05 (main side) + the 2026-10-25 decision "the editor stays open after a send": the editor,
+// pinned or not, is visible again after a successful paste, without taking the focus. Real src/main/send.ts.
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { FakeBrowserWindow, installFakeElectron } from './support/fake-electron.ts'
@@ -41,10 +41,13 @@ test('pinned editor: shown again (without taking focus) after the paste', async 
   assert.equal(foreground, 777, 'focus stays on the agent window')
 })
 
-test('unpinned editor: stays hidden after the paste (the renderer closes it)', async () => {
+test('unpinned editor: also shown again (it stays open now), focus stays on the agent window', async () => {
   const win = new FakeBrowserWindow()
   win.show()
+  foreground = 0
   const r = await sendToTarget(win as never, payload, target, { pressEnter: false })
   assert.equal(r.delivered, 'pasted')
-  assert.equal(win.isVisible(), false)
+  assert.equal(win.isVisible(), true)
+  assert.equal(win.focused, false)
+  assert.equal(foreground, 777)
 })
