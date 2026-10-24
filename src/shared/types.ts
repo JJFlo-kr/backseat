@@ -420,6 +420,8 @@ export interface BackseatApi {
     targets?(): Promise<SendTargetView[]>
     /** Later delivery news for a send, e.g. an MCP agent fetched it (DeliveryStatus.fetchedBy). */
     onDeliveryUpdate?(cb: (s: DeliveryStatus) => void): void
+    /** "새 캡처" after a send: main closes this editor and starts a region capture. */
+    newCapture?(): void
   }
   about: {
     getInfo(): Promise<AboutInfo>

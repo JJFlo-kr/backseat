@@ -23,6 +23,7 @@ export const IPC = {
   deliveryUpdate: 'delivery:update',
   // editor window -> main (send)
   editorClose: 'editor:close',
+  editorNewCapture: 'editor:new-capture',
 
   // about window -> main (invoke)
   aboutInfo: 'about:info',

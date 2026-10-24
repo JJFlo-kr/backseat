@@ -35,6 +35,13 @@ let ipcInstalled = false
  * only go to one of these, and only while it is the same window instance.
  */
 const editorTargets = new WeakMap<Electron.WebContents, EditorTargets>()
+/** Starts a region capture (set by index.ts, which owns the capture flow). */
+let newCaptureHandler: (() => void) | null = null
+
+export function onNewCaptureRequest(fn: () => void): void {
+  newCaptureHandler = fn
+}
+
 /** Stops the fetch watcher of each editor's last send (a resend replaces it). */
 const fetchWatchers = new WeakMap<Electron.WebContents, () => void>()
 
@@ -213,6 +220,11 @@ export function installEditorIpc(): void {
   )
   ipcMain.handle(IPC.editorCopy, (_e, payload: ExportPayload) => copyToClipboard(payload))
   ipcMain.on(IPC.editorClose, (e) => BrowserWindow.fromWebContents(e.sender)?.close())
+  ipcMain.on(IPC.editorNewCapture, (e) => {
+    // The user is done with this capture: close it first so the new screenshot does not show the editor.
+    BrowserWindow.fromWebContents(e.sender)?.close()
+    setTimeout(() => newCaptureHandler?.(), 250)
+  })
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))

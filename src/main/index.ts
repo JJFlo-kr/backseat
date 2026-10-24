@@ -3,7 +3,7 @@ import type { AskRequest, CaptureMode, EditorInit, SelectionResult } from '../sh
 import { captureAllDisplays, captureForDisplayId, cropDip } from './capture'
 import { applyLoginItem, ensureConfig, loadSettings, sessionsRoot } from './config'
 import { resolveForCapture } from './destination'
-import { createEditorWindow, installEditorIpc } from './editor'
+import { createEditorWindow, installEditorIpc, onNewCaptureRequest } from './editor'
 import { getForegroundWindow, listTopLevelWindows } from './native/win32'
 import { requestForCapture, startRequestWatcher } from './requests'
 import { scrollCapture } from './scroll'
@@ -142,6 +142,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     const settings = await ensureConfig()
     applyLoginItem(settings)
     startForegroundTracker()
+    onNewCaptureRequest(() => void startCapture('rect'))
     createTray({
       capture: () => void startCapture('rect'),
       captureWindow: () => void startCapture('window'),

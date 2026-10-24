@@ -62,6 +62,9 @@ const api: BackseatApi = {
     onDeliveryUpdate(cb) {
       ipcRenderer.on(IPC.deliveryUpdate, (_e, s: DeliveryStatus) => cb(s))
     },
+    newCapture() {
+      ipcRenderer.send(IPC.editorNewCapture)
+    },
     close() {
       ipcRenderer.send(IPC.editorClose)
     }
