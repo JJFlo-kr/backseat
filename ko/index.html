@@ -62,6 +62,7 @@
       </div>
       <p class="facts">무료 · 오픈소스(MIT) · Windows 64비트 · <span data-release="version">v0.5.0</span>, 약&nbsp;<span data-release="sizeMB">243</span>MB</p>
       <p class="hint">코드 서명 전이라 처음 실행할 때 Windows 경고가 뜰 수 있습니다. <a href="#install">설치 안내 보기</a></p>
+      <p class="hint"><a href="#preview">macOS·Linux 미리보기판</a>도 있습니다.</p>
 
       <figure class="frame hero-video">
         <video data-play="auto" controls muted loop playsinline preload="metadata" poster="../media/hero-ko-poster.jpg"
@@ -287,6 +288,16 @@
           <p>값이 같으면 게시된 파일을 그대로 받았다는 뜻입니다. 프로그램이 안전하다는 보증은 아닙니다. 값이 다르면 실행하지 말고 다시 받거나 <a href="https://github.com/JJFlo-kr/backseat/issues">문제를 알려 주세요</a>.</p>
         </div>
       </details>
+
+      <div class="preview" id="preview">
+        <h3>macOS·Linux 미리보기판 <span class="status part"><span aria-hidden="true">◐</span> 미리보기</span></h3>
+        <p>캡처, 표시, 음성 받아쓰기, 저장, MCP는 Windows판과 같습니다. 보낼 곳을 고르고 입력란을 확인해 붙여 넣는 기능은 Windows 전용이라, 미리보기판에서는 보내기를 누르면 클립보드에 준비됩니다. AI 창에서 직접 붙여 넣으세요(macOS: <kbd>Cmd+V</kbd>, Linux: <kbd>Ctrl+V</kbd>). 창 캡처와 스크롤 캡처도 없습니다.</p>
+        <ul>
+          <li><strong>macOS(Apple Silicon)</strong>: <a data-release-href="macDmg" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-macos-arm64.dmg">dmg 받기</a>(약 <span data-release="macSizeMB">221</span>MB). 받은 뒤 응용 프로그램 폴더로 옮기세요. Apple 공증을 받지 않은 앱이라 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안에서 “그래도 열기”를 누르세요. 처음 캡처할 때 화면 기록 권한, 처음 녹음할 때 마이크 권한을 허용해야 합니다.</li>
+          <li><strong>Linux(x64 AppImage)</strong>: <a data-release-href="linuxAppImage" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-linux-x86_64.AppImage">AppImage 받기</a>(약 <span data-release="linuxSizeMB">447</span>MB). 실행 권한을 준 뒤(<code>chmod +x</code>) 실행하세요. 알림 영역 아이콘이 보이려면 데스크톱에 AppIndicator 지원이 필요할 수 있고, Wayland 세션에서는 전역 단축키가 동작하지 않을 수 있습니다.</li>
+        </ul>
+        <p class="small">확인 범위: GitHub의 macOS·Linux 빌드 서버에서 패키지 자체 검사(캡처, 편집 창, 클립보드, 저장)만 통과했습니다. 실제 Mac·Linux PC에서는 아직 확인하지 않았습니다. 버전 <span data-release="previewVersion">v0.6.0-preview.1</span> · <a data-release-href="previewPage" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.6.0-preview.1">릴리스 페이지</a> · 문제가 있으면 <a href="https://github.com/JJFlo-kr/backseat/issues">알려 주세요</a>.</p>
+      </div>
     </section>
 
     <!-- FAQ -->
@@ -328,7 +339,7 @@
         </details>
         <details>
           <summary>어떤 운영체제에서 쓸 수 있나요?</summary>
-          <p>Windows 64비트 전용입니다. Windows 10에서 확인했고, Windows 11에서는 아직 직접 확인하지 못했습니다. macOS와 Linux는 지원하지 않습니다.</p>
+          <p>정식판은 Windows 64비트용이며 Windows 10에서 확인했습니다. Windows 11에서는 아직 직접 확인하지 못했습니다. macOS(Apple Silicon)와 Linux(x64)는 자동 붙여넣기가 없는 <a href="#preview">미리보기판</a>이 있고, 실제 Mac·Linux PC에서는 아직 확인하지 않았습니다.</p>
         </details>
       </div>
     </section>
@@ -351,6 +362,7 @@
     <div class="links">
       <a href="https://github.com/JJFlo-kr/backseat">GitHub</a>
       <a data-release-href="page" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.5.0"><span data-release="version">v0.5.0</span> 릴리스</a>
+      <a href="#preview">macOS·Linux 미리보기판</a>
       <a href="https://github.com/JJFlo-kr/backseat/issues">문제 신고</a>
       <a href="https://github.com/JJFlo-kr/backseat/blob/main/LICENSE">MIT 라이선스</a>
       <a href="https://buymeacoffee.com/jjflo">후원: Buy Me a Coffee</a>

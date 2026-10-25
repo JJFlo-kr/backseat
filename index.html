@@ -62,6 +62,7 @@
       </div>
       <p class="facts">Free · open source (MIT) · Windows 64-bit · <span data-release="version">v0.5.0</span>, about&nbsp;<span data-release="sizeMB">243</span>&nbsp;MB</p>
       <p class="hint">The installer is not code-signed yet, so Windows may warn the first time you run it. <a href="#install">How to install</a></p>
+      <p class="hint">Also available: a <a href="#preview">macOS and Linux preview</a>.</p>
 
       <figure class="frame hero-video">
         <video data-play="auto" controls muted loop playsinline preload="metadata" poster="media/hero-poster.jpg"
@@ -287,6 +288,16 @@
           <p>If the values match, you have exactly the published file. That does not prove the program is safe. If they differ, don't run it: download it again or <a href="https://github.com/JJFlo-kr/backseat/issues">report it</a>.</p>
         </div>
       </details>
+
+      <div class="preview" id="preview">
+        <h3>macOS and Linux preview <span class="status part"><span aria-hidden="true">◐</span> Preview</span></h3>
+        <p>Capture, marking up, voice transcription, saving and MCP work as on Windows. Picking the destination, checking the input box and pasting are Windows-only, so in the preview Send puts everything on the clipboard: paste it in your AI window yourself (macOS: <kbd>Cmd+V</kbd>, Linux: <kbd>Ctrl+V</kbd>). Window capture and scrolling capture aren't available either.</p>
+        <ul>
+          <li><strong>macOS (Apple Silicon)</strong>: <a data-release-href="macDmg" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-macos-arm64.dmg">Download the dmg</a> (about <span data-release="macSizeMB">221</span> MB). Move the app to Applications. It isn't notarized by Apple, so if macOS blocks it the first time, click “Open Anyway” in System Settings → Privacy &amp; Security. Allow Screen Recording on the first capture and the microphone on the first recording.</li>
+          <li><strong>Linux (x64 AppImage)</strong>: <a data-release-href="linuxAppImage" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-linux-x86_64.AppImage">Download the AppImage</a> (about <span data-release="linuxSizeMB">447</span> MB). Make it executable (<code>chmod +x</code>) and run it. The tray icon may need AppIndicator support in your desktop, and global shortcuts may not work in a Wayland session.</li>
+        </ul>
+        <p class="small">How far it was checked: only the packages' self-test (capture, editor, clipboard, saving) on GitHub's macOS and Linux build machines. Not tried on a real Mac or Linux PC yet. Version <span data-release="previewVersion">v0.6.0-preview.1</span> · <a data-release-href="previewPage" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.6.0-preview.1">release page</a> · <a href="https://github.com/JJFlo-kr/backseat/issues">report a problem</a>.</p>
+      </div>
     </section>
 
     <!-- FAQ -->
@@ -328,7 +339,7 @@
         </details>
         <details>
           <summary>Which operating systems are supported?</summary>
-          <p>Windows 64-bit only. It was checked on Windows 10; Windows 11 hasn't been tried yet. macOS and Linux aren't supported.</p>
+          <p>The full version is for Windows 64-bit and was checked on Windows 10; Windows 11 hasn't been tried yet. For macOS (Apple Silicon) and Linux (x64) there is a <a href="#preview">preview</a> without automatic paste, not yet tried on a real Mac or Linux PC.</p>
         </details>
       </div>
     </section>
@@ -351,6 +362,7 @@
     <div class="links">
       <a href="https://github.com/JJFlo-kr/backseat">GitHub</a>
       <a data-release-href="page" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.5.0"><span data-release="version">v0.5.0</span> release</a>
+      <a href="#preview">macOS and Linux preview</a>
       <a href="https://github.com/JJFlo-kr/backseat/issues">Report a problem</a>
       <a href="https://github.com/JJFlo-kr/backseat/blob/main/LICENSE">MIT license</a>
       <a href="https://buymeacoffee.com/jjflo">Support: Buy Me a Coffee</a>
