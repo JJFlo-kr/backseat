@@ -106,7 +106,12 @@
       "artifactName": "${productName}-${version}-macos-${arch}.${ext}",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Backseat records your voice while you mark up a capture, and turns it into text on this Mac."
-      }
+      },
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin/x64/**"
+      ]
     },
     "dmg": {
       "sign": false,
@@ -124,7 +129,12 @@
       "icon": "resources/icon-1024.png",
       "category": "Development",
       "synopsis": "Mark up your screen, explain it out loud, and hand it to your AI coding tool",
-      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/**"
+      ]
     },
     "extraResources": [
       {
