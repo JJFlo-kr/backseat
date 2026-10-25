@@ -132,6 +132,14 @@ async function deliver(
     // Chat UIs get the image itself: say up front that the drawn marks are the user's Backseat annotations.
     const imageLine = plain ? '' : `${briefTranslator()('send.imageNotice')} ${line}`
 
+    // macOS / Linux preview: there is no window targeting, input check or Ctrl+V. Put the content on the
+    // clipboard and say so; no target and no input check are ever claimed.
+    if (!win32Available()) {
+      await clipboardImageAndText(pkg.annotatedPng, imageLine)
+      tracker.reach('clipboard')
+      return stopped('pasted', 'pasteUnsupported')
+    }
+
     if (!target || !identity || target.method === 'clipboard' || !target.hwnd) {
       await clipboardImageAndText(pkg.annotatedPng, imageLine)
       tracker.reach('clipboard')
@@ -142,7 +150,6 @@ async function deliver(
     if (target.method === 'paste-path') await clipboardText(line)
     else await clipboardImageAndText(pkg.annotatedPng, imageLine)
     tracker.reach('clipboard')
-    if (!win32Available()) return stopped('targetVerified', 'uiaUnavailable')
 
     // 1. Same window instance as chosen (a closed window or a reused handle is never "close enough"). A title
     // the user confirmed after a stop replaces the remembered one — and must still be exactly that.

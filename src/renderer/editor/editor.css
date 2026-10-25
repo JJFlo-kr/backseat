@@ -118,6 +118,7 @@ body { display: flex; flex-direction: column; }
 
 /* the target chip: where 보내기 goes and how sure the app is about it */
 #targetbar { flex: 0 1 auto; min-width: 120px; max-width: 320px; display: flex; overflow: hidden; }
+#targetbar[hidden] { display: none; }
 .target-btn {
   display: inline-flex;
   align-items: center;
@@ -550,7 +551,7 @@ footer {
   gap: 4px 8px;
 }
 #summary[hidden], #delivery[hidden] { display: none; }
-#voice-missing[hidden], #summary-changed[hidden], #voice-links[hidden], #new-capture[hidden], #confirm-target[hidden], #resend[hidden] { display: none; }
+#voice-missing[hidden], #summary-changed[hidden], #voice-links[hidden], #new-capture[hidden], #confirm-target[hidden], #resend[hidden], #retarget[hidden] { display: none; }
 #voice-missing { display: inline-flex; align-items: center; gap: 6px; }
 .sb-label { color: var(--muted); }
 #summary-text { color: #e6e6ee; }

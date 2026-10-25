@@ -8,7 +8,7 @@ import type { Translate } from '../../shared/i18n'
 
 export const STEP_ORDER: readonly DeliveryStep[] = ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted', 'fetched']
 export const STOP_REASONS: readonly DeliveryStopReason[] = [
-  'noTarget', 'targetExpired', 'targetChanged', 'focusLost', 'notEditable', 'passwordField', 'uiaUnavailable', 'error'
+  'noTarget', 'targetExpired', 'targetChanged', 'focusLost', 'notEditable', 'passwordField', 'uiaUnavailable', 'pasteUnsupported', 'error'
 ]
 
 // ---------- before sending ----------
@@ -118,6 +118,7 @@ const STOP_KEYS: Record<Exclude<DeliveryStopReason, 'noTarget'>, string> = {
   notEditable: 'editor.stop.notEditable',
   passwordField: 'editor.stop.passwordField',
   uiaUnavailable: 'editor.stop.uiaUnavailable',
+  pasteUnsupported: 'editor.stop.pasteUnsupported',
   error: 'editor.stop.error'
 }
 
@@ -146,6 +147,8 @@ export function deliveryView(s: DeliveryStatus, ctx: DeliveryContext, t: Transla
         : { steps, headline: t('editor.delivery.failed'), detail: t('editor.stop.pickAgain'), tone: 'error', primary: 'retarget' }
     }
     const headline = stop.reason === 'error' && ctx.error ? t('editor.stop.errorWith', { error: ctx.error }) : t(STOP_KEYS[stop.reason])
+    // macOS / Linux: the content is on the clipboard and nothing was tried; no resend or destination to offer.
+    if (stop.reason === 'pasteUnsupported') return { steps, headline, detail: t('editor.stop.pasteUnsupportedDetail'), tone: 'warn', primary: null }
     if (stop.reason === 'targetExpired') return { steps, headline, detail: t('editor.stop.pickAgain'), tone: 'error', primary: 'retarget' }
     if (stop.reason === 'targetChanged') return { steps, headline, detail: t('editor.stop.confirmDetail'), tone: 'warn', primary: 'confirm' }
     return {

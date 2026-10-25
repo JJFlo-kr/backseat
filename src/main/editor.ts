@@ -22,7 +22,7 @@ import { saveSettings, sessionsRoot } from './config'
 import { briefTranslator, mergedMessages, uiLocale } from './locales'
 import { listTargets } from './destination'
 import { watchFetch } from './fetchwatch'
-import { liveWindow, processStartMs } from './native/win32'
+import { liveWindow, processStartMs, win32Available } from './native/win32'
 import { sendToTarget } from './send'
 import { chooseForSend, toView, type EditorTargets } from './targets'
 import { setPicked } from './tracker'
@@ -276,7 +276,7 @@ export function createEditorWindow(init: EditorInit, errors?: string[], targetSt
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return
     // The UI language is read at send time: a language change applies from the next capture on.
-    win.webContents.send(IPC.editorInit, { ...init, sendTarget: state.current.view, locale: uiLocale(), messages: mergedMessages() })
+    win.webContents.send(IPC.editorInit, { ...init, sendTarget: state.current.view, platform: process.platform, canTarget: win32Available(), locale: uiLocale(), messages: mergedMessages() })
     win.show()
     win.focus()
   })

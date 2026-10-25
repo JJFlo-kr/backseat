@@ -15,6 +15,9 @@ const HINT_KEYS: Record<CaptureMode, string> = {
 
 const MODE_KEYS: Record<string, CaptureMode> = { KeyR: 'rect', KeyW: 'window', KeyF: 'full', KeyS: 'scroll' }
 const MODES: CaptureMode[] = ['rect', 'window', 'full', 'scroll']
+/** Window and scrolling capture need Win32 (the window list, wheel events): SelectorInit.windowModes is false elsewhere. */
+const WINDOW_MODES: readonly CaptureMode[] = ['window', 'scroll']
+let windowModes = true
 /** Modes where hovering highlights the window under the cursor and a click picks it. */
 const picksWindow = (m: CaptureMode): boolean => m === 'window' || m === 'scroll'
 
@@ -50,6 +53,8 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
 
 function setup(i: SelectorInit): void {
   init = i
+  windowModes = i.windowModes !== false
+  for (const b of modeButtons) b.hidden = !windowModes && WINDOW_MODES.includes(b.dataset.mode as CaptureMode)
   shot.src = i.imageDataUrl
   const dpr = window.devicePixelRatio || 1
   for (const el of [shot, canvas]) {
@@ -62,7 +67,10 @@ function setup(i: SelectorInit): void {
   setMode(i.mode)
 }
 
+const modeAllowed = (m: CaptureMode): boolean => windowModes || !WINDOW_MODES.includes(m)
+
 function setMode(m: CaptureMode): void {
+  if (!modeAllowed(m)) m = 'rect'
   mode = m
   start = null
   dragged = false
@@ -290,7 +298,7 @@ for (const b of modeButtons) {
   b.addEventListener('mousedown', (e) => e.preventDefault()) // keep focus off the buttons
   b.addEventListener('click', () => {
     const m = b.dataset.mode as CaptureMode | undefined
-    if (m && MODES.includes(m)) setMode(m)
+    if (m && MODES.includes(m) && modeAllowed(m)) setMode(m)
   })
 }
 
@@ -303,7 +311,7 @@ window.addEventListener('keydown', (e) => {
     confirm()
   } else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
     const m = MODE_KEYS[e.code]
-    if (m) {
+    if (m && modeAllowed(m)) {
       e.preventDefault()
       if (m !== mode) setMode(m)
     }

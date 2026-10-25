@@ -47,6 +47,8 @@ export interface SelectorInit {
   /** UI language and its merged message bundle (see EditorInit.locale). */
   locale?: string
   messages?: Record<string, string>
+  /** Window and scrolling capture need the Win32 layer (window list, wheel events). Absent = true; false hides both modes. */
+  windowModes?: boolean
 }
 
 /** selector renderer -> main when the user confirms a region. */
@@ -169,6 +171,13 @@ export interface EditorInit {
   sendTarget?: SendTargetView
   /** Reopen a sent capture from its session package (phase 3). */
   restore?: { sessionDir: string }
+  /** process.platform of the main process, for shortcut labels (Cmd on 'darwin', Ctrl elsewhere). */
+  platform?: string
+  /**
+   * Window targeting, the input check and the automatic paste exist (Windows only). Absent = true; false hides
+   * the destination chip and the target picker, because the app is then a clipboard-only tool.
+   */
+  canTarget?: boolean
 }
 
 export interface Point {
@@ -510,6 +519,7 @@ export type DeliveryStopReason =
   | 'notEditable'    // focused element is not an editable field
   | 'passwordField'  // focused element is a password field: never paste
   | 'uiaUnavailable' // the focus check could not run
+  | 'pasteUnsupported' // macOS / Linux preview: no window targeting, input check or paste; the content is on the clipboard
   | 'error'
 
 export interface DeliveryStatus {

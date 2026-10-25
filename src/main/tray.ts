@@ -11,6 +11,8 @@ import { pinParts } from './agents'
 import { resolveForTray } from './destination'
 import type { Candidate } from './targets'
 import { getPicked, setPicked } from './tracker'
+import { win32Available } from './native/win32'
+import { acceleratorLabel } from '../shared/platform'
 
 let tray: Tray | null = null
 
@@ -138,11 +140,17 @@ function targetMenu(onChange: () => void): Electron.MenuItemConstructorOptions[]
   ]
 }
 
+/** The shortcut as the user reads it: Cmd on macOS, Ctrl elsewhere. */
+const shortcut = (accelerator: string): string => acceleratorLabel(accelerator, process.platform)
+
 function buildMenu(actions: TrayActions, onChange: () => void): Menu {
   const s = loadSettings()
+  // Windows only: picking a window, pasting into it and pressing Enter all need Win32 (src/main/native/win32.ts).
+  const win = win32Available()
+  const winOnly = (...items: Electron.MenuItemConstructorOptions[]): Electron.MenuItemConstructorOptions[] => (win ? items : [])
   return Menu.buildFromTemplate([
-    { label: `${t('tray.captureRegion')}\t${s.hotkeyRect.replace('CommandOrControl', 'Ctrl')}`, click: actions.capture },
-    { label: `${t('tray.captureWindow')}\t${s.hotkeyWindow.replace('CommandOrControl', 'Ctrl')}`, click: actions.captureWindow },
+    { label: `${t('tray.captureRegion')}\t${shortcut(s.hotkeyRect)}`, click: actions.capture },
+    ...winOnly({ label: `${t('tray.captureWindow')}\t${shortcut(s.hotkeyWindow)}`, click: actions.captureWindow }),
     { label: t('tray.recaptureLast'), enabled: actions.hasLast(), click: actions.recaptureLast },
     { type: 'separator' },
     {
@@ -151,21 +159,25 @@ function buildMenu(actions: TrayActions, onChange: () => void): Menu {
       checked: s.autoRecord,
       click: (item) => void saveSettings({ autoRecord: item.checked }).catch(() => undefined)
     },
-    {
+    ...winOnly({
       label: t('tray.pressEnter'),
       type: 'checkbox',
       checked: s.pressEnter,
       click: (item) => void saveSettings({ pressEnter: item.checked }).catch(() => undefined)
-    },
-    {
-      label: app.isPackaged ? t('tray.launchAtLogin') : t('tray.launchAtLoginDev'),
-      type: 'checkbox',
-      enabled: app.isPackaged,
-      checked: app.isPackaged && s.launchAtLogin,
-      click: (item) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem).catch(() => undefined)
-    },
-    { type: 'separator' },
-    { label: t('tray.target'), submenu: targetMenu(onChange) },
+    }),
+    // Electron's login item is a no-op on Linux: no checkbox that does nothing.
+    ...(process.platform === 'linux'
+      ? []
+      : [
+          {
+            label: app.isPackaged ? t('tray.launchAtLogin') : t('tray.launchAtLoginDev'),
+            type: 'checkbox' as const,
+            enabled: app.isPackaged,
+            checked: app.isPackaged && s.launchAtLogin,
+            click: (item: Electron.MenuItem) => void saveSettings({ launchAtLogin: item.checked }).then(applyLoginItem).catch(() => undefined)
+          }
+        ]),
+    ...winOnly({ type: 'separator' }, { label: t('tray.target'), submenu: targetMenu(onChange) }),
     { type: 'separator' },
     { label: languageLabel(), submenu: languageMenu(onChange) },
     {
@@ -187,22 +199,34 @@ function buildMenu(actions: TrayActions, onChange: () => void): Menu {
   ])
 }
 
+let refreshMenu: (() => void) | null = null
+
+/**
+ * Rebuild the tray menu now. Linux tray icons report no clicks, so the menu cannot rebuild itself when opened
+ * there; the app calls this after a capture so "recapture last region" becomes available.
+ */
+export function refreshTray(): void {
+  refreshMenu?.()
+}
+
 export function createTray(actions: TrayActions): Tray {
   if (tray) return tray
   tray = new Tray(trayIcon())
   // saveSettings rejects on a failed write (Codex review F13); the callers swallow it, so tell the user here.
   onSettingsSaveError((err) => {
     console.error('[backseat] saving settings failed:', err)
-    tray?.displayBalloon({
+    // displayBalloon exists on Windows only; elsewhere the console line above is all there is.
+    if (process.platform === 'win32') tray?.displayBalloon({
       iconType: 'error',
       title: t('tray.settingsSaveFailedTitle'),
       content: t('tray.settingsSaveFailed', { error: err instanceof Error ? err.message : String(err) })
     })
   })
   const refresh = (): void => {
-    tray?.setToolTip(t('tray.tooltip', { hotkey: loadSettings().hotkeyRect.replace('CommandOrControl', 'Ctrl') }))
+    tray?.setToolTip(t('tray.tooltip', { hotkey: shortcut(loadSettings().hotkeyRect) }))
     tray?.setContextMenu(buildMenu(actions, refresh))
   }
+  refreshMenu = refresh
   refresh()
   // Rebuild on open so the last region, checkboxes and the language reflect the current state.
   tray.on('right-click', refresh)
