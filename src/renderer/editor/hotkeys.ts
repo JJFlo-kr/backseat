@@ -1,5 +1,6 @@
 // One registry for editor commands: bindings, tooltips and dispatch live together.
 // Bindings use physical keys (KeyboardEvent.code) so they work on any keyboard layout.
+import { modKeyLabel } from '../../shared/platform'
 
 export type CommandContext = 'global' | 'editor'
 
@@ -52,7 +53,14 @@ const CODE_LABELS: Record<string, string> = {
   Backspace: 'Backspace'
 }
 
-/** 'Ctrl+Shift+KeyZ' -> 'Ctrl+Shift+Z' */
+let labelPlatform = 'win32'
+
+/** The OS the shortcuts are shown for (EditorInit.platform): Cmd on macOS, Ctrl elsewhere. Matching accepts both anyway. */
+export function setHotkeyPlatform(platform: string): void {
+  labelPlatform = platform
+}
+
+/** 'Ctrl+Shift+KeyZ' -> 'Ctrl+Shift+Z' ('Cmd+Shift+Z' on macOS) */
 export function bindingLabel(binding: string): string {
   const parts = binding.split('+')
   const code = parts[parts.length - 1]
@@ -62,7 +70,8 @@ export function bindingLabel(binding: string): string {
     else if (code.startsWith('Digit')) key = code.slice(5)
     else key = code
   }
-  return [...parts.slice(0, -1), key].join('+')
+  const mods = parts.slice(0, -1).map((m) => (/^(ctrl|cmd)$/i.test(m) ? modKeyLabel(labelPlatform) : m))
+  return [...mods, key].join('+')
 }
 
 export function isTyping(e: KeyboardEvent): boolean {

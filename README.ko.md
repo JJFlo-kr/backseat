@@ -14,7 +14,7 @@
   <a href="README.md">English</a>
 </p>
 
-<p align="center"><sub>Windows 10(64비트) · 무료 · 오픈소스(MIT)</sub></p>
+<p align="center"><sub>Windows 10(64비트) · 무료 · 오픈소스(MIT) · <a href="#macos와-linux-미리보기판">macOS·Linux 미리보기판</a></sub></p>
 
 <p align="center">
   <img src="docs/media/backseat-demo.gif" width="800" alt="Backseat 시연: 로그인 카드를 드래그해 캡처하고, 말하면서 작은 버튼에 동그라미와 로고에 화살표를 그린 뒤, 문장마다 표시가 연결된 것을 확인하고, Enter로 Codex CLI에 붙여 넣은 다음, 같은 위치에서 고치기 전과 후를 비교하는 장면">
@@ -34,6 +34,17 @@
 4. **보내세요.** `Enter`를 누르면 최근에 쓰던 AI 창에 붙여 넣습니다. 붙은 내용을 확인하고 그 창에서 제출하세요.
 
 처음 설치할 때 Windows 경고가 뜰 수 있습니다. [설치 안내](#설치와-windows-경고)를 참고하세요.
+
+### macOS와 Linux 미리보기판
+
+macOS(Apple Silicon)와 Linux(x64 AppImage)용 미리보기판이
+[v0.6.0-preview.1 릴리스](https://github.com/JJFlo-kr/backseat/releases/tag/v0.6.0-preview.1)에 있습니다. 캡처, 표시,
+음성, 저장, MCP는 Windows판과 같습니다. 보낼 곳을 고르고 입력란을 확인해 붙여 넣는 기능은 Windows 전용이라, 보내기를
+누르면 클립보드에 준비되고 직접 붙여 넣어야 합니다(`Cmd+V` / `Ctrl+V`). 창 캡처와 스크롤 캡처는 없습니다. macOS 앱은
+Apple 공증을 받지 않았습니다. 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안에서 "그래도 열기"를 누르고, 처음
+캡처할 때 화면 기록 권한을 허용하세요. Linux에서는 AppImage에 실행 권한을 먼저 주세요. 알림 영역 아이콘에는
+AppIndicator 지원이 필요할 수 있습니다. GitHub의 macOS·Linux 빌드 서버에서 패키지 자체 검사만 통과했고, 실제 Mac·Linux
+PC에서는 아직 확인하지 않았습니다.
 
 ## 이런 일을 합니다
 

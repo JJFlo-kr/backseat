@@ -1,0 +1,91 @@
+# macOS (Apple Silicon) and Linux (x64) preview builds. These platforms have no automatic paste: Send leaves the
+# capture on the clipboard. The packaged app is self-tested on the runner (Linux under a virtual display, macOS on
+# the runner's desktop session, which has no screen-recording permission, so captures there may be blank).
+name: Preview builds
+
+on:
+  push:
+    branches: ['feat/mac-linux-preview']
+    tags: ['v*-preview*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            dist: dist:mac
+          - os: ubuntu-latest
+            dist: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Linux desktop libraries and virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libayatana-appindicator3-1
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run ${{ matrix.dist }}
+      - name: List build output
+        shell: bash
+        run: ls -la dist
+      # Self-test of the packaged app: capture, selector and editor windows load without console errors.
+      - name: Self-test (Linux, packaged AppImage)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x dist/*.AppImage
+          xvfb-run -a -s "-screen 0 1920x1080x24" dist/*.AppImage --appimage-extract-and-run --no-sandbox --selftest 2>&1 | tee selftest.log
+      - name: Self-test (macOS, packaged app)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          APP=$(ls -d dist/mac-arm64/*.app | head -1)
+          "$APP/Contents/MacOS/Backseat" --selftest 2>&1 | tee selftest.log
+          codesign -dv --verbose=2 "$APP" 2>&1 | tee -a selftest.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backseat-${{ runner.os }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            selftest.log
+          if-no-files-found: warn
+
+  # On a preview tag: a GitHub pre-release with the packages, their SHA-256 sums and the notes from
+  # docs/release-notes/<tag>.md. Only after both builds and their self-tests passed.
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect packages and sums
+        shell: bash
+        run: |
+          mkdir release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' \) -exec cp {} release/ \;
+          cd release && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt && ls -la
+      - name: Create the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" release/* --prerelease --verify-tag \
+            --title "Backseat $TAG (macOS and Linux preview)" --notes-file "docs/release-notes/$TAG.md"

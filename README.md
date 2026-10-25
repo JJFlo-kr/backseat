@@ -14,7 +14,7 @@
   <a href="README.ko.md">한⁠국⁠어</a>
 </p>
 
-<p align="center"><sub>Windows 10 (64-bit) · free · open source (MIT)</sub></p>
+<p align="center"><sub>Windows 10 (64-bit) · free · open source (MIT) · <a href="#macos-and-linux-preview">macOS and Linux preview</a></sub></p>
 
 <p align="center">
   <img src="docs/media/backseat-demo.gif" width="800" alt="Backseat demo: drag over a sign-in card, circle the small button and draw an arrow from the logo while talking, see each sentence linked to a mark, press Enter to paste into Codex CLI, then the same card before and after the agent's edit">
@@ -34,6 +34,17 @@
 4. **Send.** Press `Enter`. Backseat pastes it into the AI window you used last. Check it and submit it there.
 
 Windows may warn about the installer the first time; see [Installing](#installing-and-the-windows-warning).
+
+### macOS and Linux preview
+
+There is a preview for macOS (Apple Silicon) and Linux (x64 AppImage) on the
+[v0.6.0-preview.1 release](https://github.com/JJFlo-kr/backseat/releases/tag/v0.6.0-preview.1). Capture, marking up,
+voice, saving and MCP work as on Windows. Picking the destination, checking the input box and pasting are
+Windows-only, so there Send puts everything on the clipboard and you paste it yourself (`Cmd+V` / `Ctrl+V`). Window
+and scrolling capture are not available. The macOS app is not notarized: if macOS blocks it, use "Open Anyway" in
+System Settings → Privacy & Security, and allow Screen Recording on the first capture. On Linux, make the AppImage
+executable first; the tray icon may need AppIndicator support. The packages pass their self-test on GitHub's
+macOS and Linux build machines but have not been tried on a real Mac or Linux PC yet.
 
 ## What it does
 

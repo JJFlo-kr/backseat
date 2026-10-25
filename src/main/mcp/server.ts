@@ -23,9 +23,13 @@ const SERVER_VERSION = '0.1.0'
 
 // ---------- locations ----------
 
+/** Electron's userData folder for this app, without Electron: the app (src/main/config.ts) writes config.json there. */
 function configFile(): string {
-  const appData = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
-  return join(appData, 'backseat', 'config.json')
+  let base: string
+  if (process.platform === 'win32') base = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
+  else if (process.platform === 'darwin') base = join(homedir(), 'Library', 'Application Support')
+  else base = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+  return join(base, 'backseat', 'config.json')
 }
 
 export async function sessionsRoot(): Promise<string> {

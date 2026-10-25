@@ -4,6 +4,7 @@ import type { CaptureMode, Rect, SelectionResult, SelectorInit, WindowInfo } fro
 import type { DisplayCapture } from './capture'
 import { baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 import { mergedMessages, uiLocale } from './locales'
+import { win32Available } from './native/win32'
 
 interface Pending {
   windows: BrowserWindow[]
@@ -132,7 +133,7 @@ export function runSelector(
       win.on('closed', () => settle(null))
       win.webContents.once('did-finish-load', () => {
         if (win.isDestroyed()) return
-        win.webContents.send(IPC.selectorInit, { ...selectorInitFor(cap, windows, mode), locale: uiLocale(), messages: mergedMessages() })
+        win.webContents.send(IPC.selectorInit, { ...selectorInitFor(cap, windows, mode), windowModes: win32Available(), locale: uiLocale(), messages: mergedMessages() })
         win.show()
         if (cap.display.id === focusDisplay.id) win.focus()
       })

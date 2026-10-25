@@ -6,7 +6,7 @@ import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { linksAt, type Doc } from './doc'
 import { runSend, type SttOutcome } from './sendflow'
-import { Hotkeys } from './hotkeys'
+import { Hotkeys, setHotkeyPlatform } from './hotkeys'
 import { Timeline } from './timeline'
 import { ColorPicker, colorButton, setColorButton } from './colorpicker'
 import {
@@ -1774,6 +1774,7 @@ function renderDelivery(): void {
     }
     actionBtns.confirm.hidden = true
     actionBtns.resend.hidden = false
+    actionBtns.retarget.hidden = !canTarget
     return
   }
   const v = deliveryView(s, lastDeliveryCtx, t)
@@ -1792,7 +1793,9 @@ function renderDelivery(): void {
     b.classList.toggle('primary-action', k === v.primary)
   }
   actionBtns.confirm.hidden = v.primary !== 'confirm' // only after a title change
-  actionBtns.resend.hidden = v.primary === 'confirm' // there a resend goes to that window too: one button, not two
+  // there a resend goes to that window too: one button, not two; nothing to resend where pasting does not exist
+  actionBtns.resend.hidden = v.primary === 'confirm' || s.stoppedAt?.reason === 'pasteUnsupported'
+  actionBtns.retarget.hidden = !canTarget
 }
 
 /** Anything 보내기 would send changed (annotations, links, memo, recording). */
@@ -1848,6 +1851,8 @@ let chosenTarget: SendTargetView | null = null
 let pinChecked = false
 /** The picked window closed: 보내기 waits until the user picks again (never falls back to another window). */
 let mustPickTarget = false
+/** Windows only: targeting a window needs Win32. Elsewhere (macOS / Linux preview) the chip and the picker are gone. */
+let canTarget = true
 
 /** The target menu's last row: write the package and copy it, paste nowhere. */
 function clipboardOnlyView(): SendTargetView {
@@ -1986,7 +1991,7 @@ function onMenuKey(e: KeyboardEvent): void {
 
 /** refresh: ask main for the windows open now and rebuild the menu with them (it opens at once with the last list). */
 function openTargetMenu(refresh = true): void {
-  if (!initData) return
+  if (!initData || !canTarget) return
   commitPendingText() // the menu and an open text box would fight over the keyboard
   picker.close()
   closeMoreMenu()
@@ -3039,7 +3044,7 @@ const hotkeys = new Hotkeys([
   { id: 'redo', label: () => t('editor.hotkey.redo'), keys: ['Ctrl+Shift+KeyZ', 'Ctrl+KeyY'], run: redo },
   { id: 'pen', label: () => t('editor.hotkey.pen'), keys: ['KeyP'], run: () => setTool('pen') },
   { id: 'text', label: () => t('editor.hotkey.text'), keys: ['KeyT'], run: () => setTool('text') },
-  { id: 'target', label: () => t('editor.hotkey.target'), keys: ['Ctrl+KeyT'], context: 'global', run: toggleTargetMenu },
+  { id: 'target', label: () => t('editor.hotkey.target'), keys: ['Ctrl+KeyT'], context: 'global', run: () => { if (!canTarget) return false; toggleTargetMenu() } },
   { id: 'arrow', label: () => t('editor.hotkey.arrow'), keys: ['KeyA'], run: () => setTool('arrow') },
   { id: 'rect', label: () => t('editor.hotkey.rect'), keys: ['KeyR'], run: () => setTool('rect') },
   { id: 'badge', label: () => t('editor.hotkey.badge'), keys: ['KeyN'], run: () => setTool('badge') },
@@ -3153,6 +3158,9 @@ window.backseat.editor.onInit((data) => {
   // The language first: nothing may use t() before this (module scope runs before init arrives).
   setMessages(isLocale(data.locale) ? data.locale : 'ko', data.messages ?? {})
   applyDom(document)
+  setHotkeyPlatform(data.platform ?? 'win32')
+  canTarget = data.canTarget !== false
+  byId('targetbar').hidden = !canTarget
   hotkeys.applyTooltips()
   applyColorTitles()
   targetMenu.setAttribute('aria-label', t('editor.target.menuLabel'))
