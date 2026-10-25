@@ -21,7 +21,7 @@
 </p>
 <p align="center">
   <sub>실제 앱을 스크립트로 조작해 녹화했습니다. 음성은 TTS이고, 수정은 Codex CLI를 한 번 실행한 실제 결과입니다.
-  화면 속 앱은 영어 설정입니다. <a href="https://jjflo-kr.github.io/backseat/ko/">소리 있는 1분 영상</a></sub>
+  화면 속 앱은 영어 설정입니다. <a href="https://jjflo-kr.github.io/backseat/ko/">소리 있는 50초 영상</a></sub>
 </p>
 
 ## 시작하기

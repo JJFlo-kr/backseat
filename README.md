@@ -21,7 +21,7 @@
 </p>
 <p align="center">
   <sub>Real app, driven by a script; the voice is text-to-speech; the edit was made by Codex CLI in one real run.
-  <a href="https://jjflo-kr.github.io/backseat/">1-minute video with sound</a></sub>
+  <a href="https://jjflo-kr.github.io/backseat/">50-second video with sound</a></sub>
 </p>
 
 ## Getting started
