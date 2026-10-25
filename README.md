@@ -84,9 +84,17 @@ you send to an AI tool is handled by that tool.
 <details>
 <summary><b>The transcript is wrong</b></summary>
 
-Numbers and names are easy to mishear. Press `L` in the editor to open the timeline, check which mark each
-sentence is linked to, and drag a sentence onto another mark. The request file also tells the agent that the
-transcript is automatic.
+The transcribed text can't be edited in the editor. If a word or two is wrong, type the correction in the one-line
+memo at the bottom of the editor. If much of it is wrong, record again (`M`): the new recording replaces the old
+one and its transcript, and resets any links you changed. The request file also tells the agent that the transcript
+is automatic, so numbers and names may be wrong.
+</details>
+
+<details>
+<summary><b>A sentence is linked to the wrong mark</b></summary>
+
+Press `L` to open the timeline and drag the sentence's bar in the speech lane onto the bar of the mark it belongs
+to. Drop it on empty space in the speech lane to go back to automatic linking.
 </details>
 
 <details>
