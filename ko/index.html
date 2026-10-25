@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backseat (AI 소통기) - 화면에 표시하고 말로 설명해 AI에게 전달</title>
+<meta name="description" content="Backseat(AI 소통기)은 무료 오픈소스(MIT) Windows 트레이 앱입니다. 화면을 캡처하고, 그리면서 말하고, 쓰던 AI 창으로 보냅니다.">
+<meta name="theme-color" content="#1B1B1F">
+<link rel="canonical" href="https://jjflo-kr.github.io/backseat/ko/">
+<link rel="alternate" hreflang="en" href="https://jjflo-kr.github.io/backseat/">
+<link rel="alternate" hreflang="ko" href="https://jjflo-kr.github.io/backseat/ko/">
+<link rel="alternate" hreflang="x-default" href="https://jjflo-kr.github.io/backseat/">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="apple-touch-icon" href="../assets/icon.png">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Backseat">
+<meta property="og:title" content="Backseat (AI 소통기) - 화면에 표시하고 말로 설명해 AI에게 전달">
+<meta property="og:description" content="무료 오픈소스 Windows 트레이 앱. 캡처하고, 그리면서 말하고, 쓰던 AI 창으로 보냅니다.">
+<meta property="og:url" content="https://jjflo-kr.github.io/backseat/ko/">
+<meta property="og:image" content="https://jjflo-kr.github.io/backseat/social-card.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:locale:alternate" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Backseat (AI 소통기) - 화면에 표시하고 말로 설명해 AI에게 전달">
+<meta name="twitter:description" content="무료 오픈소스 Windows 트레이 앱. 캡처하고, 그리면서 말하고, 쓰던 AI 창으로 보냅니다.">
+<meta name="twitter:image" content="https://jjflo-kr.github.io/backseat/social-card.png">
+
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="../assets/logo.svg" alt="" width="32" height="32"><span>Backseat</span></a>
+    <a class="lang-switch" href="../" hreflang="en" lang="en" title="English version">English</a>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <!-- Hero -->
+    <div class="hero">
+      <img class="hero-logo" src="../assets/logo.svg" alt="Backseat 로고" width="96" height="96">
+      <h1>Backseat <small>AI 소통기</small></h1>
+      <p class="tagline">화면에 표시하고 말로 설명한 내용을 AI에게 전달합니다.</p>
+      <p class="subline">화면을 캡처하고, 그 위에 그리면서 말하고, 쓰던 AI 코딩 에이전트에게 보내는 Windows 도구입니다. 무료이고 오픈소스(MIT)입니다.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.5.0">Windows용 다운로드 (v0.5.0)</a>
+        <a class="btn btn-secondary" href="https://github.com/JJFlo-kr/backseat">GitHub에서 보기</a>
+      </div>
+      <p class="hint">Windows 전용입니다. 설치 파일에 아직 코드 서명이 없어 처음 실행할 때 SmartScreen 경고가 뜰 수 있습니다. "추가 정보"를 누른 뒤 "실행"을 선택하세요.</p>
+
+      <figure class="frame hero-video">
+        <video autoplay muted loop playsinline preload="metadata" poster="../media/hero-poster.jpg" aria-label="시연: 화면을 캡처하고, 그리면서 말한 뒤, AI 창으로 보내는 모습">
+          <source src="../media/hero.mp4" type="video/mp4">
+        </video>
+      </figure>
+    </div>
+
+    <!-- How it works -->
+    <section id="how" aria-labelledby="how-h">
+      <h2 id="how-h">이렇게 씁니다</h2>
+      <p class="lead">세 단계, 모두 키보드로 합니다.</p>
+      <ol class="steps">
+        <li class="step">
+          <figure class="frame">
+            <video autoplay muted loop playsinline preload="metadata" poster="../media/clip-capture-poster.jpg" aria-label="짧은 영상: 화면 영역을 고르고 화살표와 번호로 표시하는 모습">
+              <source src="../media/clip-capture.mp4" type="video/mp4">
+            </video>
+          </figure>
+          <h3><span class="step-num" aria-hidden="true">1</span>캡처하고 표시하기</h3>
+          <p><kbd>Ctrl+Shift+A</kbd>를 누르고, 보여 주고 싶은 부분을 드래그하세요. 그런 다음 화살표, 번호, 펜, 사각형, 글자로 표시합니다.</p>
+        </li>
+        <li class="step">
+          <figure class="frame">
+            <video autoplay muted loop playsinline preload="metadata" poster="../media/clip-voice-poster.jpg" aria-label="짧은 영상: 그리면서 말로 설명을 녹음하고, 타임라인에 문장이 나타나는 모습">
+              <source src="../media/clip-voice.mp4" type="video/mp4">
+            </video>
+          </figure>
+          <h3><span class="step-num" aria-hidden="true">2</span>그리면서 말하기</h3>
+          <p><kbd>M</kbd>을 누르고 원하는 내용을 말하세요. 각 문장은 그 순간 그리던 표시에 연결됩니다.</p>
+          <p class="small">음성은 PC 안에서 Whisper로 글로 바꿉니다(음성 모델은 처음 쓸 때 내려받습니다). 자동 전사는 틀릴 수 있으니 타임라인에서 확인하세요.</p>
+        </li>
+        <li class="step">
+          <figure class="frame">
+            <video autoplay muted loop playsinline preload="metadata" poster="../media/clip-send-poster.jpg" aria-label="짧은 영상: Enter를 누르면 최근에 쓰던 AI 창에 캡처가 붙여넣어지는 모습">
+              <source src="../media/clip-send.mp4" type="video/mp4">
+            </video>
+          </figure>
+          <h3><span class="step-num" aria-hidden="true">3</span>쓰던 AI 창으로 보내기</h3>
+          <p><kbd>Enter</kbd>를 누르면 Backseat이 지시서와 이미지를 저장하고, 최근에 쓰던 AI 창의 입력란에 붙여넣기를 시도합니다. 내용을 확인한 뒤 그 창에서 Enter를 누르세요.</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- Safe by default -->
+    <section id="safe" aria-labelledby="safe-h">
+      <h2 id="safe-h">기본이 안전합니다</h2>
+      <p class="lead">엉뚱한 곳에 붙여넣는 실수가 가장 흔합니다. Backseat은 그걸 피하도록 만들었습니다.</p>
+      <div class="safe">
+        <ul>
+          <li>
+            <strong>모르는 창, 메신저, 비밀번호 칸에는 붙여넣지 않습니다.</strong>
+            <span>캡처는 캡처한 페이지가 아니라 최근에 쓰던 AI 창으로 갑니다. 메신저나 그 밖의 창은 직접 고를 때만 받습니다. 커서가 비밀번호 칸에 있으면, 그 창을 직접 골라도 아무것도 붙여넣지 않습니다.</span>
+          </li>
+          <li>
+            <strong>확인된 전달 단계만 보여 줍니다.</strong>
+            <span>저장됨, 클립보드 준비, 대상 확인, 입력란 확인. 붙여넣기는 "받았다"가 아니라 "시도했다"로 표시합니다.</span>
+          </li>
+          <li>
+            <strong>Enter는 직접 누릅니다.</strong>
+            <span>기본 설정에서 Backseat은 붙여넣기만 하고 제출하지 않습니다. 먼저 읽어 보고 나서 보내세요.</span>
+          </li>
+        </ul>
+        <figure class="frame">
+          <video autoplay muted loop playsinline preload="metadata" poster="../media/clip-safety-poster.jpg" aria-label="짧은 영상: 로그인 페이지로 보내려 해도 커서가 비밀번호 칸이라 아무것도 붙여넣지 않고 멈추는 모습">
+            <source src="../media/clip-safety.mp4" type="video/mp4">
+          </video>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Intro video: Korean-subtitle version first -->
+    <section id="intro" aria-labelledby="intro-h">
+      <h2 id="intro-h">소개 영상 전체 보기</h2>
+      <p class="lead">전체 흐름을 보여 주는 짧은 영상입니다. 두 가지 버전이 있습니다.</p>
+      <div class="intro-grid">
+        <div class="intro-item">
+          <h3>한국어 자막 버전</h3>
+          <figure class="frame">
+            <video controls preload="none" poster="../media/intro-ko-poster.jpg" aria-label="소개 영상 전체, 한국어 자막 버전">
+              <source src="../media/intro-ko.mp4" type="video/mp4">
+            </video>
+          </figure>
+        </div>
+        <div class="intro-item">
+          <h3>English version</h3>
+          <figure class="frame">
+            <video controls preload="none" poster="../media/intro-en-poster.jpg" aria-label="소개 영상 전체, 영어 버전">
+              <source src="../media/intro-en.mp4" type="video/mp4">
+            </video>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Works with -->
+    <section id="works-with" aria-labelledby="works-h">
+      <h2 id="works-h">쓰던 AI로 보냅니다</h2>
+      <p class="lead">Backseat은 쓰던 창의 입력란에 붙여넣습니다. 보낼 수 있는 곳은 다음과 같습니다.</p>
+      <ul class="chips">
+        <li>Claude Code</li>
+        <li>Codex CLI / ChatGPT 앱</li>
+        <li>Claude 앱</li>
+        <li>Cursor</li>
+        <li>VS Code</li>
+        <li>브라우저의 AI 탭</li>
+      </ul>
+      <p class="note-box">Claude, ChatGPT 데스크톱 앱처럼 입력란이 여러 개인 앱에서는 "클립보드에 준비됨"에서 멈출 수 있습니다. 입력란을 클릭한 뒤 <kbd>Ctrl+V</kbd>를 누르세요. 터미널은 대개 바로 붙습니다.</p>
+    </section>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p class="honest">시연 영상은 스크립트로 앱을 조작해 실제로 녹화한 것이며, 목소리는 음성 합성(TTS)입니다.
+      음악: <a href="https://freesound.org/people/Bertsz/sounds/524308/">Bertsz, “Corporate company introduction video”</a> (CC0).</p>
+    <p>Backseat은 무료이고 모든 기능을 쓸 수 있습니다. Windows 전용이며, MIT 라이선스 오픈소스입니다.</p>
+    <div class="links">
+      <a href="https://github.com/JJFlo-kr/backseat">GitHub</a>
+      <a href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.5.0">v0.5.0 다운로드</a>
+      <a href="https://github.com/JJFlo-kr/backseat/issues">문제 신고</a>
+      <a href="https://github.com/JJFlo-kr/backseat/blob/main/LICENSE">MIT 라이선스</a>
+      <a href="https://buymeacoffee.com/jjflo">후원: Buy Me a Coffee</a>
+      <a href="../" hreflang="en" lang="en">English</a>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/site.js"></script>
+</body>
+</html>

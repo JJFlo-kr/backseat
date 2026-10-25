@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backseat - mark up your screen, explain it out loud, send it to your AI</title>
+<meta name="description" content="Backseat is a free, open-source (MIT) Windows tray app. Capture your screen, draw on it while you talk, and send it to the AI window you were using.">
+<meta name="theme-color" content="#1B1B1F">
+<link rel="canonical" href="https://jjflo-kr.github.io/backseat/">
+<link rel="alternate" hreflang="en" href="https://jjflo-kr.github.io/backseat/">
+<link rel="alternate" hreflang="ko" href="https://jjflo-kr.github.io/backseat/ko/">
+<link rel="alternate" hreflang="x-default" href="https://jjflo-kr.github.io/backseat/">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Backseat">
+<meta property="og:title" content="Backseat - mark up your screen, explain it out loud, send it to your AI">
+<meta property="og:description" content="A free, open-source Windows tray app. Capture, draw while you talk, and send it to the AI window you were using.">
+<meta property="og:url" content="https://jjflo-kr.github.io/backseat/">
+<meta property="og:image" content="https://jjflo-kr.github.io/backseat/social-card.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="ko_KR">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Backseat - mark up your screen, explain it out loud, send it to your AI">
+<meta name="twitter:description" content="A free, open-source Windows tray app. Capture, draw while you talk, and send it to the AI window you were using.">
+<meta name="twitter:image" content="https://jjflo-kr.github.io/backseat/social-card.png">
+
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/logo.svg" alt="" width="32" height="32"><span>Backseat</span></a>
+    <a class="lang-switch" href="ko/" hreflang="ko" lang="ko" title="Korean version">한국어</a>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <!-- Hero -->
+    <div class="hero">
+      <img class="hero-logo" src="assets/logo.svg" alt="Backseat logo" width="96" height="96">
+      <h1>Backseat</h1>
+      <p class="tagline">Mark up your screen, explain it out loud, and pass it on to your AI.</p>
+      <p class="subline">Capture your screen, draw on it while you talk, and send it to your AI coding agent. Free, open source (MIT), for Windows.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.5.0">Download for Windows (v0.5.0)</a>
+        <a class="btn btn-secondary" href="https://github.com/JJFlo-kr/backseat">View on GitHub</a>
+      </div>
+      <p class="hint">Windows only. The installer is not code-signed yet, so Windows SmartScreen may warn the first time: choose "More info", then "Run anyway".</p>
+
+      <figure class="frame hero-video">
+        <video autoplay muted loop playsinline preload="metadata" poster="media/hero-poster.jpg" aria-label="Demo: capturing a screen, drawing on it while talking, and sending it to an AI window">
+          <source src="media/hero.mp4" type="video/mp4">
+        </video>
+      </figure>
+    </div>
+
+    <!-- How it works -->
+    <section id="how" aria-labelledby="how-h">
+      <h2 id="how-h">How it works</h2>
+      <p class="lead">Three steps, all from the keyboard.</p>
+      <ol class="steps">
+        <li class="step">
+          <figure class="frame">
+            <video autoplay muted loop playsinline preload="metadata" poster="media/clip-capture-poster.jpg" aria-label="Clip: selecting a region of the screen and marking it with arrows and numbers">
+              <source src="media/clip-capture.mp4" type="video/mp4">
+            </video>
+          </figure>
+          <h3><span class="step-num" aria-hidden="true">1</span>Capture &amp; mark</h3>
+          <p>Press <kbd>Ctrl+Shift+A</kbd> and drag over the part of the screen you mean. Then add arrows, numbers, pen strokes, boxes or text.</p>
+        </li>
+        <li class="step">
+          <figure class="frame">
+            <video autoplay muted loop playsinline preload="metadata" poster="media/clip-voice-poster.jpg" aria-label="Clip: recording a spoken explanation while drawing, then the transcript shown on a timeline">
+              <source src="media/clip-voice.mp4" type="video/mp4">
+            </video>
+          </figure>
+          <h3><span class="step-num" aria-hidden="true">2</span>Talk while you draw</h3>
+          <p>Press <kbd>M</kbd> and say what you want. Each sentence is tied to the mark you were drawing at that moment.</p>
+          <p class="small">Speech is transcribed on your PC with Whisper (the speech model downloads on first use). Automatic transcripts can be wrong, so check the timeline.</p>
+        </li>
+        <li class="step">
+          <figure class="frame">
+            <video autoplay muted loop playsinline preload="metadata" poster="media/clip-send-poster.jpg" aria-label="Clip: pressing Enter and the capture being pasted into the AI window that was used last">
+              <source src="media/clip-send.mp4" type="video/mp4">
+            </video>
+          </figure>
+          <h3><span class="step-num" aria-hidden="true">3</span>Send to the AI window you were using</h3>
+          <p>Press <kbd>Enter</kbd>. Backseat saves a brief and the images, then tries to paste them into the input box of the AI window you used last. You check it and press Enter there.</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- Safe by default -->
+    <section id="safe" aria-labelledby="safe-h">
+      <h2 id="safe-h">Safe by default</h2>
+      <p class="lead">Pasting into the wrong place is the easy mistake. Backseat is built to avoid it.</p>
+      <div class="safe">
+        <ul>
+          <li>
+            <strong>It does not paste into unknown windows, messengers or password fields.</strong>
+            <span>Your capture goes to the AI window you used last, not to the page you captured. A messenger or other window only gets it if you pick it yourself. If the cursor is in a password field, nothing is pasted, even when you chose that window.</span>
+          </li>
+          <li>
+            <strong>It shows only the delivery steps it could confirm.</strong>
+            <span>Saved, copied, target found, input box found. A paste is shown as "attempted", never as "received".</span>
+          </li>
+          <li>
+            <strong>You press Enter yourself.</strong>
+            <span>By default Backseat pastes but does not submit. You read it first, then send it.</span>
+          </li>
+        </ul>
+        <figure class="frame">
+          <video autoplay muted loop playsinline preload="metadata" poster="media/clip-safety-poster.jpg" aria-label="Clip: sending to a login page stops because the cursor is in a password field and nothing is pasted">
+            <source src="media/clip-safety.mp4" type="video/mp4">
+          </video>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Intro video -->
+    <section id="intro" aria-labelledby="intro-h">
+      <h2 id="intro-h">Watch the full intro</h2>
+      <p class="lead">A short walk-through of the whole flow, in two versions.</p>
+      <div class="intro-grid">
+        <div class="intro-item">
+          <h3>English version</h3>
+          <figure class="frame">
+            <video controls preload="none" poster="media/intro-en-poster.jpg" aria-label="Full intro video, English version">
+              <source src="media/intro-en.mp4" type="video/mp4">
+            </video>
+          </figure>
+        </div>
+        <div class="intro-item">
+          <h3>Korean version (한국어 자막)</h3>
+          <figure class="frame">
+            <video controls preload="none" poster="media/intro-ko-poster.jpg" aria-label="Full intro video, Korean-subtitle version">
+              <source src="media/intro-ko.mp4" type="video/mp4">
+            </video>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Works with -->
+    <section id="works-with" aria-labelledby="works-h">
+      <h2 id="works-h">Send it to the AI you already use</h2>
+      <p class="lead">Backseat pastes into the input box of the window you were using. These are the places it sends to:</p>
+      <ul class="chips">
+        <li>Claude Code</li>
+        <li>Codex CLI / ChatGPT app</li>
+        <li>Claude app</li>
+        <li>Cursor</li>
+        <li>VS Code</li>
+        <li>Browser AI tabs</li>
+      </ul>
+      <p class="note-box">Apps with several input boxes, such as the Claude and ChatGPT desktop apps, may stop at "ready on the clipboard". Click the input box and press <kbd>Ctrl+V</kbd>. Terminals usually paste straight in.</p>
+    </section>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p class="honest">Demo videos are real recordings of the app driven by a script; the voice is text-to-speech.
+      Music: <a href="https://freesound.org/people/Bertsz/sounds/524308/">“Corporate company introduction video” by Bertsz</a> (CC0).</p>
+    <p>Backseat is free, and every feature is included. It runs on Windows only. It is open source under the MIT licence.</p>
+    <div class="links">
+      <a href="https://github.com/JJFlo-kr/backseat">GitHub</a>
+      <a href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.5.0">Download v0.5.0</a>
+      <a href="https://github.com/JJFlo-kr/backseat/issues">Report a problem</a>
+      <a href="https://github.com/JJFlo-kr/backseat/blob/main/LICENSE">MIT licence</a>
+      <a href="https://buymeacoffee.com/jjflo">Support: Buy Me a Coffee</a>
+      <a href="ko/" hreflang="ko" lang="ko">한국어</a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
