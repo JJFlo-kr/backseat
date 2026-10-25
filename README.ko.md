@@ -10,6 +10,14 @@
 화면을 캡처하고, 그 위에 그리면서 말하고, 그대로 AI 코딩 에이전트에게 보내는 Windows 도구입니다.
 "backseat driver"에서 이름을 땄습니다. AI가 운전(코딩)하고, 사용자는 뒷좌석에서 화면을 가리키며 지시합니다.
 
+<p align="center">
+  <a href="https://jjflo-kr.github.io/backseat/ko/"><img src="docs/media/backseat-demo.gif" width="760" alt="Backseat 시연: 로그인 화면을 캡처해 말하면서 표시하고 Codex CLI로 보내면 화면이 고쳐지는 모습"></a>
+</p>
+<p align="center">
+  <a href="https://jjflo-kr.github.io/backseat/ko/"><b>소개 사이트와 1분 소개 영상(소리 포함)</b></a><br>
+  <sub>시연: 실제 앱을 스크립트로 조작해 녹화, 음성은 TTS, 에이전트는 Codex CLI(실제 1회 실행).</sub>
+</p>
+
 ## 시작하기
 
 1. **설치하세요.** [Releases](https://github.com/JJFlo-kr/backseat/releases/latest)에서 최신

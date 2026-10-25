@@ -10,6 +10,14 @@
 Capture your screen, draw on it while you talk, and send it straight to your AI coding agent — on Windows.
 The name comes from "backseat driver": the AI drives, you sit in the back and point at the screen.
 
+<p align="center">
+  <a href="https://jjflo-kr.github.io/backseat/"><img src="docs/media/backseat-demo.gif" width="760" alt="Backseat demo: capture a sign-in page, draw on it while talking, send it to Codex CLI, and the page gets fixed"></a>
+</p>
+<p align="center">
+  <a href="https://jjflo-kr.github.io/backseat/"><b>Website and 1-minute intro video (with sound)</b></a><br>
+  <sub>Demo: the real app driven by a script, text-to-speech voice, Codex CLI as the agent (one real run).</sub>
+</p>
+
 ## Getting started
 
 1. **Install.** Download the latest `Backseat Setup <version>.exe` from
