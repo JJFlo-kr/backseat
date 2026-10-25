@@ -150,7 +150,7 @@ own, or to ask you to draw an answer.
 | | Without MCP (default) | With MCP |
 |---|---|---|
 | How a capture reaches the agent | Pasted into the AI window | The pasted line asks the agent to fetch it, or the agent fetches the latest one itself |
-| What the editor can tell you | "Paste attempted" | Also "The AI fetched the capture" |
+| What the editor can tell you | "Paste attempted": the paste command was sent; check the AI window to see what went in | Also "The AI fetched the capture" |
 | The agent can ask you to draw | No | Yes |
 | Setup | None | Node.js, plus one entry in the agent's MCP settings |
 
