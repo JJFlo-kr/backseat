@@ -25,6 +25,16 @@ export const IPC = {
   editorClose: 'editor:close',
   editorNewCapture: 'editor:new-capture',
 
+  // editor window -> main (invoke): UI/UX tools (src/main/uiux/service.ts)
+  uiuxListProjects: 'uiux:list-projects',
+  uiuxCreateProject: 'uiux:create-project',
+  uiuxSaveProject: 'uiux:save-project',
+  uiuxProjectState: 'uiux:project-state',
+  uiuxSaveUserOverview: 'uiux:save-user-overview',
+  uiuxSaveRules: 'uiux:save-rules',
+  uiuxSetPath: 'uiux:set-path',
+  uiuxPickFolder: 'uiux:pick-folder',
+
   // about window -> main (invoke)
   aboutInfo: 'about:info',
   aboutOpen: 'about:open',

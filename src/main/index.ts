@@ -14,6 +14,7 @@ import { latestCompareSource } from './sessions'
 import { startForegroundTracker } from './tracker'
 import { createTray, refreshTray } from './tray'
 import { screenCaptureAllowed } from './macperm'
+import { installUiuxIpc } from './uiux/service'
 import { applyLocale } from './locales'
 
 let capturing = false
@@ -137,6 +138,7 @@ if (!isSelfTest && !app.requestSingleInstanceLock()) {
     )
     applyLocale()
     installEditorIpc()
+    installUiuxIpc()
     if (realArg) {
       await runRealAppCheck(Number(realArg.split('=')[1]))
       return

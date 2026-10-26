@@ -1,4 +1,6 @@
-// Shared contract between main, preload and renderer. Keep this file dependency-free.
+// Shared contract between main, preload and renderer. Keep this file dependency-free (types only; the UI/UX
+// contracts live in ./uiux/types, equally pure).
+import type { DesignRules, DesignTokens, ProjectOverview, ProjectProfile, SkillRef } from './uiux/types'
 
 /** Rectangle in CSS pixels (DIP) relative to the window that produced it. */
 export interface Rect {
@@ -444,6 +446,8 @@ export interface BackseatApi {
     /** "새 캡처" after a send: main closes this editor and starts a region capture. */
     newCapture?(): void
   }
+  /** UI/UX tools (optional panel in the editor). Optional so older preloads still satisfy the type. */
+  uiux?: UiuxApi
   about: {
     getInfo(): Promise<AboutInfo>
     /** Open an http(s) URL in the default browser (main refuses anything else). */
@@ -560,4 +564,37 @@ declare global {
   interface Window {
     backseat: BackseatApi
   }
+}
+
+// ---------- UI/UX tools (renderer <-> main) ----------
+
+/** Everything the panel shows for one project. `folder` is this PC's path (never exported). */
+export interface UiuxProjectState {
+  profile: ProjectProfile
+  overview: ProjectOverview | null
+  rules: DesignRules | null
+  folder: string | null
+}
+
+/** What the user types when no agent provides an overview ("user input basis", spec §5.5). */
+export interface UserOverviewInput {
+  summary: string
+  purpose: string
+  audiences: string[]
+  goals: string[]
+  /** e.g. "dashboard", "landing page", "sign-in form" */
+  screenKinds: string[]
+}
+
+export interface UiuxApi {
+  listProjects(): Promise<ProjectProfile[]>
+  createProject(fields: { name: string; repo?: string }): Promise<ProjectProfile>
+  saveProject(profile: ProjectProfile): Promise<ProjectProfile>
+  projectState(projectId: string): Promise<UiuxProjectState | null>
+  saveUserOverview(projectId: string, input: UserOverviewInput): Promise<ProjectOverview>
+  saveRules(projectId: string, rules: { tokens: DesignTokens; locks: string[]; skill?: SkillRef }): Promise<DesignRules>
+  /** null clears this PC's folder for the project. */
+  setPath(projectId: string, folder: string | null): Promise<void>
+  /** Folder picker; null when cancelled. */
+  pickFolder(): Promise<string | null>
 }

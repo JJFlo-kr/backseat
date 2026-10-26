@@ -69,6 +69,16 @@ const api: BackseatApi = {
       ipcRenderer.send(IPC.editorClose)
     }
   },
+  uiux: {
+    listProjects: () => ipcRenderer.invoke(IPC.uiuxListProjects),
+    createProject: (fields) => ipcRenderer.invoke(IPC.uiuxCreateProject, fields),
+    saveProject: (profile) => ipcRenderer.invoke(IPC.uiuxSaveProject, profile),
+    projectState: (projectId) => ipcRenderer.invoke(IPC.uiuxProjectState, projectId),
+    saveUserOverview: (projectId, input) => ipcRenderer.invoke(IPC.uiuxSaveUserOverview, projectId, input),
+    saveRules: (projectId, rules) => ipcRenderer.invoke(IPC.uiuxSaveRules, projectId, rules),
+    setPath: (projectId, folder) => ipcRenderer.invoke(IPC.uiuxSetPath, projectId, folder),
+    pickFolder: () => ipcRenderer.invoke(IPC.uiuxPickFolder)
+  },
   about: {
     getInfo(): Promise<AboutInfo> {
       return ipcRenderer.invoke(IPC.aboutInfo)
