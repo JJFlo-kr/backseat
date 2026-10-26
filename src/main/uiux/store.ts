@@ -8,9 +8,9 @@
 //   local/paths.json                         ProjectPathMap: this PC's folder per project (never exported)
 // Writes are atomic (writeFileAtomic); ids are checked before they become file names.
 import { randomBytes } from 'crypto'
-import { mkdir, readFile, readdir } from 'fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { writeFileAtomic } from '../fsutil'
+import { renameRetry, writeFileAtomic } from '../fsutil'
 import {
   UIUX_SCHEMA_VERSION, type DesignRules, type JobStatus, type JobType, type ProjectOverview, type ProjectPathMap,
   type ProjectProfile, type SkillContext, type UiuxJob
@@ -45,6 +45,9 @@ async function writeJson(file: string, value: unknown): Promise<void> {
 const nowIso = (): string => new Date().toISOString()
 
 export const DEFAULT_JOB_MINUTES = 5
+
+/** Extra job files: "<name>.png" / "<name>.txt" (never .json: listJobs would take such a file for a job). */
+const JOB_FILE_SUFFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}.(png|txt)$/
 
 export class UiuxStore {
   readonly root: string
@@ -213,6 +216,37 @@ export class UiuxStore {
 
   async getJobResult<T = unknown>(jobId: string): Promise<T | null> {
     return readJson<T>(this.jobFile(jobId, '.result'))
+  }
+
+  /** jobs/<jobId>.<suffix> for files that belong to a job (mock-up PNGs, progress notes); suffix ends in .png or .txt. */
+  private jobExtraFile(jobId: string, suffix: string): string {
+    if (!JOB_FILE_SUFFIX.test(suffix) || suffix.includes('..')) throw new Error(`invalid job file name: ${JSON.stringify(suffix).slice(0, 80)}`)
+    return join(this.root, 'jobs', `${assertSafeId(jobId, 'jobId')}.${suffix}`)
+  }
+
+  /** Additive helper (agent job tools): writes jobs/<jobId>.<suffix> atomically and returns the file name (no folder). */
+  async saveJobFile(jobId: string, suffix: string, data: Buffer | string): Promise<string> {
+    const file = this.jobExtraFile(jobId, suffix)
+    await mkdir(join(file, '..'), { recursive: true })
+    const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`
+    try {
+      await writeFile(tmp, data)
+      await renameRetry(tmp, file)
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => undefined)
+      throw err
+    }
+    return `${jobId}.${suffix}`
+  }
+
+  /** Additive helper: the bytes of jobs/<jobId>.<suffix>, or null when there is no such file. */
+  async readJobFile(jobId: string, suffix: string): Promise<Buffer | null> {
+    try {
+      return await readFile(this.jobExtraFile(jobId, suffix))
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw err
+    }
   }
 
   async listJobs(filter: { projectId?: string; status?: JobStatus[] } = {}): Promise<UiuxJob[]> {

@@ -15,6 +15,9 @@ import {
   type RegistryEntry
 } from './registry'
 import { writeReceipt } from './receipts'
+import { configFile, uiuxRoot } from './paths'
+import { registerJobTools } from './jobtools'
+import { UiuxStore } from '../uiux/store'
 import { BUNDLES } from '../../shared/bundles'
 import { createTranslator, mergeBundles, resolveLocale, type Locale, type Messages, type Translate } from '../../shared/i18n'
 
@@ -23,14 +26,7 @@ const SERVER_VERSION = '0.1.0'
 
 // ---------- locations ----------
 
-/** Electron's userData folder for this app, without Electron: the app (src/main/config.ts) writes config.json there. */
-function configFile(): string {
-  let base: string
-  if (process.platform === 'win32') base = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
-  else if (process.platform === 'darwin') base = join(homedir(), 'Library', 'Application Support')
-  else base = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
-  return join(base, 'backseat', 'config.json')
-}
+// Electron's userData folder (config.json, uiux/) is worked out in ./paths — one helper for both.
 
 export async function sessionsRoot(): Promise<string> {
   if (process.env.BACKSEAT_SESSIONS) return process.env.BACKSEAT_SESSIONS
@@ -127,9 +123,20 @@ async function loadPackage(root: string, id: string): Promise<Loaded | null> {
   return { id, dir, meta, brief, png, screenshot, transcript }
 }
 
+/** design-preview.png of a package (spec §10.1), read only when the agent asks for it; null = the package has none. */
+type DesignPreview = Buffer | null
+
+async function loadDesignPreview(p: Loaded): Promise<DesignPreview> {
+  try {
+    return await readFile(join(p.dir, 'design-preview.png'))
+  } catch {
+    return null
+  }
+}
+
 type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
-function packageContent(p: Loaded, tr: Translate, includeImage = true, includeOriginal = false): Content[] {
+function packageContent(p: Loaded, tr: Translate, includeImage = true, includeOriginal = false, designPreview?: DesignPreview): Content[] {
   const out: Content[] = []
   const header = [
     `# Backseat session ${p.id}`,
@@ -145,6 +152,13 @@ function packageContent(p: Loaded, tr: Translate, includeImage = true, includeOr
   if (includeOriginal && p.screenshot) {
     out.push({ type: 'text', text: tr('mcp.originalScreen') })
     out.push({ type: 'image', data: p.screenshot.toString('base64'), mimeType: 'image/png' })
+  }
+  if (designPreview !== undefined) {
+    // Asked for with includeDesignPreview: the mock-up of the UI/UX proposal the user chose, or a note that there is none.
+    if (designPreview) {
+      out.push({ type: 'text', text: tr('mcp.designPreview') })
+      out.push({ type: 'image', data: designPreview.toString('base64'), mimeType: 'image/png' })
+    } else out.push({ type: 'text', text: tr('mcp.noDesignPreview') })
   }
   return out
 }
@@ -281,10 +295,11 @@ export async function createServer(): Promise<McpServer> {
         'Return the most recent session package: the brief (markdown) and annotated.png (original screen + the user-drawn Backseat annotations). screenshot.png, the capture without annotations, is attached only with includeOriginal.',
       inputSchema: {
         includeImage: z.boolean().optional().describe('Attach annotated.png (default true)'),
-        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)')
+        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)'),
+        includeDesignPreview: z.boolean().optional().describe('Also attach design-preview.png, the mock-up of the UI/UX design the user chose, when the package has one (default false)')
       }
     },
-    async ({ includeImage, includeOriginal }) => {
+    async ({ includeImage, includeOriginal, includeDesignPreview }) => {
       const tr = await agentTranslator()
       const ids = await listSessionDirs(root)
       let p: Loaded | null = null
@@ -294,7 +309,7 @@ export async function createServer(): Promise<McpServer> {
       }
       if (!p) return { content: [{ type: 'text', text: tr('mcp.noSession', { root }) }] }
       await recordFetch(root, p, me, 'backseat_latest')
-      return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
+      return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false, includeDesignPreview ? await loadDesignPreview(p) : undefined) }
     }
   )
 
@@ -329,15 +344,16 @@ export async function createServer(): Promise<McpServer> {
       inputSchema: {
         id: z.string(),
         includeImage: z.boolean().optional().describe('Attach annotated.png (default true)'),
-        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)')
+        includeOriginal: z.boolean().optional().describe('Also attach screenshot.png, the capture without annotations (default false)'),
+        includeDesignPreview: z.boolean().optional().describe('Also attach design-preview.png, the mock-up of the UI/UX design the user chose, when the package has one (default false)')
       }
     },
-    async ({ id, includeImage, includeOriginal }) => {
+    async ({ id, includeImage, includeOriginal, includeDesignPreview }) => {
       const tr = await agentTranslator()
       const p = await loadPackage(root, basename(id))
       if (!p) return { content: [{ type: 'text', text: tr('mcp.notFound', { id }) }], isError: true }
       await recordFetch(root, p, me, 'backseat_get')
-      return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false) }
+      return { content: packageContent(p, tr, includeImage ?? true, includeOriginal ?? false, includeDesignPreview ? await loadDesignPreview(p) : undefined) }
     }
   )
 
@@ -403,6 +419,9 @@ export async function createServer(): Promise<McpServer> {
     }
   )
 
+  // UI/UX jobs: the store is the app's <userData>/uiux (the app creates jobs there, the agent answers through these tools).
+  registerJobTools(server, { store: new UiuxStore(uiuxRoot()), translator: agentTranslator })
+
   const cleanup = (): void => {
     // 'exit' handlers cannot wait for asynchronous work.
     if (me) unregisterAgentSync(root, me.id)
@@ -425,7 +444,8 @@ async function main(): Promise<void> {
   await server.connect(transport)
 }
 
-if (require.main === module) {
+// `require` does not exist when a test imports this module as ESM; the bundle (out/main/mcp-server.js) is CommonJS.
+if (typeof require !== 'undefined' && require.main === module) {
   main().catch((err) => {
     process.stderr.write(`backseat-mcp failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`)
     process.exit(1)

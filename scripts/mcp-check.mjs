@@ -2,6 +2,8 @@
 // usage: node scripts/mcp-check.mjs [sessionsRoot] [path/to/mcp-server.js]
 // Seeds its own session packages into sessionsRoot (a fresh temp folder when omitted), asserts every
 // answer and exits 1 on the first broken contract. MCP_OK is printed only when everything held.
+// The UI/UX job tools run against a throw-away app folder (env BACKSEAT_USER_DATA, which exists for tests like this
+// one only): the job files are written the way the app's UiuxStore writes them (jobs/<jobId>.json + .input.json).
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileURLToPath } from 'node:url'
@@ -41,7 +43,7 @@ const PNG_ANNOTATED = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 const PNG_ORIGINAL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 
 let seq = 0
-async function publish(marker, meta = {}) {
+async function publish(marker, meta = {}, designPreview = null) {
   const now = new Date()
   const p = (n, w = 2) => String(n).padStart(w, '0')
   const id = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}-${p(now.getMilliseconds(), 3)}-c${p(seq++, 3)}`
@@ -51,6 +53,10 @@ async function publish(marker, meta = {}) {
   await writeFile(join(staging, 'annotated.png'), PNG_ANNOTATED)
   await writeFile(join(staging, 'screenshot.png'), PNG_ORIGINAL)
   await writeFile(join(staging, 'brief.md'), `# Backseat brief\n\n${marker}\n\n① 번호 1 (10,10)\n🗣 "여기"\n`, 'utf8')
+  if (designPreview) {
+    await writeFile(join(staging, 'design-preview.png'), designPreview)
+    files.push('design-preview.png')
+  }
   await writeFile(join(staging, 'meta.json'), JSON.stringify({ id, memo: marker, files, ...meta }), 'utf8')
   await rename(staging, join(root, id))
   return id
@@ -61,6 +67,9 @@ const images = (r) => (r?.content ?? []).filter((c) => c.type === 'image')
 const sameBytes = (img, buf) => img?.mimeType === 'image/png' && Buffer.from(img.data ?? '', 'base64').equals(buf)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+const userData = await mkdtemp(join(tmpdir(), 'backseat-mcp-userdata-'))
+await writeFile(join(userData, 'config.json'), JSON.stringify({ briefLocale: 'en' }), 'utf8')
+
 await mkdir(root, { recursive: true })
 const seedId = await publish('SEED-PACKAGE')
 
@@ -69,7 +78,7 @@ const seedId = await publish('SEED-PACKAGE')
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [serverPath],
-  env: { ...process.env, BACKSEAT_SESSIONS: root }
+  env: { ...process.env, BACKSEAT_SESSIONS: root, BACKSEAT_USER_DATA: userData }
 })
 const client = new Client({ name: 'mcp-check', version: '0.0.2' })
 await client.connect(transport)
@@ -78,6 +87,8 @@ const EXPECTED_TOOLS = ['backseat_register', 'backseat_latest', 'backseat_list',
 const tools = (await client.listTools()).tools.map((t) => t.name)
 console.log('TOOLS', tools.join(','))
 for (const name of EXPECTED_TOOLS) check(tools.includes(name), `tool ${name} listed`)
+const JOB_TOOLS = ['backseat_job_get', 'backseat_job_submit', 'backseat_job_status']
+for (const name of JOB_TOOLS) check(tools.includes(name), `tool ${name} listed`)
 
 const cwd = join(root, 'project-under-check')
 await client.callTool({ name: 'backseat_register', arguments: { name: 'mcp-check', cwd, kind: 'test' } })
@@ -166,6 +177,123 @@ if (req) {
   const ans = await askPromise
   check(texts(ans).includes('ASK-ANSWER') && !texts(ans).includes('UNRELATED-PACKAGE'), 'backseat_ask resolves with the package that answers its requestId', texts(ans).slice(0, 80))
   console.log('ASK', texts(ans).includes('ASK-ANSWER') ? 'answered' : 'wrong answer')
+}
+
+// ---------- design-preview.png on backseat_get / backseat_latest (optional, default off) ----------
+
+const PNG_PREVIEW = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+const previewId = await publish('PREVIEW-PACKAGE', {}, PNG_PREVIEW)
+const noPreview = await client.callTool({ name: 'backseat_get', arguments: { id: previewId } })
+check(images(noPreview).length === 1 && sameBytes(images(noPreview)[0], PNG_ANNOTATED), 'backseat_get without includeDesignPreview attaches annotated.png only', `${images(noPreview).length} image(s)`)
+const withPreview = await client.callTool({ name: 'backseat_get', arguments: { id: previewId, includeDesignPreview: true } })
+check(images(withPreview).length === 2 && sameBytes(images(withPreview)[0], PNG_ANNOTATED) && sameBytes(images(withPreview)[1], PNG_PREVIEW),
+  'includeDesignPreview adds design-preview.png after annotated.png', `${images(withPreview).length} image(s)`)
+check(texts(withPreview).includes('PREVIEW-PACKAGE'), 'the brief text is still returned with the preview')
+const latestPreview = await client.callTool({ name: 'backseat_latest', arguments: { includeDesignPreview: true } })
+check(images(latestPreview).length === 2 && sameBytes(images(latestPreview)[1], PNG_PREVIEW), 'backseat_latest accepts includeDesignPreview too')
+
+// ---------- UI/UX jobs: a real round trip with the official client ----------
+
+const jobsDir = join(userData, 'uiux', 'jobs')
+async function createJob(type, fields = {}, input = { ask: type }) {
+  const jobId = `job-check-${seq++}-${Date.now().toString(36)}`
+  const t = Date.now()
+  const job = {
+    schemaVersion: 1, jobId, type, projectId: 'check-1', inputRevision: 3, status: 'pending',
+    createdAt: new Date(t).toISOString(), updatedAt: new Date(t).toISOString(), expiresAt: new Date(t + 5 * 60_000).toISOString(), ...fields
+  }
+  await mkdir(jobsDir, { recursive: true })
+  await writeFile(join(jobsDir, `${jobId}.input.json`), JSON.stringify(input), 'utf8')
+  await writeFile(join(jobsDir, `${jobId}.json`), JSON.stringify(job), 'utf8')
+  return job
+}
+const readJob = async (jobId) => JSON.parse(await readFile(join(jobsDir, `${jobId}.json`), 'utf8'))
+const parts = (r) => (r?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text)
+const tail = (r) => {
+  const t = parts(r)
+  const last = t[0] ?? ''
+  try {
+    return JSON.parse(last.slice(last.lastIndexOf('\n\n{') + 2))
+  } catch {
+    return {}
+  }
+}
+
+try {
+  const overview = {
+    projectId: 'check-1',
+    summary: { value: 'A task tracker', source: 'user' },
+    purpose: { value: 'Keep tasks in one place', source: 'user' },
+    goals: [], audiences: [{ value: 'team leads', source: 'user' }],
+    workflows: [{ id: 'w1', name: 'Add a task', steps: ['open', 'type'], source: 'user' }],
+    architecture: { nodes: [{ id: 'home', type: 'screen', label: 'Home', source: 'verified', evidence: [{ path: 'index.html' }] }], edges: [] },
+    stack: [], designState: [], designConstraints: [], sources: [], unknowns: []
+  }
+  const job = await createJob('project_overview', {}, { project: { name: 'Check' } })
+  const got = await client.callTool({ name: 'backseat_job_get', arguments: { jobId: job.jobId } })
+  const gotMeta = tail(got)
+  check(gotMeta.jobId === job.jobId && gotMeta.type === 'project_overview' && gotMeta.status === 'fetched' && gotMeta.inputRevision === 3 && gotMeta.expiresAt === job.expiresAt,
+    'backseat_job_get returns the job (type, project, status, deadline)', JSON.stringify(gotMeta).slice(0, 160))
+  check(parts(got).length === 3 && parts(got)[1].includes('"project"') && parts(got)[2].includes('"required"'), 'backseat_job_get returns the input and the result schema')
+  const afterGet = await readJob(job.jobId)
+  check(afterGet.status === 'fetched' && Boolean(afterGet.fetchedAt), 'job_get marks the job fetched (status and fetchedAt on disk)', afterGet.status)
+
+  const progress = await client.callTool({ name: 'backseat_job_status', arguments: { jobId: job.jobId, status: 'in_progress', message: 'reading' } })
+  check(tail(progress).status === 'fetched', 'backseat_job_status in_progress answers with the current status', JSON.stringify(tail(progress)).slice(0, 120))
+
+  const bad = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: job.jobId, inputRevision: 3, result: { ...overview, projectId: 'other-9' } } })
+  check(bad.isError === true && tail(bad).status === 'rejected' && JSON.stringify(tail(bad).errors).includes('other-9'), 'a result for another project is rejected with the error list')
+  check((await readJob(job.jobId)).status === 'rejected', 'a rejected result sets the job to rejected on disk')
+  const stale = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: job.jobId, inputRevision: 2, result: overview } })
+  check(stale.isError === true && tail(stale).status === 'stale', 'a wrong inputRevision is refused as stale')
+  const ok = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: job.jobId, inputRevision: 3, result: overview } })
+  check(ok.isError !== true && tail(ok).status === 'submitted' && tail(ok).completeness?.complete === true, 'the corrected result is accepted (complete)', parts(ok)[0]?.slice(0, 200))
+  const done = await readJob(job.jobId)
+  check(done.status === 'submitted' && done.resultRef === `${job.jobId}.result.json`, 'the job is submitted with a resultRef on disk', done.status)
+  const stored = JSON.parse(await readFile(join(jobsDir, `${job.jobId}.result.json`), 'utf8'))
+  check(stored.type === 'project_overview' && stored.projectId === 'check-1' && stored.overview?.summary?.value === 'A task tracker', 'the result file holds the validated overview')
+  const dup = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: job.jobId, inputRevision: 3, result: overview } })
+  check(dup.isError !== true && tail(dup).duplicate === true, 'the same result again is a duplicate with the same outcome')
+  check(parts(await client.callTool({ name: 'backseat_job_get', arguments: { jobId: job.jobId } })).length === 1, 'a finished job is reported, not reopened')
+
+  // incomplete overview: stored, the reply names the gaps
+  const weakJob = await createJob('project_overview')
+  const weak = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: weakJob.jobId, inputRevision: 3, result: { ...overview, workflows: [] } } })
+  check(weak.isError !== true && tail(weak).completeness?.complete === false && tail(weak).completeness?.gaps?.includes('workflows'), 'an incomplete overview is stored and the reply lists the gaps')
+
+  // cancelled: the agent is told to stop, nothing is stored
+  const cancelled = await createJob('capabilities', { status: 'cancelled' })
+  const cs = await client.callTool({ name: 'backseat_job_status', arguments: { jobId: cancelled.jobId, status: 'in_progress' } })
+  check(tail(cs).status === 'cancelled', 'job_status reports cancelled so the agent stops')
+  const cu = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: cancelled.jobId, inputRevision: 3, result: { skills: [] } } })
+  check(cu.isError === true && tail(cu).status === 'cancelled', 'a cancelled job takes no result')
+  const none = await client.callTool({ name: 'backseat_job_get', arguments: { jobId: 'job-does-not-exist' } })
+  check(none.isError === true && tail(none).status === 'not_found', 'an unknown job id is an error')
+
+  // failure report
+  const failing = await createJob('style_audit')
+  const fr = await client.callTool({ name: 'backseat_job_status', arguments: { jobId: failing.jobId, status: 'failed', message: 'no access' } })
+  const failed = await readJob(failing.jobId)
+  check(tail(fr).status === 'failed' && failed.status === 'failed' && failed.error === 'no access', 'job_status failed stores the message')
+
+  // design proposals with a mock-up
+  const tokens = {
+    colors: { background: '#FFFFFF', surface: '#F5F5F7', text: '#1B1B1F', textMuted: '#5E5E6A', primary: '#2F5BEA', onPrimary: '#FFFFFF', border: '#DADAE0', success: '#1E8A55', warning: '#A86A00', danger: '#C9353A', info: '#2F80ED' },
+    ratio: { background: 60, surface: 30, accent: 10 },
+    shadows: { button: null, card: null, popover: null },
+    type: Object.fromEntries(['heading', 'body', 'numeric'].map((r) => [r, { family: 'Pretendard', fallback: 'sans-serif', size: 16, weight: 400, lineHeight: 1.5 }])),
+    box: { radius: 8, paddingX: 16, paddingY: 10, gap: 12, density: 'comfortable' }
+  }
+  const proposalJob = await createJob('design_proposal')
+  const proposal = (id, extra = {}) => ({ proposalId: id, projectId: 'check-1', direction: 'A', name: `Variant ${id}`, rationale: 'r', tokens, changes: [], preserved: [], checks: [], ...extra })
+  const badImage = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: proposalJob.jobId, inputRevision: 3, result: { proposals: [proposal('A', { previewPngBase64: Buffer.from('not a png at all, just text, long enough to pass the length check').toString('base64') })] } } })
+  check(badImage.isError === true && JSON.stringify(tail(badImage).errors).includes('previewPngBase64'), 'a mock-up that is not a PNG is rejected')
+  const goodProposals = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: proposalJob.jobId, inputRevision: 3, result: { proposals: [proposal('A', { previewPngBase64: PNG_PREVIEW.toString('base64') }), proposal('B'), proposal('A')] } } })
+  check(goodProposals.isError !== true && JSON.stringify(tail(goodProposals).proposalIds) === '["A","B"]' && JSON.stringify(tail(goodProposals).dedupedProposalIds) === '["A"]', 'proposals are accepted, duplicates by proposalId dropped', parts(goodProposals)[0]?.slice(0, 200))
+  const mock = await readFile(join(jobsDir, `${proposalJob.jobId}.A.png`)).catch(() => null)
+  check(Boolean(mock) && mock.equals(PNG_PREVIEW), 'the mock-up is stored next to the job result, by file name')
+} catch (err) {
+  check(false, 'UI/UX job round trip', String(err?.stack ?? err).slice(0, 300))
 }
 
 await client.close()
