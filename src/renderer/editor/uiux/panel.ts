@@ -1032,7 +1032,8 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       if (sc?.kind === 'annotations') {
         const present = new Set(host.annotations().map((a) => a.id))
         if (!(sc.annotationIds ?? []).some((id) => present.has(id))) {
-          host.setStatus(t('uiux.panel.scopeEmpty'), true)
+          // Nothing ticked and marks that were removed are told apart: the fix differs.
+          host.setStatus(t((sc.annotationIds ?? []).length ? 'uiux.panel.scopeEmpty' : 'uiux.panel.scopeNone'), true)
           toggle(true)
           return false
         }

@@ -450,7 +450,8 @@ export function createAgentParts(host: AgentHost): AgentParts {
     if (stored && !review.synced) review = { jobId: job.jobId, ticked: new Set(stored.ticked), confirmed: true, synced: true }
     const steps: [string, boolean][] = [
       ['sent', true],
-      ['fetched', job.status !== 'pending'],
+      // Fetched only when the agent really took it: a request cancelled or expired before that was never fetched.
+      ['fetched', Boolean(job.fetchedAt) || job.status === 'fetched' || job.status === 'submitted'],
       ['received', job.status === 'submitted'],
       ['confirmed', review.confirmed]
     ]

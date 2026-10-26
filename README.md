@@ -55,6 +55,20 @@ macOS and Linux build machines but have not been tried on a real Mac or Linux PC
 - **Speech is turned into text on your PC.** A local speech model (Whisper) transcribes your voice; nothing is
   sent to a speech service unless you set one up.
 
+## UI/UX tools (in testing)
+
+The **UI/UX** button in the editor opens a panel on the right for colours, ratio, shadows, type and spacing that go with
+the request. The panel only shows or hides; only values you **add to the request** reach your AI.
+
+- **Project and overview**: create a project and type its purpose, users and screens, or ask your AI to work them out (MCP).
+  When the overview is complete, **Overview ready** opens purpose, structure and flows as a picture.
+- **Adjust and lock**: pick a suggestion or enter values; lock what must not change. The design samples are examples, not your app.
+- **Compare AI proposals**: get proposals for the current capture, compare them, and add one or a mix to the request. Locked values stay.
+- **Send**: the package gets `design-request.json` and a UI/UX section in the brief (values to change, scope, locks, what to keep).
+- **Check the result**: your AI's report is shown as its claim; capture again, tick what you checked, and "checked by you" is recorded.
+
+Asking your AI for an overview, proposals or a work report needs the MCP setup below. Adjusting and sending work without it.
+
 ## Where it sends, and what arrives
 
 | Destination | What gets pasted | Good to know |

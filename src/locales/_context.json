@@ -892,6 +892,7 @@
   "uiux.panel.scope.annotations": "Scope option: chosen marks on the capture.",
   "uiux.panel.scope.component": "Scope option: one kind of component.",
   "uiux.panel.scopeEmpty": "Status when a send is stopped because the scope \"marked areas\" has no existing mark.",
+  "uiux.panel.scopeNone": "Status when a send is stopped because the scope \"marked areas\" has no mark ticked.",
   "uiux.panel.scopeNow": "Summary of what goes with the send: the chosen scope.",
   "uiux.panel.sendWithoutChanges": "Dialog button: discards later edits.",
   "uiux.panel.shadow.blur": "Shadow slider.",
