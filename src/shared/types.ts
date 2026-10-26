@@ -1,6 +1,6 @@
 // Shared contract between main, preload and renderer. Keep this file dependency-free (types only; the UI/UX
 // contracts live in ./uiux/types, equally pure).
-import type { DesignRules, DesignTokens, ProjectOverview, ProjectProfile, SkillRef } from './uiux/types'
+import type { DesignRequest, DesignRules, DesignTokens, ProjectOverview, ProjectProfile, SkillRef } from './uiux/types'
 
 /** Rectangle in CSS pixels (DIP) relative to the window that produced it. */
 export interface Rect {
@@ -361,6 +361,18 @@ export interface ExportPayload {
   links?: ManualLink[]
   /** Present when the user compared this capture with the previous one. */
   compare?: CompareInfo
+  /**
+   * UI/UX guidance the user applied to this send (spec §10.1). Absent = none: drafts are never sent. A send
+   * with only this (no marks, memo or voice) is still a request, not a plain picture.
+   */
+  uiux?: UiuxPayload
+}
+
+/** The applied UI/UX guidance for one send: the request snapshot and, optionally, the chosen mock-up. */
+export interface UiuxPayload {
+  request: DesignRequest
+  /** PNG data URL of the selected screen mock-up, saved as design-preview.png; never replaces the capture. */
+  previewPngDataUrl?: string
 }
 
 export interface SaveResult {
