@@ -9,10 +9,10 @@ import type { ExportPayload, SendResult, UserOverviewInput } from '../../shared/
 import { BUILTIN_SKILL } from '../../shared/uiux/builtin'
 import { applyOverviewEdits, mergeOverview, mergeSkillFields, sameOverviewContent, SCREEN_PREFIX } from '../../shared/uiux/overviewMerge'
 import {
-  UIUX_SCHEMA_VERSION, type DesignProposal, type DesignRequest, type JobOutcome, type JobRequest, type ProjectOverview, type ReportConfirmation, type SkillContext,
+  UIUX_SCHEMA_VERSION, type DesignProposal, type DesignRequest, type JobOutcome, type JobRequest, type ProjectOverview, type ReportConfirmation, type SkillContext, type TokenChange,
   type SkillRef, type UiuxJob
 } from '../../shared/uiux/types'
-import { readOverview } from '../../shared/uiux/validate'
+import { isObj, readOverview } from '../../shared/uiux/validate'
 import { showOpen, showSave } from '../dialogs'
 import { briefTranslator } from '../locales'
 import { effectiveJob, type JobResultFile } from '../mcp/jobs'
@@ -348,6 +348,9 @@ export function jobOutcome(jobId: unknown): Promise<JobOutcome | null> {
       out.report = res.report
       const conf = await readConfirmation(id)
       if (conf) out.confirmation = conf
+      const input = await s.getJobInput<{ request?: { changes?: unknown } }>(id).catch(() => null)
+      const changes = input?.request?.changes
+      if (Array.isArray(changes)) out.requested = changes.filter((c): c is TokenChange => isObj(c) && typeof c.path === 'string').slice(0, 40)
     }
     const applied = await applyResult(job, res)
     if (applied?.overviewRevision !== undefined) out.overviewRevision = applied.overviewRevision

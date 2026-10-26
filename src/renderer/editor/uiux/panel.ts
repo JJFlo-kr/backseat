@@ -23,7 +23,7 @@ import { createSampleView, type SampleView } from './samples'
 import { createAgentParts } from './agent'
 import { createCompareView } from './compare'
 import { openOverviewView } from './overview-view'
-import { button, el } from './dom'
+import { button, el, showValue } from './dom'
 
 export interface UiuxHost {
   t: Translate
@@ -68,6 +68,12 @@ const AREAS: readonly Area[] = ['colors', 'ratio', 'shadows', 'type', 'box']
 const lines = (s: string): string[] => s.split(/\n|,/).map((x) => x.trim()).filter(Boolean)
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
 
+/** A mark's position on the capture in image pixels, as brief.md lists it. */
+function markPos(a: Annotation): string {
+  const p = 'x' in a ? { x: a.x, y: a.y } : 'x1' in a ? { x: a.x1, y: a.y1 } : 'points' in a && a.points[0] ? a.points[0] : null
+  return p ? `(${Math.round(p.x)},${Math.round(p.y)})` : ''
+}
+
 export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
   const { t } = host
   let open = false
@@ -92,6 +98,25 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
   /** IME composition in progress in a panel field: job-driven renders wait for it (and for blur). */
   let composing = false
   let pendingJobRender: 'parts' | 'full' | null = null
+  /** Unsent drafts of the other projects opened in this editor. */
+  const drafts = new Map<string, UiuxSession>()
+  /**
+   * A field that loses focus on mousedown changes the draft and re-renders the panel before the click lands: the
+   * button under the pointer would be replaced and the click lost. While a button is held in the panel, a render
+   * waits for the click to finish.
+   */
+  let pointerHeld = false
+  let renderAfterClick = false
+  m.panel.addEventListener('pointerdown', () => { pointerHeld = true }, true)
+  const releasePointer = (): void => {
+    pointerHeld = false
+    if (!renderAfterClick) return
+    renderAfterClick = false
+    setTimeout(() => render(), 0) // after the click event of this same press
+  }
+  window.addEventListener('pointerup', releasePointer, true)
+  window.addEventListener('pointercancel', releasePointer, true)
+  window.addEventListener('blur', releasePointer) // released outside the window
 
   m.panel.dataset.hotkeysOff = ''
   // Focusable itself, so focus can stay in the panel when a re-render removes the focused control.
@@ -118,7 +143,8 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     skill: () => session.draft.skill ?? BUILTIN_SKILL,
     setSkill: (s) => void chooseSkill(s),
     openOverview: () => openOverview(),
-    openCompare: (jobId, list) => void openCompare(jobId, list)
+    openCompare: (jobId, list) => void openCompare(jobId, list),
+    addToMemo: (text) => addToMemo(text)
   })
 
   // ---------- state helpers ----------
@@ -138,6 +164,32 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     session = editDraft(session, patch)
     changed()
   }
+
+  function undoDraft(): void {
+    const prev = undoStack.pop()
+    if (!prev) return
+    redoStack.push(clone(session.draft))
+    setDraft(prev, false)
+  }
+
+  function redoDraft(): void {
+    const next = redoStack.pop()
+    if (!next) return
+    undoStack.push(clone(session.draft))
+    setDraft(next, false)
+  }
+
+  // Ctrl+Z / Ctrl+Shift+Z inside the panel undo its value changes (a text field keeps its own undo); the editor's
+  // undo of marks never runs from here.
+  m.panel.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.altKey || e.code !== 'KeyZ') return
+    const tg = e.target
+    if ((tg instanceof HTMLInputElement && tg.type !== 'range' && tg.type !== 'checkbox' && tg.type !== 'color') || tg instanceof HTMLTextAreaElement) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.shiftKey) redoDraft()
+    else undoDraft()
+  })
 
   function setTokens(next: DesignTokens, record = true): void {
     setDraft({ tokens: next }, record)
@@ -173,7 +225,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     const locks = state?.rules?.locks ?? []
     if (session.projectId !== (state?.profile.projectId ?? null)) {
       const wasApplied = status(session) !== 'off'
-      session = switchProject(session, state?.profile.projectId ?? null, base, locks)
+      // Each project keeps its unsent draft while this editor is open; what was applied is released on leaving
+      // (spec: guidance never goes to another project).
+      if (session.projectId) drafts.set(session.projectId, release(session))
+      const nextId = state?.profile.projectId ?? null
+      const kept = nextId ? drafts.get(nextId) : undefined
+      session = kept ?? switchProject(session, nextId, base, locks)
       undoStack.length = 0
       redoStack.length = 0
       if (wasApplied) host.setStatus(t('uiux.panel.releasedOnSwitch'))
@@ -248,7 +305,8 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     const view = createCompareView({
       t,
       original: host.baseCapture(),
-      base: session.base,
+      // Locked values come from what the user has now (the draft), not from the defaults the draft started from.
+      base: session.draft.tokens,
       locks: session.draft.locks,
       proposals: list,
       mockups,
@@ -355,6 +413,10 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
   /** The whole panel: after the user's edits and project changes. */
   function render(): void {
     if (!open) return
+    if (pointerHeld) {
+      renderAfterClick = true
+      return
+    }
     pendingJobRender = null
     keepFocus(() => {
       const frag = document.createDocumentFragment()
@@ -489,19 +551,9 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       tabs.append(b)
     }
     const hist = el('div', 'uxp-row')
-    const undoB = button(t('uiux.panel.undo'), () => {
-      const prev = undoStack.pop()
-      if (!prev) return
-      redoStack.push(clone(session.draft))
-      setDraft(prev, false)
-    })
+    const undoB = button(t('uiux.panel.undo'), () => undoDraft())
     undoB.disabled = !undoStack.length
-    const redoB = button(t('uiux.panel.redo'), () => {
-      const next = redoStack.pop()
-      if (!next) return
-      undoStack.push(clone(session.draft))
-      setDraft(next, false)
-    })
+    const redoB = button(t('uiux.panel.redo'), () => redoDraft())
     redoB.disabled = !redoStack.length
     hist.append(undoB, redoB, button(t('uiux.panel.resetArea'), () => resetArea()), button(t('uiux.panel.resetAll'), () => setTokens(clone(session.base))))
     parts.push(tabs, renderArea(), hist, renderSamples(), renderChecks(), renderPreserve())
@@ -561,7 +613,8 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
           else next.delete(id)
           setDraft({ scope: { kind: 'annotations', annotationIds: [...next] } })
         })
-        lab.append(cb, document.createTextNode(t('uiux.panel.markItem', { n: i + 1, kind: t(`uiux.panel.kind.${a.kind}`) })))
+        // Where the mark is on the capture (the canvas shows no list numbers on rectangles or lines).
+        lab.append(cb, document.createTextNode(`${t('uiux.panel.markItem', { n: i + 1, kind: t(`uiux.panel.kind.${a.kind}`) })} · ${markPos(a)}`))
         box.append(lab)
       })
       const missing = missingAnnotations(sc, anns.map((a) => a.id ?? ''))
@@ -579,7 +632,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     if (!state?.overview) box.append(el('p', 'uxp-hint', t('uiux.panel.optionsGeneral')))
     for (const o of opts) {
       const card = el('div', 'uxp-option')
-      const b = button(t(o.labelKey, o.params), () => applyOpt(o), 'btn small', `option-${o.id}`)
+      const b = button(t(o.labelKey, o.params), () => {
+        const before = JSON.stringify(session.draft.tokens)
+        applyOpt(o)
+        // An option equal to the current values changes nothing: say so instead of staying silent.
+        if (JSON.stringify(session.draft.tokens) === before) host.setStatus(t('uiux.panel.optionSame'))
+      }, 'btn small', `option-${o.id}`)
       if (o.recommended) {
         b.classList.add('accent')
         card.append(el('span', 'uxp-badge', t('uiux.panel.recommended')))
@@ -653,10 +711,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
         const locked = isLocked(`colors.${r}`)
         const picker = el('input')
         picker.type = 'color'
+        picker.dataset.ux = `color-${r}`
         picker.value = tk.colors[r].toLowerCase()
         picker.disabled = locked
         picker.setAttribute('aria-label', t(`uiux.panel.role.${r}`))
         const hex = el('input', 'uxp-hex')
+        hex.dataset.ux = `hex-${r}` // keeps the focus here after Enter re-renders the panel
         hex.value = tk.colors[r]
         hex.disabled = locked
         hex.setAttribute('aria-label', t('uiux.panel.hexOf', { role: t(`uiux.panel.role.${r}`) }))
@@ -766,10 +826,14 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
 
   function renderRules(): HTMLElement {
     const r = state?.rules ?? null
-    const text = r ? t('uiux.panel.rulesStatus', { revision: r.revision, skill: r.skill?.name ?? t('uiux.panel.builtinSkill') }) : t('uiux.panel.rulesNone')
+    const skillName = !r?.skill || r.skill.id === BUILTIN_SKILL.id ? t('uiux.panel.builtinSkill') : r.skill.name
+    const text = r ? t('uiux.panel.rulesStatus', { revision: r.revision, skill: skillName }) : t('uiux.panel.rulesNone')
     const row = el('div', 'uxp-row')
     row.append(button(t('uiux.panel.saveRules'), () => void saveRules(), 'btn small', 'save-rules'))
-    if (r) row.append(button(t('uiux.panel.loadRules'), () => setDraft({ tokens: clone(r.tokens), locks: [...r.locks] })))
+    if (r) row.append(button(t('uiux.panel.loadRules'), () => {
+      setDraft({ tokens: clone(r.tokens), locks: [...r.locks] })
+      host.setStatus(t('uiux.panel.rulesLoaded', { revision: r.revision }))
+    }))
     return section('uiux.panel.rules', el('p', 'uxp-muted', text), row, el('p', 'uxp-hint', t('uiux.panel.rulesHint')))
   }
 
@@ -781,7 +845,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     parts.push(el('p', `uxp-state uxp-state-${st}`, stateText))
     if (changes.length) {
       const ul = el('ul', 'uxp-changes')
-      for (const c of changes.slice(0, 12)) ul.append(el('li', undefined, `${c.path}: ${String(c.from)} → ${String(c.to)}`))
+      for (const c of changes.slice(0, 12)) ul.append(el('li', undefined, `${c.path}: ${showValue(c.from)} → ${showValue(c.to)}`))
       if (changes.length > 12) ul.append(el('li', 'uxp-muted', t('uiux.panel.moreChanges', { n: changes.length - 12 })))
       parts.push(ul)
     } else parts.push(el('p', 'uxp-hint', t('uiux.panel.noChanges')))
@@ -790,6 +854,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       parts.push(el('p', 'uxp-hint', t('uiux.panel.needProject')))
     } else if (st === 'off') {
       row.append(button(t('uiux.panel.addToRequest'), () => { session = apply(session); changed() }, 'btn small accent', 'add-to-request'))
+      parts.push(el('p', 'uxp-hint', t('uiux.panel.flowHint')))
     } else {
       if (st === 'stale') {
         row.append(button(t('uiux.panel.reflect'), () => { session = apply(session); changed() }, 'btn small accent'))
@@ -840,15 +905,17 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     m.suggestBar.hidden = false
     const items = list.map((s) => {
       const phrase = t(s.key, s.params)
-      return button(phrase, () => {
-        const cur = host.memo.value.trim()
-        host.memo.value = cur ? `${cur} · ${phrase}` : phrase
-        host.memo.dispatchEvent(new Event('input'))
-        host.memo.focus()
-      }, 'uxp-chip')
+      return button(phrase, () => addToMemo(phrase), 'uxp-chip')
     })
     const label = el('span', 'uxp-suggest-label', t('uiux.panel.suggestLabel'))
     m.suggestBar.replaceChildren(label, ...items)
+  }
+  /** Appends a phrase to the memo (only when the user clicks it: spec AC-24). */
+  function addToMemo(phrase: string): void {
+    const cur = host.memo.value.trim()
+    host.memo.value = cur ? `${cur} · ${phrase}` : phrase
+    host.memo.dispatchEvent(new Event('input'))
+    host.memo.focus()
   }
   host.memo.addEventListener('input', renderSuggestions)
   host.memo.addEventListener('focus', renderSuggestions)
@@ -905,8 +972,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       if (status(session) !== 'stale') return true
       const c = await staleDialog()
       if (c === 'cancel') return false
-      session = c === 'reflect' ? apply(session) : discardDraftChanges(session)
-      changed()
+      // "Send what was added" sends the applied values and keeps the user's newer edits in the draft (still marked
+      // as not reflected): choosing what to send never throws work away.
+      if (c === 'reflect') {
+        session = apply(session)
+        changed()
+      }
       return true
     },
     markSent(reportJobId) {

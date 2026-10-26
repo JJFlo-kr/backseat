@@ -12,7 +12,7 @@ import type {
 } from '../../../shared/uiux/types'
 import { overviewCompleteness } from '../../../shared/uiux/validate'
 import { errText } from '../../../shared/errors'
-import { button, el } from './dom'
+import { button, el, showValue } from './dom'
 
 export interface AgentHost {
   t: Translate
@@ -30,6 +30,8 @@ export interface AgentHost {
   setSkill(s: SkillRef): void
   openOverview(): void
   openCompare(jobId: string, proposals: DesignProposal[]): void
+  /** Puts a phrase into the memo of this send (the user clicked it). */
+  addToMemo(text: string): void
 }
 
 export interface AgentParts {
@@ -49,6 +51,8 @@ export interface AgentParts {
 }
 
 const ACTIVE: readonly JobStatus[] = ['pending', 'fetched']
+/** Items of the after-send checklist (checklist()). */
+const CHECK_ITEMS = 6
 
 export function createAgentParts(host: AgentHost): AgentParts {
   const { t, api } = host
@@ -94,6 +98,8 @@ export function createAgentParts(host: AgentHost): AgentParts {
   api.onJobUpdate((job) => {
     if (job.projectId !== projectId) return
     upsert(job)
+    // The status line follows the job: an old "request created" must not stay after it failed or ended.
+    if (job.status !== 'pending' && job.status !== 'submitted') host.setStatus(t(`uiux.job.status.${job.status}`), job.status === 'failed' || job.status === 'rejected')
     if (job.status === 'submitted') void afterSubmit(job)
     else host.rerender()
   })
@@ -237,6 +243,7 @@ export function createAgentParts(host: AgentHost): AgentParts {
       row.append(button(t(job && job.status !== 'submitted' ? 'uiux.job.retry' : startKey), start, 'btn small', `job-${type}`))
       box.append(row)
       if (job?.error && (job.status === 'rejected' || job.status === 'failed')) box.append(el('p', 'uxp-warn', t('uiux.job.reason', { error: job.error })))
+      if (job?.status === 'rejected') box.append(el('p', 'uxp-hint', t('uiux.job.rejectedHint')))
       return box
     }
     const head = el('div', 'uxp-row')
@@ -263,6 +270,7 @@ export function createAgentParts(host: AgentHost): AgentParts {
     const o = st?.overview ?? null
     const done = o ? overviewCompleteness(o) : { complete: false, gaps: [] }
     const doneB = button(t('uiux.ov.done'), () => host.openOverview(), done.complete ? 'btn small accent' : 'btn small', 'overview-done')
+    doneB.title = t('uiux.ov.doneTip')
     doneB.disabled = !done.complete
     const row = el('div', 'uxp-row')
     row.append(doneB)
@@ -337,6 +345,13 @@ export function createAgentParts(host: AgentHost): AgentParts {
       const ctx = contexts.find((c) => c.skill.id === current.id)
       if (ctx) {
         parts.push(el('p', 'uxp-muted', t('uiux.sk.ready', { revision: ctx.revision })))
+        // What the agent found for the skill (field names are the skill's own words).
+        const fields = Object.entries(ctx.fields)
+        if (fields.length) {
+          const ul = el('ul', 'uxp-list')
+          for (const [k, c] of fields.slice(0, 12)) ul.append(el('li', undefined, `${k}: ${c.value}`))
+          parts.push(el('p', 'uxp-label', t('uiux.sk.fields')), ul)
+        }
         if (ctx.missing.length) parts.push(el('p', 'uxp-warn', t('uiux.sk.missing', { fields: ctx.missing.join(', ') })))
       }
       parts.push(jobBox('skill_setup', ctx ? 'uiux.sk.refresh' : 'uiux.sk.setup', () => ({ type: 'skill_setup', skillId: current.id }), current.id))
@@ -403,6 +418,7 @@ export function createAgentParts(host: AgentHost): AgentParts {
     for (const f of findings.slice(0, 12)) {
       const li = el('li')
       li.append(el('strong', undefined, f.area), document.createTextNode(` · ${f.issue}`), el('div', 'uxp-muted', `→ ${f.suggestion}`))
+      li.append(button(t('uiux.pr.toMemo'), () => host.addToMemo(`${f.area}: ${f.suggestion}`), 'btn small', 'finding-to-memo'))
       ul.append(li)
     }
     box.append(ul, el('p', 'uxp-hint', t('uiux.pr.findingsHint')))
@@ -430,7 +446,11 @@ export function createAgentParts(host: AgentHost): AgentParts {
       ['confirmed', review.confirmed]
     ]
     const ol = el('ol', 'uxp-steps')
-    for (const [k, on] of steps) ol.append(el('li', on ? 'uxp-step-on' : 'uxp-step', t(`uiux.rp.step.${k}`)))
+    for (const [k, on] of steps) {
+      // The user's check says how much they checked: "checked 0 of 6" must never look like a full pass.
+      const label = k === 'confirmed' && on ? t('uiux.rp.step.confirmedN', { n: review.ticked.size, total: CHECK_ITEMS }) : t(`uiux.rp.step.${k}`)
+      ol.append(el('li', on ? 'uxp-step-on' : 'uxp-step', label))
+    }
     const parts: Node[] = [ol]
     if (ACTIVE.includes(job.status)) parts.push(jobBox(job.type, 'uiux.job.retry', () => null))
     else if (job.status !== 'submitted') parts.push(el('p', 'uxp-muted', t(`uiux.job.status.${job.status}`)))
@@ -446,6 +466,13 @@ export function createAgentParts(host: AgentHost): AgentParts {
       list('uiux.rp.files', r.changedFiles.map((f) => (f.note ? `${f.path} · ${f.note}` : f.path)))
       list('uiux.rp.notDone', r.notDone)
       list('uiux.rp.checksRun', r.checksRun)
+    }
+    // What was asked for, so the new capture can be compared with it.
+    const requested = job.status === 'submitted' ? outcomeOf(job)?.requested : undefined
+    if (requested?.length) {
+      const ul = el('ul', 'uxp-list')
+      for (const c of requested.slice(0, 12)) ul.append(el('li', undefined, `${c.path}: ${showValue(c.to)}`))
+      parts.push(el('p', 'uxp-label', t('uiux.rp.requested')), ul)
     }
     parts.push(checklist(job))
     box.replaceChildren(...parts)
@@ -475,12 +502,13 @@ export function createAgentParts(host: AgentHost): AgentParts {
       cb.addEventListener('change', () => {
         if (cb.checked) review.ticked.add(it.id)
         else review.ticked.delete(it.id)
+        confirm.disabled = review.ticked.size === 0
       })
       lab.append(cb, document.createTextNode(`${it.label} · ${t(`uiux.rp.${it.kind}`)}`))
       box.append(lab)
     }
     box.append(el('p', 'uxp-hint', t('uiux.rp.recapture')))
-    box.append(button(t('uiux.rp.confirm'), () => {
+    const confirm = button(t('uiux.rp.confirm'), () => {
       void api.confirmReport(job.jobId, [...review.ticked]).then((conf) => {
         review = { jobId: job.jobId, ticked: new Set(conf.ticked), confirmed: true, synced: true }
         const known = outcomes.get(job.jobId)
@@ -488,7 +516,10 @@ export function createAgentParts(host: AgentHost): AgentParts {
         host.setStatus(t('uiux.rp.confirmed', { n: conf.ticked.length, total: items.length }))
         host.rerender()
       }, fail)
-    }, 'btn small', 'report-confirm'))
+    }, 'btn small', 'report-confirm')
+    // Nothing ticked is not a check: the button waits for at least one item.
+    confirm.disabled = review.ticked.size === 0
+    box.append(confirm)
     return box
   }
 

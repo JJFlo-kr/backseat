@@ -4,6 +4,7 @@
 import type { Annotation, ExportPayload } from '../../shared/types.ts'
 import type { Translate } from '../../shared/i18n.ts'
 import { isObj } from '../../shared/uiux/validate.ts'
+import { BUILTIN_SKILL } from '../../shared/uiux/builtin.ts'
 import { COLOR_ROLES, SHADOW_ROLES, TYPE_ROLES, type Check, type DesignRequest, type DesignScope } from '../../shared/uiux/types.ts'
 
 export const DESIGN_REQUEST_FILE = 'design-request.json'
@@ -141,21 +142,25 @@ function scopeLine(scope: unknown, annotations: Annotation[], tr: Translate): st
 function checkLines(checks: Check[], tr: Translate): string[] {
   return checks.map((c) => {
     const status = tr(`brief.uiux.status.${c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'unverified'}`)
-    return `- ${clean(c.label)} — ${status}${c.note ? `: ${clean(c.note)}` : ''}`
+    // Backseat's own checks carry a message key; an agent's check label is its own text.
+    const label = c.label.startsWith('uiux.') ? tr(c.label) : c.label
+    return `- ${clean(label)} — ${status}${c.note ? `: ${clean(c.note)}` : ''}`
   })
 }
 
-function aimLines(resolved: unknown, tr: Translate): string[] {
+/** `only`: the areas to list (colors, ratio, shadows, type, box); null = all. */
+function aimLines(resolved: unknown, tr: Translate, only: Set<string> | null = null): string[] {
   if (!isObj(resolved)) return []
   const out: string[] = []
-  const colors = isObj(resolved.colors) ? resolved.colors : null
+  const want = (area: string): boolean => !only || only.has(area)
+  const colors = want('colors') && isObj(resolved.colors) ? resolved.colors : null
   if (colors) {
     const parts = COLOR_ROLES.filter((role) => typeof colors[role] === 'string').map((role) => `${role} ${clean(colors[role])}`)
     if (parts.length > 0) out.push(`- ${tr('brief.uiux.aim.colors', { list: parts.join(', ') })}`)
   }
-  const ratio = isObj(resolved.ratio) ? resolved.ratio : null
+  const ratio = want('ratio') && isObj(resolved.ratio) ? resolved.ratio : null
   if (ratio) out.push(`- ${tr('brief.uiux.aim.ratio', { background: num(ratio.background), surface: num(ratio.surface), accent: num(ratio.accent) })}`)
-  const shadows = isObj(resolved.shadows) ? resolved.shadows : null
+  const shadows = want('shadows') && isObj(resolved.shadows) ? resolved.shadows : null
   if (shadows) {
     const parts = SHADOW_ROLES.filter((role) => role in shadows).map((role) => {
       const sh = shadows[role]
@@ -165,7 +170,7 @@ function aimLines(resolved: unknown, tr: Translate): string[] {
     })
     if (parts.length > 0) out.push(`- ${tr('brief.uiux.aim.shadows', { list: parts.join('; ') })}`)
   }
-  const type = isObj(resolved.type) ? resolved.type : null
+  const type = want('type') && isObj(resolved.type) ? resolved.type : null
   if (type) {
     const parts = TYPE_ROLES.filter((role) => isObj(type[role])).map((role) => {
       const sp = type[role] as Record<string, unknown>
@@ -173,7 +178,7 @@ function aimLines(resolved: unknown, tr: Translate): string[] {
     })
     if (parts.length > 0) out.push(`- ${tr('brief.uiux.aim.type', { list: parts.join('; ') })}`)
   }
-  const box = isObj(resolved.box) ? resolved.box : null
+  const box = want('box') && isObj(resolved.box) ? resolved.box : null
   if (box) {
     out.push(
       `- ${tr('brief.uiux.aim.box', {
@@ -210,11 +215,16 @@ export function uiuxBriefLines(request: DesignRequest, annotations: Annotation[]
     )
   }
   if (typeof r.rulesRevision === 'number') lines.push(`- ${tr('brief.uiux.rules', { revision: r.rulesRevision })}`)
-  if (typeof r.selectedProposalId === 'string' && r.selectedProposalId) lines.push(`- ${tr('brief.uiux.proposal', { id: clean(r.selectedProposalId) })}`)
+  if (typeof r.selectedProposalId === 'string' && r.selectedProposalId) {
+    // A mix the user made from several proposals has a generated id that means nothing to the agent.
+    lines.push(`- ${r.selectedProposalId.startsWith('user-mix-') ? tr('brief.uiux.proposal.mix') : tr('brief.uiux.proposal', { id: clean(r.selectedProposalId) })}`)
+  }
   if (isObj(r.skill)) {
     const source = r.skill.source === 'builtin' || r.skill.source === 'agent' || r.skill.source === 'imported' ? r.skill.source : undefined
     const version = typeof r.skill.version === 'string' && r.skill.version ? ` ${clean(r.skill.version)}` : ''
-    lines.push(`- ${tr('brief.uiux.skill', { name: `${clean(r.skill.name)}${version}`, source: source ? tr(`brief.uiux.skill.source.${source}`) : tr('brief.uiux.unset') })}`)
+    // Backseat's own rules are named in the brief's language; the stored name is an internal English id.
+    const name = r.skill.id === BUILTIN_SKILL.id ? tr('uiux.panel.builtinSkill') : `${clean(r.skill.name)}${version}`
+    lines.push(`- ${tr('brief.uiux.skill', { name, source: source ? tr(`brief.uiux.skill.source.${source}`) : tr('brief.uiux.unset') })}`)
   }
   lines.push(`- ${scopeLine(r.scope, annotations, tr)}`)
 
@@ -223,13 +233,20 @@ export function uiuxBriefLines(request: DesignRequest, annotations: Annotation[]
     lines.push('')
     lines.push(`### ${tr('brief.uiux.changes')}`)
     for (const c of changes) lines.push(`- ${clean(c.path)}: ${formatValue(c.from, tr)} → ${formatValue(c.to, tr)}`)
+    lines.push(tr('brief.uiux.changes.base'))
   }
-  const aim = aimLines(r.resolved, tr)
+  // With saved project rules every value is the user's target. Without them the untouched values are only
+  // Backseat's defaults, not what the user asked for: list the areas the request changes or locks, keep the rest.
+  const withRules = typeof r.rulesRevision === 'number'
+  const areaOf = (p: unknown): string => String(p).split('.')[0]
+  const touched = new Set([...changes.map((c) => areaOf(c.path)), ...strs(r.locks).map(areaOf)])
+  const aim = aimLines(r.resolved, tr, withRules ? null : touched)
   if (aim.length > 0) {
     lines.push('')
-    lines.push(`### ${tr('brief.uiux.aim')}`)
+    lines.push(`### ${tr(withRules ? 'brief.uiux.aim' : 'brief.uiux.aim.touched')}`)
     lines.push(...aim)
   }
+  if (!withRules) lines.push(tr('brief.uiux.keepRest'))
   const preserve = strs(r.preserve)
   if (preserve.length > 0) {
     lines.push('')

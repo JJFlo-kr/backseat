@@ -391,6 +391,8 @@ export interface JobOutcome {
   report?: ImplementationReport
   /** implementation_report: the user looked at the result on a new capture (spec §10.3 "사용자 확인"). */
   confirmation?: ReportConfirmation
+  /** implementation_report: the value changes the send asked for (from the job input), to compare a new capture with. */
+  requested?: TokenChange[]
   /** The overview revision stored from this result, when it was a project_overview. */
   overviewRevision?: number
 }

@@ -216,7 +216,8 @@ type OverviewIn = RecommendInput['overview']
 function readSignals(o: OverviewIn | undefined): Signals | null {
   if (!o) return null
   const claims = [o.purpose, ...(o.goals ?? []), ...(o.audiences ?? []), ...(o.designState ?? [])]
-  const texts = claims.filter((c) => c && c.source !== 'unknown' && typeof c.value === 'string' && c.value.trim()).map((c) => c.value.trim())
+  // Screen kinds are stored as "screen: <kind>" (overviewMerge SCREEN_PREFIX): quote the kind, not the storage form.
+  const texts = claims.filter((c) => c && c.source !== 'unknown' && typeof c.value === 'string' && c.value.trim()).map((c) => c.value.trim().replace(/^screen:\s*/, ''))
   if (texts.length === 0) return null
   const hit: Signals['hit'] = {}
   for (const sig of Object.keys(SIGNAL_RE) as Signal[]) {

@@ -125,6 +125,8 @@ function id(r: Reader, v: unknown, path: string): string {
 
 function architecture(r: Reader, v: unknown, path: string): Architecture {
   const o = r.obj(v, path)
+  // No minimum: an overview without a structure (typed by the user, or partial) is valid and marked incomplete
+  // by overviewCompleteness (gap 'architecture'), never refused.
   const nodes = r.list(o.nodes, `${path}.nodes`, (x, p): ArchNode => {
     const n = r.obj(x, p)
     const node: ArchNode = {
@@ -140,7 +142,7 @@ function architecture(r: Reader, v: unknown, path: string): Architecture {
     const ev = r.list(n.evidence, `${p}.evidence`, (y, q) => readEvidence(r, y, q), { max: 10 })
     if (ev.length) node.evidence = ev
     return node
-  }, { min: 1, max: 80 })
+  }, { max: 80 })
   const ids = new Set<string>()
   nodes.forEach((n, i) => {
     if (ids.has(n.id)) r.err(`${path}.nodes[${i}].id`, `duplicate id ${n.id}`)

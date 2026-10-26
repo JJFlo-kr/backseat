@@ -3074,6 +3074,8 @@ const hotkeys = new Hotkeys([
     id: 'send', label: () => t('editor.hotkey.send'), keys: ['Enter', 'Ctrl+Enter'],
     run: (e) => {
       if (e.code === 'Enter' && textSession) return false // Enter belongs to the open text box
+      // Enter on a focused toolbar button is that button (keyboard users), not 보내기.
+      if (e.code === 'Enter' && e.target instanceof HTMLElement && e.target.id !== 'send' && e.target.closest('button, select, a, [role="button"], [role="tab"]')) return false
       if (e.code === 'Enter' && cropPending) { applyPendingCrop(); return } // and to a crop waiting for 적용
       void send()
     }
@@ -3109,6 +3111,10 @@ const hotkeys = new Hotkeys([
       if (e.target === memoInput) { memoInput.blur(); return }
       if (e.target instanceof HTMLSelectElement) { e.target.blur(); return }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return false // the text box handles its own Escape
+      // A dialog or view over the editor (comparison, overview, questions) and the UI/UX panel handle their own
+      // Escape: it closes them, never the editor with the user's work in it.
+      if ([...document.querySelectorAll('dialog[open], [role="dialog"]')].some((d) => d.getClientRects().length > 0)) return false
+      if (e.target instanceof Element && e.target.closest('[data-hotkeys-off]')) return false
       if (moveDrag) { endMove(false); return }
       if (erasing) { endErase(false); return }
       if (timeline.cancelLinkDrag()) return // Esc aborts a speech link drag first

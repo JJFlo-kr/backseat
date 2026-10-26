@@ -3,6 +3,7 @@
 // its provenance in words (never by marker or colour alone), written by the same helpers as the overview. Pure; all text is a message key (UI language).
 // tests/uiux-app-export.test.ts
 import type { Translate } from '../../shared/i18n.ts'
+import { BUILTIN_SKILL } from '../../shared/uiux/builtin.ts'
 import { claimMd, mdText, overviewToMarkdown } from '../../shared/uiux/overviewText.ts'
 import type { DesignRules, ProjectOverview, ProjectProfile, SkillContext } from '../../shared/uiux/types.ts'
 
@@ -17,7 +18,10 @@ function flattenTokens(v: unknown, prefix = ''): string[] {
 
 function rulesToMarkdown(r: DesignRules, tr: Translate): string[] {
   const lines = ['', `## ${tr('uiux.export.rules.title', { revision: r.revision })}`]
-  if (r.skill) lines.push(tr('uiux.export.rules.skill', { skill: mdText(r.skill.name), version: mdText(r.skill.version ?? '') }))
+  if (r.skill) {
+    const builtin = r.skill.id === BUILTIN_SKILL.id
+    lines.push(tr('uiux.export.rules.skill', { skill: builtin ? tr('uiux.panel.builtinSkill') : mdText(r.skill.name), version: builtin ? '' : mdText(r.skill.version ?? '') }))
+  }
   lines.push('', `### ${tr('uiux.export.rules.values')}`, ...flattenTokens(r.tokens).map((l) => `- ${l}`))
   lines.push('', `### ${tr('uiux.export.rules.locks')}`, ...(r.locks.length ? r.locks.map((l) => `- ${mdText(l)}`) : [`- ${tr('uiux.export.ov.none')}`]))
   if (r.componentRules.length) lines.push('', `### ${tr('uiux.export.rules.components')}`, ...r.componentRules.map((c) => `- ${mdText(c)}`))
