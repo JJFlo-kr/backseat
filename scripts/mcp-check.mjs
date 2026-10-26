@@ -276,6 +276,18 @@ try {
   const failed = await readJob(failing.jobId)
   check(tail(fr).status === 'failed' && failed.status === 'failed' && failed.error === 'no access', 'job_status failed stores the message')
 
+  // implementation report: the agent's own account, paths must be project-relative
+  const reportJob = await createJob('implementation_report', { inputRevision: 0 }, { sessionDir: previewId })
+  const reportBody = { summary: 'Darkened the primary button', changedFiles: [{ path: 'src/button.css' }], notDone: [], checksRun: ['npm test'] }
+  const gotReport = await client.callTool({ name: 'backseat_job_get', arguments: { jobId: reportJob.jobId } })
+  check(tail(gotReport).type === 'implementation_report' && parts(gotReport)[2].includes('changedFiles'), 'job_get describes an implementation_report job with its schema')
+  const absReport = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: reportJob.jobId, inputRevision: 0, result: { ...reportBody, changedFiles: [{ path: 'C:\\Users\\me\\button.css' }] } } })
+  check(absReport.isError === true && JSON.stringify(tail(absReport).errors).includes('project-relative'), 'an implementation_report with an absolute path is rejected')
+  const okReport = await client.callTool({ name: 'backseat_job_submit', arguments: { jobId: reportJob.jobId, inputRevision: 0, result: reportBody } })
+  check(okReport.isError !== true && tail(okReport).status === 'submitted' && tail(okReport).changedFiles === 1, 'an implementation_report is accepted', parts(okReport)[0]?.slice(0, 160))
+  const storedReport = JSON.parse(await readFile(join(jobsDir, `${reportJob.jobId}.result.json`), 'utf8'))
+  check(storedReport.type === 'implementation_report' && storedReport.report?.summary === 'Darkened the primary button', 'the result file holds the report')
+
   // design proposals with a mock-up
   const tokens = {
     colors: { background: '#FFFFFF', surface: '#F5F5F7', text: '#1B1B1F', textMuted: '#5E5E6A', primary: '#2F5BEA', onPrimary: '#FFFFFF', border: '#DADAE0', success: '#1E8A55', warning: '#A86A00', danger: '#C9353A', info: '#2F80ED' },

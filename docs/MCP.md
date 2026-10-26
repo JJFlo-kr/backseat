@@ -50,6 +50,10 @@ Result by job type:
 | `capabilities` | `{ skills: [...] }` | `readSkillList` |
 | `design_proposal` | `{ proposals: [...] }`, up to 4 different `proposalId`s (repeats are dropped, the first counts). Each may carry `previewPngBase64`: a PNG mock-up as raw base64, at most 8 MB, 1 to 8000 px per side | `readProposal` per proposal. The PNG is checked (signature, header, size, closing chunk) and stored as `jobs/<jobId>.<proposalId>.png`, referenced by file name only |
 | `style_audit` | `{ findings: [{ area, issue, source, evidence?, suggestion }] }` | `src/main/mcp/styleaudit.ts` |
+| `implementation_report` | `{ summary, changedFiles: [{ path, note? }], notDone: [...], checksRun: [...] }`, `projectId` optional | `readImplementationReport` in `src/main/mcp/styleaudit.ts`: changed files must be project-relative paths; stored as `report` |
+
+An `implementation_report` is the agent's own account of a change it carried out. Backseat stores it as that and does
+not treat it as proof: the reply says so, and the user confirms the result by capturing the screen again.
 
 What is refused: an unknown job, a wrong `inputRevision` (`stale`), a cancelled, expired or failed job, a result for
 another project, and any invalid result (`rejected`, with the list of errors; the agent may submit again until the

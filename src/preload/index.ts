@@ -18,6 +18,7 @@ import type {
   TranscribeResult,
   VideoSave
 } from '../shared/types'
+import type { UiuxJob } from '../shared/uiux/types'
 
 const api: BackseatApi = {
   selector: {
@@ -77,7 +78,24 @@ const api: BackseatApi = {
     saveUserOverview: (projectId, input) => ipcRenderer.invoke(IPC.uiuxSaveUserOverview, projectId, input),
     saveRules: (projectId, rules) => ipcRenderer.invoke(IPC.uiuxSaveRules, projectId, rules),
     setPath: (projectId, folder) => ipcRenderer.invoke(IPC.uiuxSetPath, projectId, folder),
-    pickFolder: () => ipcRenderer.invoke(IPC.uiuxPickFolder)
+    pickFolder: () => ipcRenderer.invoke(IPC.uiuxPickFolder),
+    requestJob: (projectId, req) => ipcRenderer.invoke(IPC.uiuxRequestJob, projectId, req),
+    deliverJob: (jobId, how) => ipcRenderer.invoke(IPC.uiuxDeliverJob, jobId, how),
+    cancelJob: (jobId) => ipcRenderer.invoke(IPC.uiuxCancelJob, jobId),
+    extendJob: (jobId, minutes) => ipcRenderer.invoke(IPC.uiuxExtendJob, jobId, minutes),
+    listJobs: (projectId) => ipcRenderer.invoke(IPC.uiuxListJobs, projectId),
+    jobOutcome: (jobId) => ipcRenderer.invoke(IPC.uiuxJobOutcome, jobId),
+    onJobUpdate(cb) {
+      ipcRenderer.on(IPC.uiuxJobUpdate, (_e, job: UiuxJob) => cb(job))
+    },
+    proposalPreview: (jobId, proposalId) => ipcRenderer.invoke(IPC.uiuxProposalPreview, jobId, proposalId),
+    importOverview: (projectId) => ipcRenderer.invoke(IPC.uiuxImportOverview, projectId),
+    exportOverview: (projectId, format, pngDataUrl) => ipcRenderer.invoke(IPC.uiuxExportOverview, projectId, format, pngDataUrl),
+    saveOverviewEdits: (projectId, edits) => ipcRenderer.invoke(IPC.uiuxSaveOverviewEdits, projectId, edits),
+    skills: (projectId) => ipcRenderer.invoke(IPC.uiuxSkills, projectId),
+    proposals: (projectId) => ipcRenderer.invoke(IPC.uiuxProposals, projectId),
+    exportProfile: (projectId) => ipcRenderer.invoke(IPC.uiuxExportProfile, projectId),
+    importProfile: () => ipcRenderer.invoke(IPC.uiuxImportProfile)
   },
   about: {
     getInfo(): Promise<AboutInfo> {

@@ -1,6 +1,6 @@
 // Shared contract between main, preload and renderer. Keep this file dependency-free (types only; the UI/UX
 // contracts live in ./uiux/types, equally pure).
-import type { DesignRequest, DesignRules, DesignTokens, ProjectOverview, ProjectProfile, SkillRef } from './uiux/types'
+import type { DesignProposal, DesignRequest, DesignRules, DesignTokens, JobOutcome, JobRequest, ProjectOverview, ProjectProfile, SkillContext, SkillRef, UiuxJob } from './uiux/types'
 
 /** Rectangle in CSS pixels (DIP) relative to the window that produced it. */
 export interface Rect {
@@ -373,6 +373,8 @@ export interface UiuxPayload {
   request: DesignRequest
   /** PNG data URL of the selected screen mock-up, saved as design-preview.png; never replaces the capture. */
   previewPngDataUrl?: string
+  /** Set by main only (any value from a renderer is replaced): the implementation_report job of this send. */
+  reportJobId?: string
 }
 
 export interface SaveResult {
@@ -422,6 +424,8 @@ export interface SendResult {
   error?: string
   /** Staged result: only steps main could confirm (plan 2026-10-25 §7). `delivered` stays for old callers. */
   status?: DeliveryStatus
+  /** UI/UX sends: the implementation_report job created for this send (the agent reports the change there). */
+  reportJobId?: string
 }
 
 /** A recorded replay of the drawing session (WebM from MediaRecorder). */
@@ -609,4 +613,42 @@ export interface UiuxApi {
   setPath(projectId: string, folder: string | null): Promise<void>
   /** Folder picker; null when cancelled. */
   pickFolder(): Promise<string | null>
+
+  // ---------- agent jobs (stages B–D) ----------
+  /** Creates a job for the project's agent and returns it with the text that tells the agent about it. */
+  requestJob(projectId: string, req: JobRequest): Promise<{ job: UiuxJob; requestText: string }>
+  /** copy: the request text goes on the clipboard; paste: also into the editor's current send target. */
+  deliverJob(jobId: string, how: 'copy' | 'paste'): Promise<{ ok: boolean; message: string }>
+  cancelJob(jobId: string): Promise<UiuxJob>
+  /** Moves the deadline to now + minutes. */
+  extendJob(jobId: string, minutes: number): Promise<UiuxJob>
+  listJobs(projectId: string): Promise<UiuxJob[]>
+  /** Stored result. A project_overview result is applied once per submission as a new revision (basis 'agent'). */
+  jobOutcome(jobId: string): Promise<JobOutcome | null>
+  /** Status changes of jobs while the editor is open. */
+  onJobUpdate(cb: (job: UiuxJob) => void): void
+  /** A mock-up PNG an agent submitted for a proposal, as a data URL. */
+  proposalPreview(jobId: string, proposalId: string): Promise<string | null>
+  /** Overview from a JSON file the user picks, validated like an agent result (basis 'imported'). */
+  importOverview(projectId: string): Promise<{ ok: boolean; errors?: string[]; overview?: ProjectOverview }>
+  /** Save the overview as Markdown or JSON, or a diagram PNG (data URL from the renderer), via a save dialog. */
+  exportOverview(projectId: string, format: 'md' | 'json' | 'png', pngDataUrl?: string): Promise<{ ok: boolean; path?: string }>
+  /** Hand edits to the overview: edited fields become the user's and an agent's re-analysis never silently replaces them. */
+  saveOverviewEdits(projectId: string, edits: UserOverviewInput): Promise<ProjectOverview>
+  /** The agent's skills (from its latest capabilities job) and what is known per skill for this project. */
+  skills(projectId: string): Promise<{ agent: SkillRef[]; contexts: SkillContext[]; capabilitiesJob?: UiuxJob }>
+  /** Proposals per design_proposal job, newest first. */
+  proposals(projectId: string): Promise<{ jobId: string; proposals: DesignProposal[]; overviewRevision?: number }[]>
+  /** Profile, rules and overview as a portable file (no absolute paths); import asks for this PC's folder. */
+  exportProfile(projectId: string): Promise<{ ok: boolean; path?: string }>
+  importProfile(): Promise<{
+    ok: boolean
+    projectId?: string
+    name?: string
+    /** true when the file's project id was already taken here and the project got a new id. */
+    idChanged?: boolean
+    /** true when the user picked a folder for this PC. */
+    folderLinked?: boolean
+    errors?: string[]
+  }>
 }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, ipcMain, screen } from 'electron'
 import { mkdir, writeFile } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { IPC } from '../shared/ipc'
@@ -18,6 +18,7 @@ import type {
 } from '../shared/types'
 import { pinParts } from './agents'
 import { buildBrief } from './brief'
+import { showSave } from './dialogs'
 import { saveSettings, sessionsRoot } from './config'
 import { briefTranslator, mergedMessages, uiLocale } from './locales'
 import { listTargets } from './destination'
@@ -27,6 +28,8 @@ import { sendToTarget } from './send'
 import { chooseForSend, toView, type EditorTargets } from './targets'
 import { setPicked } from './tracker'
 import { transcribe } from './stt'
+import { deliverJob, sendWithReportJob, unwatchJobs, watchJobsFor } from './uiux/jobs-app'
+import { pasteTextToTarget } from './uiux/jobpaste'
 import { appIcon, baseWebPreferences, loadPage, watchRendererErrors } from './windows'
 
 let ipcInstalled = false
@@ -89,7 +92,7 @@ async function handleSave(win: BrowserWindow | null, payload: ExportPayload): Pr
       defaultPath,
       filters: [{ name: 'PNG', extensions: ['png'] }]
     }
-    const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    const r = await showSave(win, opts)
     if (r.canceled || !r.filePath) return { ok: false, canceled: true }
     let file = r.filePath
     if (!file.toLowerCase().endsWith('.png')) file += '.png'
@@ -131,7 +134,7 @@ async function handleSaveVideo(win: BrowserWindow | null, video: VideoSave): Pro
       defaultPath: join(dir, `backseat-${stamp()}.${ext}`),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
     }
-    const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    const r = await showSave(win, opts)
     if (r.canceled || !r.filePath) return { ok: false, canceled: true }
     await writeFile(r.filePath, Buffer.from(video.bytes))
     return { ok: true, path: r.filePath }
@@ -183,7 +186,10 @@ export function installEditorIpc(): void {
     pendingConfirms.delete(e.sender)
     const clipboardOnly = choice.kind === 'clipboard' || opts.clipboardOnly
     const acceptTitle = !clipboardOnly && pending && ctx.identity && pending.hwnd === ctx.identity.hwnd && pending.pid === ctx.identity.pid ? pending.title : undefined
-    const result = await sendToTarget(BrowserWindow.fromWebContents(e.sender), payload, ctx, { ...opts, clipboardOnly }, { acceptTitle })
+    // A send with UI/UX guidance gets an implementation_report job first (jobs-app.ts): the brief names its id.
+    const result = await sendWithReportJob(payload, (p) =>
+      sendToTarget(BrowserWindow.fromWebContents(e.sender), p, ctx, { ...opts, clipboardOnly }, { acceptTitle })
+    )
     const status = result.status
     if (status?.stoppedAt?.reason === 'targetChanged' && ctx.identity) {
       const seen = liveWindow(ctx.identity.hwnd)
@@ -233,6 +239,14 @@ export function installEditorIpc(): void {
     })
   )
   ipcMain.handle(IPC.editorCopy, (_e, payload: ExportPayload) => copyToClipboard(payload))
+  // A job's request text: copied, or also pasted into this editor's send target (text only, the send's safety checks, no Enter).
+  ipcMain.handle(IPC.uiuxDeliverJob, (e, jobId: unknown, how: unknown) => {
+    const state = editorTargets.get(e.sender)
+    return deliverJob(jobId, how === 'paste' ? 'paste' : 'copy', (text) => {
+      const choice = state ? chooseForSend(state, {}, liveWindow) : null
+      return pasteTextToTarget(choice && choice.kind === 'target' ? choice.ctx : null, text)
+    })
+  })
   ipcMain.on(IPC.editorClose, (e) => BrowserWindow.fromWebContents(e.sender)?.close())
   ipcMain.on(IPC.editorNewCapture, (e) => {
     // The user is done with this capture: close it first so the new screenshot does not show the editor.
@@ -273,7 +287,11 @@ export function createEditorWindow(init: EditorInit, errors?: string[], targetSt
   const state = targetState ?? stateFromInit(init)
   editorTargets.set(win.webContents, state)
   const wc = win.webContents
-  win.on('closed', () => fetchWatchers.get(wc)?.())
+  watchJobsFor(wc)
+  win.on('closed', () => {
+    fetchWatchers.get(wc)?.()
+    unwatchJobs(wc)
+  })
   if (errors) watchRendererErrors(win.webContents, errors, 'editor')
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return

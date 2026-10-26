@@ -11,18 +11,18 @@ import type { DeliveryStopReason, ExportPayload, SendOptions, SendResult } from 
 import { t } from '../shared/i18n'
 import { classifyTarget, instructionLine, isPlainCapture, plainPathLine } from './agents'
 import { loadSettings } from './config'
-import { compareIdentity, DeliveryTracker, elementForLog, isChromiumRootPane, judgeInput, mayFocusSoleInput, mayPressEnter, type DeliveryLogEntry } from './delivery'
+import { DeliveryTracker, mayPressEnter, type DeliveryLogEntry } from './delivery'
 import { logDelivery } from './diaglog'
 import { briefTranslator } from './locales'
-import { describeWindow, focusWindow, foregroundHwnd, liveWindow, processNameOf, win32Available } from './native/win32'
-import { uiaClear, uiaEnterIfUnchanged, uiaFocusSoleInput, uiaInputCheck, uiaPasteIfUnchanged, type FocusInfo } from './native/uia'
+import { describeWindow, win32Available } from './native/win32'
+import { uiaClear, uiaEnterIfUnchanged } from './native/uia'
+import { runExclusive, verifyAndPaste } from './pasteflow'
 import { markAnswered } from './requests'
 import { sessionsRoot, writeSessionPackage } from './sessions'
 import { hasUiuxGuidance } from './uiux/package'
 import type { Resolved } from './targets'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-const CONSOLE_HOSTS = new Set(['conhost.exe', 'openconsole.exe'])
 
 async function clipboardText(text: string): Promise<void> {
   await clipboard.write([new ClipboardItem({ 'text/plain': text })])
@@ -49,9 +49,6 @@ export interface SendExtras {
   acceptTitle?: string
 }
 
-/** Two editors sending at once would fight over the focus: deliveries are queued. */
-let queue: Promise<unknown> = Promise.resolve()
-
 export function sendToTarget(
   editorWin: BrowserWindow | null,
   payload: ExportPayload,
@@ -59,10 +56,8 @@ export function sendToTarget(
   opts: SendOptions = {},
   extras: SendExtras = {}
 ): Promise<SendResult> {
-  const run = (): Promise<SendResult> => deliver(editorWin, payload, ctx, opts, extras)
-  const result = queue.then(run, run)
-  queue = result.catch(() => undefined)
-  return result
+  // Two editors sending at once (or a send and a job paste) would fight over the focus: one at a time.
+  return runExclusive(() => deliver(editorWin, payload, ctx, opts, extras))
 }
 
 async function deliver(
@@ -153,77 +148,17 @@ async function deliver(
     else await clipboardImageAndText(pkg.annotatedPng, imageLine)
     tracker.reach('clipboard')
 
-    // 1. Same window instance as chosen (a closed window or a reused handle is never "close enough"). A title
-    // the user confirmed after a stop replaces the remembered one — and must still be exactly that.
+    // 1–4. Same window instance, in front, an editable non-password field, Ctrl+V if nothing changed (pasteflow.ts).
+    // A title the user confirmed after a stop replaces the remembered one — and must still be exactly that.
     const expected = extras.acceptTitle !== undefined ? { ...identity, title: extras.acceptTitle } : identity
-    const before = compareIdentity(expected, liveWindow(target.hwnd), target.kind)
-    if (before === 'expired') return stopped('targetVerified', 'targetExpired', { targetExpired: true })
-    if (before === 'titleChanged') return stopped('targetVerified', 'targetChanged')
-
-    // 2. Bring it forward. The editor is not hidden (the user keeps their work in view); the target simply goes on top.
-    movedFocus = true
-    const focused = await focusWindow(target.hwnd)
-    if (!focused || foregroundHwnd() !== target.hwnd) return stopped('targetVerified', 'focusLost')
-    // What is in front now: for a browser the visible tab's title.
-    const after = compareIdentity(expected, liveWindow(target.hwnd), target.kind)
-    if (after === 'expired') return stopped('targetVerified', 'targetExpired', { targetExpired: true })
-    if (after === 'titleChanged') return stopped('targetVerified', 'targetChanged')
-    tracker.reach('targetVerified')
-
-    // 3. The focused element must be a field we may paste into — never a password field.
-    let focus: FocusInfo | null
-    // A classic console window's text area is a nameless Document of its console host process (conhost.exe).
-    const consoleWindow = describeWindow(target.hwnd)?.className === 'ConsoleWindowClass'
-    const judge = (f: FocusInfo | null) =>
-      judgeInput(f, {
-        pid: identity.pid,
-        method: target.method,
-        kind: target.kind,
-        consoleHostFocus: consoleWindow && f !== null && CONSOLE_HOSTS.has(processNameOf(f.pid).toLowerCase())
-      })
-    // Chromium's first answers may name its window pane until its accessibility tree is on: ask again shortly.
-    const check = async (): Promise<FocusInfo | null> => {
-      let f = await uiaInputCheck()
-      for (let i = 0; i < 5 && isChromiumRootPane(f); i++) {
-        await sleep(200)
-        f = await uiaInputCheck()
-      }
-      return f
-    }
-    try {
-      await sleep(80) // let the app restore its own focus after activation
-      focus = await check()
-      let verdict = judge(focus)
-      if (!verdict.ok && verdict.reason === 'notEditable' && mayFocusSoleInput(target.kind)) {
-        const sole = await uiaFocusSoleInput(target.hwnd)
-        log('soleInput', { detail: `candidates=${sole.candidates} passwordFields=${sole.passwordFields} focused=${sole.focused}` })
-        if (sole.focused) {
-          await sleep(120)
-          focus = await check()
-          verdict = judge(focus)
-        }
-      }
-      log('inputCheck', { element: elementForLog(focus, identity.pid), detail: verdict.ok ? `ok:${verdict.via}` : verdict.reason })
-      if (!verdict.ok) return stopped('inputVerified', verdict.reason)
-    } catch (err) {
-      log('inputCheck', { detail: `uia:${err instanceof Error ? err.message.slice(0, 80) : 'error'}` })
-      return stopped('inputVerified', 'uiaUnavailable')
-    }
-    tracker.reach('inputVerified')
-
-    // 4. Ctrl+V only if the same window is in front and the same element still has the focus.
-    let pasted
-    try {
-      pasted = await uiaPasteIfUnchanged(target.hwnd)
-    } catch {
-      return stopped('pasted', 'uiaUnavailable')
-    }
-    if (!pasted.pasted) {
-      const reason: DeliveryStopReason =
-        pasted.reason === 'password' ? 'passwordField' : pasted.reason === 'none' ? 'error' : pasted.reason === 'timeout' ? 'uiaUnavailable' : 'focusLost'
-      return stopped('pasted', reason)
-    }
-    tracker.reach('pasted')
+    const flow = await verifyAndPaste(target, expected, {
+      onFocus: () => {
+        movedFocus = true
+      },
+      reached: (step) => tracker.reach(step),
+      log
+    })
+    if (flow !== 'pasted') return stopped(flow.step, flow.reason, flow.reason === 'targetExpired' ? { targetExpired: true } : {})
 
     // 5. Enter only after a fully verified paste into a known AI tool that still looks like one (a terminal
     // tab that turned into a plain shell would run the line as a command), never after a confirmed title

@@ -1,24 +1,19 @@
 // UI/UX tools in the app: one store under <userData>/uiux and the editor's IPC for it.
 // Renderer input is checked here too (lengths, tokens, folders): the renderer is sandboxed but not trusted.
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { existsSync, statSync } from 'fs'
-import { join } from 'path'
 import { IPC } from '../../shared/ipc'
 import type { UiuxProjectState, UserOverviewInput } from '../../shared/types'
-import { UIUX_SCHEMA_VERSION, type ProjectProfile, type SkillRef } from '../../shared/uiux/types'
+import type { ProjectOverview, ProjectProfile, SkillRef } from '../../shared/uiux/types'
 import { readTokens } from '../../shared/uiux/validate'
-import { assertSafeId, UiuxStore } from './store'
+import { showOpen } from '../dialogs'
+import { uiuxStore } from './appstore'
+import { text, texts } from './clean'
+import { installJobsIpc, saveOverviewEdits } from './jobs-app'
+import { assertSafeId } from './store'
 
-let store: UiuxStore | null = null
+export { uiuxStore }
 
-/** The app's UI/UX store (created on first use; userData exists once the app is ready). */
-export function uiuxStore(): UiuxStore {
-  store ??= new UiuxStore(join(app.getPath('userData'), 'uiux'))
-  return store
-}
-
-const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
-const texts = (v: unknown, max: number, count = 12): string[] => (Array.isArray(v) ? v.map((x) => text(x, max)).filter(Boolean).slice(0, count) : [])
 const TOKEN_PATH = /^(colors|ratio|shadows|type|box)(\.[A-Za-z]+){0,2}$/
 
 export async function projectState(projectId: string): Promise<UiuxProjectState | null> {
@@ -29,34 +24,16 @@ export async function projectState(projectId: string): Promise<UiuxProjectState 
   return { profile, overview, rules, folder: paths.paths[projectId] ?? null }
 }
 
-/** Spec §5.5: without an agent the user types the basics; everything is marked as the user's, basis "user". */
-export async function saveUserOverview(projectId: string, input: UserOverviewInput) {
-  const s = uiuxStore()
-  if (!(await s.getProject(assertSafeId(projectId, 'projectId')))) throw new Error('unknown project')
-  const prev = await s.getOverview(projectId)
-  const user = (value: string) => ({ value, source: 'user' as const })
-  const screens = texts(input.screenKinds, 80)
-  return s.saveOverview({
-    schemaVersion: UIUX_SCHEMA_VERSION,
-    projectId,
-    basis: 'user',
-    summary: user(text(input.summary, 300)),
-    purpose: user(text(input.purpose, 1000)),
-    goals: texts(input.goals, 200).map(user),
-    audiences: texts(input.audiences, 300).map(user),
-    // An agent's structure and flows stay until the user replaces them through an agent again.
-    workflows: prev?.workflows ?? [],
-    architecture: prev?.architecture ?? { nodes: [], edges: [] },
-    stack: prev?.stack ?? [],
-    designState: [...(prev?.designState.filter((c) => !c.value.startsWith('screen:')) ?? []), ...screens.map((k) => user(`screen: ${k}`))],
-    designConstraints: prev?.designConstraints ?? [],
-    sources: prev?.sources ?? [],
-    unknowns: prev?.unknowns ?? [],
-    generatedAt: new Date().toISOString()
-  })
+/**
+ * Spec §5.5: the user types the basics. The first time everything is the user's (basis "user"); over a stored
+ * overview only the edited fields become the user's and an agent's other fields stay (one write path: saveOverviewEdits).
+ */
+export function saveUserOverview(projectId: unknown, input: UserOverviewInput): Promise<ProjectOverview> {
+  return saveOverviewEdits(projectId, input)
 }
 
 export function installUiuxIpc(): void {
+  installJobsIpc()
   ipcMain.handle(IPC.uiuxListProjects, () => uiuxStore().listProjects())
   ipcMain.handle(IPC.uiuxCreateProject, (_e, f: { name?: unknown; repo?: unknown }) => {
     const name = text(f?.name, 80)
@@ -81,7 +58,7 @@ export function installUiuxIpc(): void {
     return uiuxStore().saveProject(next)
   })
   ipcMain.handle(IPC.uiuxProjectState, (_e, projectId: unknown) => projectState(text(projectId, 64)))
-  ipcMain.handle(IPC.uiuxSaveUserOverview, (_e, projectId: unknown, input: UserOverviewInput) => saveUserOverview(text(projectId, 64), input ?? ({} as UserOverviewInput)))
+  ipcMain.handle(IPC.uiuxSaveUserOverview, (_e, projectId: unknown, input: UserOverviewInput) => saveUserOverview(projectId, input))
   ipcMain.handle(IPC.uiuxSaveRules, async (_e, projectId: unknown, r: { tokens?: unknown; locks?: unknown; skill?: SkillRef }) => {
     const pid = assertSafeId(text(projectId, 64), 'projectId')
     const tokens = readTokens(r?.tokens)
@@ -104,9 +81,5 @@ export function installUiuxIpc(): void {
     if (f !== null && !(existsSync(f) && statSync(f).isDirectory())) throw new Error('not a folder')
     return uiuxStore().setPath(text(projectId, 64), f)
   })
-  ipcMain.handle(IPC.uiuxPickFolder, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
-    const r = win ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] }) : await dialog.showOpenDialog({ properties: ['openDirectory'] })
-    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
-  })
+  ipcMain.handle(IPC.uiuxPickFolder, (e) => showOpen(BrowserWindow.fromWebContents(e.sender), { properties: ['openDirectory'] }))
 }

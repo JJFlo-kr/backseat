@@ -11,23 +11,21 @@
 // the agent sent. Mock-up images go next to it as jobs/<jobId>.<proposalId>.png and are referenced by file name.
 import { createHash } from 'crypto'
 import {
-  UIUX_SCHEMA_VERSION, type DesignProposal, type JobType, type ProjectOverview, type SkillContext, type SkillRef, type UiuxJob
+  UIUX_SCHEMA_VERSION, type DesignProposal, type ImplementationReport, type JobType, type ProjectOverview, type SkillContext, type SkillRef,
+  type StyleFinding, type UiuxJob
 } from '../../shared/uiux/types'
 import {
-  overviewCompleteness, readOverview, readProposal, readSkillContext, readSkillList, type OverviewGap
+  isObj, overviewCompleteness, readOverview, readProposal, readSkillContext, readSkillList, type OverviewGap
 } from '../../shared/uiux/validate'
 import { UiuxStore, assertSafeId } from '../uiux/store'
 import { checkPngBase64 } from './jobimage'
 import { isJobType } from './jobspec'
-import { readStyleAudit, type StyleFinding } from './styleaudit'
+import { readImplementationReport, readStyleAudit } from './styleaudit'
 
 export const MAX_PROPOSALS = 4
 /** Proposals read from one submission before duplicates are dropped (a flood guard, not a product limit). */
 const MAX_RAW_PROPOSALS = 12
 export const MAX_NOTE = 500
-
-type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 // ---------- stored result ----------
 
@@ -60,6 +58,8 @@ export interface JobResultFile {
   dedupedProposalIds?: string[]
   /** style_audit */
   findings?: StyleFinding[]
+  /** implementation_report: the agent's own account of what it changed. A claim, not proof: the user confirms by capturing again. */
+  report?: ImplementationReport
 }
 
 // ---------- states ----------
@@ -169,6 +169,8 @@ export interface SubmitSummary {
   previewRefs?: string[]
   findings?: number
   skills?: number
+  /** implementation_report: how many changed files the agent listed. */
+  changedFiles?: number
 }
 
 export type SubmitOutcome =
@@ -199,6 +201,7 @@ function summaryOf(file: JobResultFile): SubmitSummary {
   if (file.dedupedProposalIds?.length) s.dedupedProposalIds = file.dedupedProposalIds
   if (file.findings) s.findings = file.findings.length
   if (file.skills) s.skills = file.skills.length
+  if (file.report) s.changedFiles = file.report.changedFiles.length
   return s
 }
 
@@ -248,6 +251,11 @@ function validateResult(job: UiuxJob, input: unknown, raw: unknown): Validated {
       const r = readStyleAudit(raw, { projectId: job.projectId })
       if (!r.ok) return r
       return { ok: true, payload: { findings: r.value }, images: [] }
+    }
+    case 'implementation_report': {
+      const r = readImplementationReport(raw, { projectId: job.projectId })
+      if (!r.ok) return r
+      return { ok: true, payload: { report: r.value }, images: [] }
     }
     case 'design_proposal':
       return validateProposals(job, input, raw)

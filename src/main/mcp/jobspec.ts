@@ -100,12 +100,21 @@ const STYLE_AUDIT = obj({
   findings: list(withEvidence({ area: str(120), issue: str(600), suggestion: str(600) }, ['area', 'issue', 'suggestion']), MAX_FINDINGS)
 }, ['findings'])
 
+const IMPLEMENTATION_REPORT = obj({
+  projectId: PROJECT_ID,
+  summary: str(1500),
+  changedFiles: list(EVIDENCE, 40),
+  notDone: strList(300, 40),
+  checksRun: strList(300, 40)
+}, ['summary', 'changedFiles', 'notDone', 'checksRun'])
+
 const SCHEMAS: Record<JobType, Schema> = {
   project_overview: OVERVIEW,
   skill_setup: SKILL_CONTEXT,
   capabilities: CAPABILITIES,
   design_proposal: DESIGN_PROPOSAL,
-  style_audit: STYLE_AUDIT
+  style_audit: STYLE_AUDIT,
+  implementation_report: IMPLEMENTATION_REPORT
 }
 
 export function isJobType(v: unknown): v is JobType {

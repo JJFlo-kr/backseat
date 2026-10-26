@@ -80,6 +80,8 @@ async function writeFiles(
   const hasShot = Boolean(payload.basePngDataUrl)
   // Applied UI/UX guidance: the request is written as given, but previewRef only when design-preview.png is written.
   const design = designFiles(payload)
+  // The implementation_report job named in the brief and meta.json (set by main, only with guidance).
+  const reportJobId = design ? payload.uiux?.reportJobId : undefined
   const briefPayload: ExportPayload = design && payload.uiux ? { ...payload, uiux: { ...payload.uiux, request: design.request } } : payload
   out.push(['annotated.png', pngBuffer(payload.pngDataUrl)])
   out.push([
@@ -88,6 +90,7 @@ async function writeFiles(
       ...(hasShot ? { screenshotFileName: 'screenshot.png' } : {}),
       ...(design?.preview ? { uiuxPreviewFileName: DESIGN_PREVIEW_FILE } : {}),
       ...(design?.previewRejected ? { uiuxPreviewMissing: true } : {}),
+      ...(reportJobId ? { uiuxReportJobId: reportJobId } : {}),
       t: briefTranslator()
     })
   ])
@@ -126,7 +129,7 @@ async function writeFiles(
         recipient: target?.mcp ? { agentId: target.mcp.id, name: target.mcp.name, cwd: target.mcp.cwd } : undefined,
         meta: payload.meta,
         // Why a sent mock-up is not in the package (the request then has no previewRef).
-        uiux: design?.previewRejected ? { previewRejected: design.previewRejected } : undefined,
+        uiux: design?.previewRejected || reportJobId ? { ...(design?.previewRejected ? { previewRejected: design.previewRejected } : {}), ...(reportJobId ? { reportJobId } : {}) } : undefined,
         target,
         files
       },

@@ -8,7 +8,7 @@
 //   local/paths.json                         ProjectPathMap: this PC's folder per project (never exported)
 // Writes are atomic (writeFileAtomic); ids are checked before they become file names.
 import { randomBytes } from 'crypto'
-import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { renameRetry, writeFileAtomic } from '../fsutil'
 import {
@@ -44,6 +44,12 @@ async function writeJson(file: string, value: unknown): Promise<void> {
 
 const nowIso = (): string => new Date().toISOString()
 
+/** A copy of the job, reported as 'expired' when its deadline passed while it was still open. */
+function withDeadline(j: UiuxJob): UiuxJob {
+  if ((j.status === 'pending' || j.status === 'fetched') && Date.parse(j.expiresAt) < Date.now()) return { ...j, status: 'expired' }
+  return { ...j }
+}
+
 export const DEFAULT_JOB_MINUTES = 5
 
 /** Extra job files: "<name>.png" / "<name>.txt" (never .json: listJobs would take such a file for a job). */
@@ -51,6 +57,8 @@ const JOB_FILE_SUFFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}.(png|txt)$/
 
 export class UiuxStore {
   readonly root: string
+  /** listJobs: each job file as last parsed, keyed by path; reused while the file's identity, size and time stay. */
+  private jobCache = new Map<string, { key: string; job: UiuxJob }>()
 
   constructor(root: string) {
     this.root = root
@@ -97,6 +105,21 @@ export class UiuxStore {
     if (fields.agentId) p.agentId = fields.agentId
     await writeJson(join(this.projectDir(p.projectId), 'profile.json'), p)
     return p
+  }
+
+  /** Stores an imported profile under its own id; false when a project with that id exists (nothing is overwritten). */
+  async addProject(p: ProjectProfile): Promise<boolean> {
+    const file = join(this.projectDir(p.projectId), 'profile.json')
+    if (await readJson<ProjectProfile>(file).catch(() => null)) return false
+    await writeJson(file, p)
+    return true
+  }
+
+  /** A project id that is free (the wanted one, else the wanted one plus a random suffix). */
+  async freeProjectId(wanted: string): Promise<string> {
+    let id = assertSafeId(wanted, 'projectId')
+    while (await this.getProject(id)) id = `${wanted.slice(0, 55)}-${randomBytes(3).toString('hex')}`
+    return id
   }
 
   async saveProject(p: ProjectProfile): Promise<ProjectProfile> {
@@ -155,6 +178,23 @@ export class UiuxStore {
     return readJson<SkillContext>(join(this.projectDir(projectId), 'skills', `${assertSafeId(skillId, 'skillId')}.json`))
   }
 
+  async listSkillContexts(projectId: string): Promise<SkillContext[]> {
+    const dir = join(this.projectDir(projectId), 'skills')
+    let names: string[]
+    try {
+      names = await readdir(dir)
+    } catch {
+      return []
+    }
+    const out: SkillContext[] = []
+    for (const n of names) {
+      if (!n.endsWith('.json')) continue
+      const c = await readJson<SkillContext>(join(dir, n)).catch(() => null)
+      if (c && c.skill && typeof c.skill.id === 'string') out.push(c)
+    }
+    return out.sort((a, b) => a.skill.id.localeCompare(b.skill.id))
+  }
+
   async saveSkillContext(c: Omit<SkillContext, 'revision' | 'schemaVersion'>): Promise<SkillContext> {
     const prev = await this.getSkillContext(c.projectId, c.skill.id)
     const next: SkillContext = { ...c, schemaVersion: UIUX_SCHEMA_VERSION, revision: (prev?.revision ?? 0) + 1 }
@@ -168,7 +208,7 @@ export class UiuxStore {
     return join(this.root, 'jobs', `${assertSafeId(jobId, 'jobId')}${suffix}.json`)
   }
 
-  async createJob(fields: { type: JobType; projectId: string; agentId?: string; inputRevision: number; skillId?: string; minutes?: number; input?: unknown }): Promise<UiuxJob> {
+  async createJob(fields: { type: JobType; projectId: string; agentId?: string; inputRevision: number; skillId?: string; minutes?: number; input?: unknown; buildInput?: (jobId: string) => unknown | Promise<unknown> }): Promise<UiuxJob> {
     assertSafeId(fields.projectId, 'projectId')
     const t = Date.now()
     const job: UiuxJob = {
@@ -184,7 +224,10 @@ export class UiuxStore {
     }
     if (fields.agentId) job.agentId = fields.agentId
     if (fields.skillId) job.skillId = assertSafeId(fields.skillId, 'skillId')
-    if (fields.input !== undefined) await writeJson(this.jobFile(job.jobId, '.input'), fields.input)
+    // buildInput runs once the id exists (files that belong to the job, like a capture, are named after it) and before
+    // the job file: an agent can only learn the id from the job file's existence, so it never sees a job without input.
+    const input = fields.buildInput ? await fields.buildInput(job.jobId) : fields.input
+    if (input !== undefined) await writeJson(this.jobFile(job.jobId, '.input'), input)
     await writeJson(this.jobFile(job.jobId), job)
     return job
   }
@@ -192,8 +235,12 @@ export class UiuxStore {
   /** The job with an expired deadline reported as such (stored state is updated lazily by updateJob). */
   async getJob(jobId: string): Promise<UiuxJob | null> {
     const j = await readJson<UiuxJob>(this.jobFile(jobId))
-    if (j && (j.status === 'pending' || j.status === 'fetched') && Date.parse(j.expiresAt) < Date.now()) return { ...j, status: 'expired' }
-    return j
+    return j && withDeadline(j)
+  }
+
+  /** Replaces a job's input (e.g. the session folder of a send, known only after the package was written). */
+  async setJobInput(jobId: string, input: unknown): Promise<void> {
+    await writeJson(this.jobFile(jobId, '.input'), input)
   }
 
   async getJobInput<T = unknown>(jobId: string): Promise<T | null> {
@@ -218,8 +265,11 @@ export class UiuxStore {
     return readJson<T>(this.jobFile(jobId, '.result'))
   }
 
-  /** jobs/<jobId>.<suffix> for files that belong to a job (mock-up PNGs, progress notes); suffix ends in .png or .txt. */
-  private jobExtraFile(jobId: string, suffix: string): string {
+  /**
+   * Absolute path of jobs/<jobId>.<suffix> for files that belong to a job (captures, mock-up PNGs, progress notes; local
+   * job inputs, never exported); suffix ends in .png or .txt.
+   */
+  jobExtraFile(jobId: string, suffix: string): string {
     if (!JOB_FILE_SUFFIX.test(suffix) || suffix.includes('..')) throw new Error(`invalid job file name: ${JSON.stringify(suffix).slice(0, 80)}`)
     return join(this.root, 'jobs', `${assertSafeId(jobId, 'jobId')}.${suffix}`)
   }
@@ -256,15 +306,25 @@ export class UiuxStore {
     } catch {
       return []
     }
-    const out: UiuxJob[] = []
-    for (const n of names) {
-      if (!n.endsWith('.json') || n.endsWith('.result.json') || n.endsWith('.input.json')) continue
-      const j = await this.getJob(n.slice(0, -5)).catch(() => null)
-      if (!j) continue
-      if (filter.projectId && j.projectId !== filter.projectId) continue
-      if (filter.status && !filter.status.includes(j.status)) continue
-      out.push(j)
+    // The watcher polls this every 1.5 s: a file whose identity, size and time are unchanged is not read again.
+    const cache = new Map<string, { key: string; job: UiuxJob }>()
+    const read = async (n: string): Promise<UiuxJob | null> => {
+      try {
+        const file = this.jobFile(n.slice(0, -5))
+        const st = await stat(file)
+        const key = `${st.ino}|${st.size}|${st.mtimeMs}`
+        const hit = this.jobCache.get(file)
+        const job = hit && hit.key === key ? hit.job : await readJson<UiuxJob>(file)
+        if (!job) return null
+        cache.set(file, { key, job })
+        return withDeadline(job)
+      } catch {
+        return null
+      }
     }
+    const jobs = await Promise.all(names.filter((n) => n.endsWith('.json') && !n.endsWith('.result.json') && !n.endsWith('.input.json')).map(read))
+    this.jobCache = cache
+    const out = jobs.filter((j): j is UiuxJob => j !== null && (!filter.projectId || j.projectId === filter.projectId) && (!filter.status || filter.status.includes(j.status)))
     return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 }

@@ -46,7 +46,8 @@ const WHAT_KEYS: Record<JobType, string> = {
   skill_setup: 'mcp.job.what.skill_setup',
   capabilities: 'mcp.job.what.capabilities',
   design_proposal: 'mcp.job.what.design_proposal',
-  style_audit: 'mcp.job.what.style_audit'
+  style_audit: 'mcp.job.what.style_audit',
+  implementation_report: 'mcp.job.what.implementation_report'
 }
 
 const GAP_KEYS = {
@@ -85,6 +86,7 @@ function submitReply(tr: Translate, out: SubmitOutcome, jobId: string): Reply {
         lines.push(tr('mcp.job.submit.incomplete', { jobId, expiresAt: out.job.expiresAt }))
         lines.push(...s.completeness.gaps.map((g) => `- ${tr(GAP_KEYS[g])}`))
       } else lines.push(tr('mcp.job.submit.accepted', { jobId }))
+      if (s.type === 'implementation_report') lines.push(tr('mcp.job.submit.reportNote'))
       if (s.dedupedProposalIds?.length) lines.push(tr('mcp.job.submit.deduped', { ids: s.dedupedProposalIds.join(', ') }))
       return reply(lines, data)
     }

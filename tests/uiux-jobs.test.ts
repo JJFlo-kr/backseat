@@ -436,3 +436,60 @@ test('every job type has a result schema that asks for what the validators requi
   assert.ok((resultSchema('design_proposal') as { required: string[] }).required.includes('proposals'))
   assert.ok((resultSchema('style_audit') as { required: string[] }).required.includes('findings'))
 })
+
+// ---------- implementation_report ----------
+
+const report = (over: Record<string, unknown> = {}) => ({
+  summary: 'Darkened the primary button and kept the layout',
+  changedFiles: [{ path: 'src/styles/button.css', note: 'primary colour' }, { path: 'src/App.tsx' }],
+  notDone: ['Dark theme: not requested in this send'],
+  checksRun: ['npm test'],
+  ...over
+})
+
+test('implementation_report: accepted, stored as report, the agent\'s own account', async () => {
+  await withStore(async (s) => {
+    const j = await newJob(s, { type: 'implementation_report', inputRevision: 0, input: { sessionDir: '20261027-100000-000-aaaa' } })
+    const open = await openJob(s, j.jobId)
+    assert.equal(open.kind === 'open' && open.job.status, 'fetched')
+    const out = must(await submitJobResult(s, { jobId: j.jobId, inputRevision: 0, result: { projectId: PID, ...report() } }), 'submitted')
+    assert.equal(out.summary.changedFiles, 2)
+    assert.equal((await s.getJob(j.jobId))?.status, 'submitted')
+    const file = await s.getJobResult<JobResultFile>(j.jobId)
+    assert.equal(file?.type, 'implementation_report')
+    assert.deepEqual(file?.report, { summary: 'Darkened the primary button and kept the layout', changedFiles: [{ path: 'src/styles/button.css', note: 'primary colour' }, { path: 'src/App.tsx' }], notDone: ['Dark theme: not requested in this send'], checksRun: ['npm test'] })
+    // empty lists are fine: the agent may have changed nothing and say so
+    const none = await newJob(s, { type: 'implementation_report' })
+    must(await submitJobResult(s, { jobId: none.jobId, inputRevision: 2, result: report({ changedFiles: [], notDone: [], checksRun: [] }) }), 'submitted')
+  })
+})
+
+test('implementation_report: another project, absolute or escaping paths, empty summary and long lists are rejected', async () => {
+  await withStore(async (s) => {
+    const j = await newJob(s, { type: 'implementation_report' })
+    const send = async (result: unknown) => must(await submitJobResult(s, { jobId: j.jobId, inputRevision: 2, result }), 'rejected').errors.join('\n')
+    assert.match(await send(report({ projectId: 'other-9' })), /\$\.projectId: is for project "other-9"/)
+    for (const path of ['C:\\Users\\me\\app\\a.css', 'D:/work/a.css', '/etc/passwd', '\\\\server\\share\\a.css', '~/a.css', '../outside.css', 'src/../../x.css']) {
+      assert.match(await send(report({ changedFiles: [{ path }] })), /\$\.changedFiles\[0\]\.path: must be a project-relative path/, path)
+    }
+    assert.match(await send(report({ summary: '  ' })), /\$\.summary: must not be empty/)
+    assert.match(await send(report({ summary: 'x'.repeat(1501) })), /longer than 1500/)
+    assert.match(await send(report({ notDone: Array.from({ length: 41 }, () => 'x') })), /more than 40/)
+    assert.match(await send(report({ checksRun: [5] })), /\$\.checksRun\[0\]: expected a string/)
+    assert.match(await send(report({ changedFiles: 'src/a.css' })), /expected a list/)
+    assert.match(await send('nope-not-json'), /not valid JSON/)
+    assert.equal(await s.getJobResult(j.jobId), null)
+    must(await submitJobResult(s, { jobId: j.jobId, inputRevision: 2, result: report() }), 'submitted')
+  })
+})
+
+test('implementation_report: the same report twice is one result; a different one is refused', async () => {
+  await withStore(async (s) => {
+    const j = await newJob(s, { type: 'implementation_report' })
+    must(await submitJobResult(s, { jobId: j.jobId, inputRevision: 2, result: report() }), 'submitted')
+    const before = await s.getJobResult<JobResultFile>(j.jobId)
+    assert.equal(must(await submitJobResult(s, { jobId: j.jobId, inputRevision: 2, result: report() }), 'submitted').duplicate, true)
+    must(await submitJobResult(s, { jobId: j.jobId, inputRevision: 2, result: report({ summary: 'Another story' }) }), 'already_submitted')
+    assert.deepEqual(await s.getJobResult(j.jobId), before)
+  })
+})

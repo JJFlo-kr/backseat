@@ -66,6 +66,8 @@ export interface BriefOptions {
   uiuxPreviewFileName?: string
   /** UI/UX guidance: a mock-up was sent but could not be included in the package. */
   uiuxPreviewMissing?: boolean
+  /** UI/UX guidance: the implementation_report job of this send; the brief tells the agent to report on it. */
+  uiuxReportJobId?: string
 }
 
 /** Markdown brief that accompanies a saved capture. Image path is relative to the .md file. */
@@ -163,7 +165,8 @@ export function buildBrief(
     lines.push(
       ...uiuxBriefLines(payload.uiux.request, annotations, tr, {
         ...(options.uiuxPreviewFileName ? { previewFileName: options.uiuxPreviewFileName } : {}),
-        ...(options.uiuxPreviewMissing ? { previewMissing: true } : {})
+        ...(options.uiuxPreviewMissing ? { previewMissing: true } : {}),
+        ...(options.uiuxReportJobId ? { reportJobId: options.uiuxReportJobId } : {})
       })
     )
   }

@@ -14,11 +14,11 @@ const MAX_TEXT = 2000
 const MAX_SHORT = 200
 const MAX_LIST = 60
 
-type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
+export type Obj = Record<string, unknown>
+export const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /** Collects errors with their JSON path while reading an untrusted object. */
-class Reader {
+export class Reader {
   errors: string[] = []
   err(path: string, msg: string): void {
     if (this.errors.length < 50) this.errors.push(`${path}: ${msg}`)
@@ -87,7 +87,7 @@ export function isRelativePath(p: string): boolean {
   return !p.split(/[\\/]/).includes('..')
 }
 
-function evidence(r: Reader, v: unknown, path: string): Evidence {
+export function readEvidence(r: Reader, v: unknown, path: string): Evidence {
   const o = r.obj(v, path)
   const p = r.str(o.path, `${path}.path`, 400)
   if (p && !isRelativePath(p)) r.err(`${path}.path`, 'must be a project-relative path')
@@ -108,7 +108,7 @@ function provenance(r: Reader, v: unknown, path: string): Provenance {
 function claim(r: Reader, v: unknown, path: string, max = MAX_TEXT): Claim {
   const o = r.obj(v, path)
   const c: Claim = { value: r.str(o.value, `${path}.value`, max), source: provenance(r, o.source, `${path}.source`) }
-  const ev = r.list(o.evidence, `${path}.evidence`, (x, p) => evidence(r, x, p), { max: 20 })
+  const ev = r.list(o.evidence, `${path}.evidence`, (x, p) => readEvidence(r, x, p), { max: 20 })
   if (ev.length) c.evidence = ev
   // "verified" has to say where it was verified.
   if (c.source === 'verified' && !ev.length) r.err(`${path}.evidence`, 'a verified statement needs evidence')
@@ -137,7 +137,7 @@ function architecture(r: Reader, v: unknown, path: string): Architecture {
     if (d) node.description = d
     const parent = r.optStr(n.parent, `${p}.parent`, 64)
     if (parent) node.parent = parent
-    const ev = r.list(n.evidence, `${p}.evidence`, (y, q) => evidence(r, y, q), { max: 10 })
+    const ev = r.list(n.evidence, `${p}.evidence`, (y, q) => readEvidence(r, y, q), { max: 10 })
     if (ev.length) node.evidence = ev
     return node
   }, { min: 1, max: 80 })
@@ -157,7 +157,7 @@ function architecture(r: Reader, v: unknown, path: string): Architecture {
     }
     if (!ids.has(edge.from)) r.err(`${p}.from`, `unknown node ${edge.from}`)
     if (!ids.has(edge.to)) r.err(`${p}.to`, `unknown node ${edge.to}`)
-    const ev = r.list(e.evidence, `${p}.evidence`, (y, q) => evidence(r, y, q), { max: 10 })
+    const ev = r.list(e.evidence, `${p}.evidence`, (y, q) => readEvidence(r, y, q), { max: 10 })
     if (ev.length) edge.evidence = ev
     return edge
   }, { max: 200 })
@@ -197,7 +197,7 @@ export function readOverview(v: unknown, expectedProjectId: string): Result<Omit
     stack: r.list(o.stack, '$.stack', (x, p) => claim(r, x, p, 300), { max: 30 }),
     designState: r.list(o.designState, '$.designState', (x, p) => claim(r, x, p, 400), { max: 30 }),
     designConstraints: r.list(o.designConstraints, '$.designConstraints', (x, p) => claim(r, x, p, 400), { max: 30 }),
-    sources: r.list(o.sources, '$.sources', (x, p) => evidence(r, x, p), { max: 60 }),
+    sources: r.list(o.sources, '$.sources', (x, p) => readEvidence(r, x, p), { max: 60 }),
     unknowns: r.list(o.unknowns, '$.unknowns', (x, p) => r.str(x, p, 300), { max: 30 }),
     questions: r.list(o.questions, '$.questions', (x, p) => r.str(x, p, 300), { max: 20 })
   }

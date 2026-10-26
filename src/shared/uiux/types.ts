@@ -1,5 +1,5 @@
 // UI/UX tools: data contracts shared by main, preload, renderers and the MCP server.
-// Pure types (no Electron, no DOM). Spec: D:\backseat-docs\specs\2026-10-26-uiux-tools-v1 §12, plus design skills
+// Pure types (no Electron, no DOM). Spec: UI/UX tools spec v1 (kept outside this repository) §12, plus design skills
 // (plan §1.4). Every stored document carries schemaVersion; every field added later must be optional, and data
 // without these fields means "no UI/UX guidance" (old session packages stay valid).
 
@@ -47,6 +47,8 @@ export interface ProjectProfile {
   agentId?: string
   /** Skills the user chose for this project, in order. */
   skillIds?: string[]
+  /** design_proposal requests made so far; the next one is this + 1 (an answer to an older request is told apart). */
+  proposalRequests?: number
   createdAt: string
   updatedAt: string
 }
@@ -292,8 +294,12 @@ export interface DesignRequest {
 
 // ---------- agent jobs ----------
 
-export type JobType = 'capabilities' | 'project_overview' | 'skill_setup' | 'design_proposal' | 'style_audit'
-export const JOB_TYPES: readonly JobType[] = ['capabilities', 'project_overview', 'skill_setup', 'design_proposal', 'style_audit']
+/**
+ * implementation_report: created with every send that carries UI/UX guidance; the agent that carried out the
+ * change reports what it changed (spec §10.3 "AI 작업 결과 수신"). A fetch of the package alone is never that.
+ */
+export type JobType = 'capabilities' | 'project_overview' | 'skill_setup' | 'design_proposal' | 'style_audit' | 'implementation_report'
+export const JOB_TYPES: readonly JobType[] = ['capabilities', 'project_overview', 'skill_setup', 'design_proposal', 'style_audit', 'implementation_report']
 
 /**
  * pending   — created, the agent has not fetched it ("waiting for the agent", never "analysing")
@@ -344,4 +350,58 @@ export interface SkillContext {
   missing: string[]
   generatedAt: string
   jobId?: string
+}
+
+// ---------- results the panel shows ----------
+
+/** One deviation from the project's rules found by a style audit. */
+export interface StyleFinding {
+  /** Screen, component or file area the finding is about. */
+  area: string
+  issue: string
+  source: Provenance
+  evidence?: Evidence[]
+  suggestion: string
+}
+
+/** What the agent says it did for a UI/UX request (implementation_report job). Its own account, not proof. */
+export interface ImplementationReport {
+  summary: string
+  changedFiles: Evidence[]
+  /** Requested items it did not do, and why. */
+  notDone: string[]
+  /** Checks the agent says it ran; shown as the agent's claim, the user still confirms. */
+  checksRun: string[]
+}
+
+/** The outcome of a job as the panel sees it (main reads jobs/<id>.result.json). */
+export interface JobOutcome {
+  job: UiuxJob
+  submission?: number
+  completeness?: { complete: boolean; gaps: string[] }
+  skills?: SkillRef[]
+  proposals?: DesignProposal[]
+  findings?: StyleFinding[]
+  report?: ImplementationReport
+  /** The overview revision stored from this result, when it was a project_overview. */
+  overviewRevision?: number
+}
+
+/** Options when the panel asks for a job. */
+export interface JobRequest {
+  type: JobType
+  skillId?: string
+  minutes?: number
+  /** design_proposal / style_audit: the capture the agent should look at (PNG data URLs; blur already applied). */
+  capturePng?: string
+  annotatedPng?: string
+  scope?: DesignScope
+  preserve?: string[]
+  /** design_proposal: what the screen is for, in the user's words. */
+  screenPurpose?: string
+  /** design_proposal: current values and locks the agent must respect. */
+  tokens?: DesignTokens
+  locks?: TokenPath[]
+  /** implementation_report: the send it belongs to. */
+  sessionDir?: string
 }

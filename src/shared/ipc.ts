@@ -34,6 +34,22 @@ export const IPC = {
   uiuxSaveRules: 'uiux:save-rules',
   uiuxSetPath: 'uiux:set-path',
   uiuxPickFolder: 'uiux:pick-folder',
+  // agent jobs and overview files (src/main/uiux/jobs-app.ts); uiuxJobUpdate is main -> editor
+  uiuxRequestJob: 'uiux:request-job',
+  uiuxDeliverJob: 'uiux:deliver-job',
+  uiuxCancelJob: 'uiux:cancel-job',
+  uiuxExtendJob: 'uiux:extend-job',
+  uiuxListJobs: 'uiux:list-jobs',
+  uiuxJobOutcome: 'uiux:job-outcome',
+  uiuxJobUpdate: 'uiux:job-update',
+  uiuxProposalPreview: 'uiux:proposal-preview',
+  uiuxImportOverview: 'uiux:import-overview',
+  uiuxExportOverview: 'uiux:export-overview',
+  uiuxSaveOverviewEdits: 'uiux:save-overview-edits',
+  uiuxSkills: 'uiux:skills',
+  uiuxProposals: 'uiux:proposals',
+  uiuxExportProfile: 'uiux:export-profile',
+  uiuxImportProfile: 'uiux:import-profile',
 
   // about window -> main (invoke)
   aboutInfo: 'about:info',

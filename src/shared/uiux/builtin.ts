@@ -66,8 +66,8 @@ export function defaultTokens(theme: 'light' | 'dark' = 'light'): DesignTokens {
 
 // ---------- token paths ----------
 
-type Plain = Record<string, unknown>
-const isPlain = (v: unknown): v is Plain => typeof v === 'object' && v !== null && !Array.isArray(v)
+export type Plain = Record<string, unknown>
+export const isPlain = (v: unknown): v is Plain => typeof v === 'object' && v !== null && !Array.isArray(v)
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 /** Optional leaves of BoxSpec: allowed as a path although they may be missing. */
 const OPTIONAL_PATHS = new Set(['box.buttonMinWidth', 'box.maxWidth'])
@@ -105,7 +105,7 @@ export function isLocked(path: TokenPath, locks: readonly TokenPath[]): boolean 
   return locks.some((l) => path === l || path.startsWith(l + '.'))
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
+export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (isPlain(a) && isPlain(b)) {
     const keys = new Set([...Object.keys(a), ...Object.keys(b)])

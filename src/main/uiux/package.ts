@@ -3,6 +3,7 @@
 // appends the text. All user-visible text is a message key (brief language).
 import type { Annotation, ExportPayload } from '../../shared/types.ts'
 import type { Translate } from '../../shared/i18n.ts'
+import { isObj } from '../../shared/uiux/validate.ts'
 import { COLOR_ROLES, SHADOW_ROLES, TYPE_ROLES, type Check, type DesignRequest, type DesignScope } from '../../shared/uiux/types.ts'
 
 export const DESIGN_REQUEST_FILE = 'design-request.json'
@@ -79,6 +80,8 @@ export interface UiuxBriefOptions {
   previewFileName?: string
   /** A mock-up was sent but could not be included. */
   previewMissing?: boolean
+  /** implementation_report job of this send: the agent reports what it changed there. */
+  reportJobId?: string
 }
 
 const MAX_TEXT = 240
@@ -98,9 +101,6 @@ function badge(i: number): string {
   return i < CIRCLED.length ? CIRCLED[i] : `(${i + 1})`
 }
 
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
 function arr(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
@@ -268,6 +268,7 @@ export function uiuxBriefLines(request: DesignRequest, annotations: Annotation[]
   if (options.previewFileName) lines.push(tr('brief.uiux.preview', { file: options.previewFileName }))
   else if (options.previewMissing) lines.push(tr('brief.uiux.previewMissing'))
   lines.push(tr('brief.uiux.done'))
+  if (options.reportJobId) lines.push(tr('brief.uiux.report', { jobId: clean(options.reportJobId) }))
   lines.push('')
   return lines
 }
