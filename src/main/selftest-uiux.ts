@@ -15,6 +15,10 @@ import type { EditorInit, ExportPayload, SendOptions, SendResult, SendTargetView
 import { createEditorWindow } from './editor'
 import { setBriefLocaleOverride, setLocaleOverride } from './locales'
 import { fakeCapture } from './selftest-flows'
+import { answerJob, newestJob } from './selftest-uiux-agent'
+import { sendWithReportJob } from './uiux/jobs-app'
+import { uiuxStore } from './uiux/appstore'
+import type { JobType } from '../shared/uiux/types'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -42,11 +46,15 @@ export async function runUiuxSelfTest(shotsDir: string | undefined): Promise<voi
   ipcMain.handle(IPC.editorTargets, (): SendTargetView[] => [CLAUDE])
   const stubSend = (): void => {
     ipcMain.removeHandler(IPC.editorSend)
-    ipcMain.handle(IPC.editorSend, async (_e, payload: ExportPayload, _opts: SendOptions = {}): Promise<SendResult> => {
-      sent.push({ uiux: payload.uiux, memo: payload.memo, marks: payload.annotations.length })
-      await sleep(200)
-      return { ok: true, delivered: 'pasted', sessionDir: `uiux-${sent.length}`, message: '', status: { sendId: `uiux-${sent.length}`, target: CLAUDE, reached: ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'] } }
-    })
+    // Like the real send (src/main/editor.ts): guidance gets an implementation_report job tied to the package.
+    ipcMain.handle(IPC.editorSend, (_e, payload: ExportPayload, _opts: SendOptions = {}): Promise<SendResult> =>
+      sendWithReportJob(payload, async (p) => {
+        sent.push({ uiux: p.uiux, memo: p.memo, marks: p.annotations.length })
+        const id = `uiux-${sent.length}`
+        await sleep(200)
+        return { ok: true, delivered: 'pasted', sessionDir: id, message: '', status: { sendId: id, target: CLAUDE, reached: ['saved', 'clipboard', 'targetVerified', 'inputVerified', 'pasted'] } }
+      })
+    )
   }
 
   const cap = await fakeCapture()
@@ -220,6 +228,96 @@ export async function runUiuxSelfTest(shotsDir: string | undefined): Promise<voi
     if (!report.phrases) warnings.push('no memo phrases shown')
     report.fontReport = await js<string>(`(document.querySelector('#uiux-panel .ux-samples') || {}).textContent ? document.querySelector('#uiux-panel .ux-samples').textContent.slice(-200) : ''`)
     await shot('uiux-6-phrases.png')
+
+    // Stages B–D: the panel asks for jobs, a stand-in agent answers them through the MCP job code.
+    const projectId = (await uiuxStore().listProjects())[0]?.projectId
+    if (!projectId) throw new Error('no project in the self-test store')
+    const answer = async (type: JobType, button: string, what: string): Promise<boolean> => {
+      if (!(await click(ux(button), what))) return false
+      let job = await newestJob(projectId, type)
+      for (let i = 0; i < 30 && (!job || job.status !== 'pending'); i++) {
+        await sleep(100)
+        job = await newestJob(projectId, type)
+      }
+      if (!job) {
+        errors.push(`${what}: no ${type} job was created`)
+        return false
+      }
+      const st = await answerJob(projectId, job)
+      if (st !== 'submitted') errors.push(`${what}: the agent's result was ${st}`)
+      return st === 'submitted'
+    }
+    await js(`document.getElementById('uiux-panel').scrollTop = 0; true`)
+
+    // 12. Overview (stage B): the done button stays off until a complete overview arrives, then opens the view.
+    report.doneBeforeAgent = await js<boolean>(`Boolean(document.querySelector('${ux('overview-done')}') && !document.querySelector('${ux('overview-done')}').disabled)`)
+    if (report.doneBeforeAgent) errors.push('"개요 파악 완료" is enabled for an overview typed by the user without flows and structure')
+    await click(ux('job-project_overview'), 'ask for the overview')
+    await waitFor(`document.querySelector('${ux('job-paste-project_overview')}')`, 'waiting state with paste / copy / cancel')
+    await shot('uiux-8-overview-waiting.png')
+    const ovJob = await newestJob(projectId, 'project_overview')
+    if (ovJob) {
+      const st = await answerJob(projectId, ovJob)
+      if (st !== 'submitted') errors.push(`overview result was ${st}`)
+    } else errors.push('no project_overview job')
+    await waitFor(`document.querySelector('${ux('overview-done')}') && !document.querySelector('${ux('overview-done')}').disabled`, '"개요 파악 완료" enabled after the agent answered', 6000)
+    await shot('uiux-9-overview-done.png')
+    await click(ux('overview-done'), 'open the overview')
+    report.overviewView = await waitFor(`document.querySelector('.uxo-root')`, 'overview view opened')
+    await shot('uiux-10-overview-view.png')
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`)
+    await sleep(300)
+    if (await js<boolean>(`Boolean(document.querySelector('.uxo-root'))`)) warnings.push('Esc did not close the overview view')
+    await js(`document.querySelector('.uxo-root')?.remove(); true`)
+
+    // 13. Skills: the agent lists its skills, the user picks one, the agent prepares what the skill needs.
+    await answer('capabilities', 'job-capabilities', 'ask for skills')
+    await waitFor(`[...document.querySelectorAll('${ux('skill-select')} option')].some((o) => o.value === 'ui-ux-pro-max')`, 'agent skill in the list', 6000)
+    await js(`(() => { const s = document.querySelector('${ux('skill-select')}'); s.value = 'ui-ux-pro-max'; s.dispatchEvent(new Event('change')); return true })()`)
+    await sleep(400)
+    await answer('skill_setup', 'job-skill_setup', 'prepare the skill')
+    report.skillReady = await waitFor(`/스킬 준비됨/.test(document.getElementById('uiux-panel').textContent)`, 'skill shown as prepared', 6000)
+    await shot('uiux-11-skill.png')
+
+    // 14. Proposals (stage C): three candidates from the current capture, compared, one goes to the request.
+    await js(`(() => { const i = document.querySelector('${ux('screen-purpose')}'); i.value = '오늘 할 일을 빠르게 확인하는 첫 화면'; i.dispatchEvent(new Event('input')); return true })()`)
+    const propJob = await (async () => {
+      await answer('design_proposal', 'job-design_proposal', 'ask for proposals')
+      return newestJob(projectId, 'design_proposal')
+    })()
+    const compareSel = propJob ? `#uiux-panel [data-ux="compare-${propJob.jobId}"]` : ''
+    if (propJob && await waitFor(`document.querySelector('${compareSel}')`, 'proposal set listed', 6000)) {
+      await click(compareSel, 'compare')
+      report.compareOpen = await waitFor(`document.querySelector('dialog.uxp-big[open] .uxc-primary')`, 'comparison view')
+      await shot('uiux-12-compare.png')
+      await click('dialog.uxp-big[open] .uxc-primary', 'request with this proposal')
+      await sleep(300)
+      report.compareClosed = !(await js<boolean>(`Boolean(document.querySelector('dialog.uxp-big[open]'))`))
+    }
+
+    // 15. Style audit: findings are listed as the agent's.
+    await answer('style_audit', 'job-style_audit', 'style audit')
+    report.findings = await waitFor(`document.querySelector('#uiux-panel .uxp-findings li')`, 'audit findings listed', 6000)
+
+    // 16. Send with the chosen proposal (stage D): a report job is made; the agent reports; the user checks.
+    await send()
+    const sentReq = sent[sent.length - 1]?.uiux?.request
+    report.selectedProposal = sentReq?.selectedProposalId ?? null
+    if (!sentReq?.selectedProposalId) errors.push('the chosen proposal did not reach the request')
+    const repJob = await newestJob(projectId, 'implementation_report')
+    if (!repJob) errors.push('no implementation_report job after a send with guidance')
+    else {
+      await waitFor(`document.querySelector('#uiux-panel [data-ux="report"] .uxp-step-on')`, 'report steps shown')
+      const st = await answerJob(projectId, repJob)
+      if (st !== 'submitted') errors.push(`implementation report was ${st}`)
+      report.reportShown = await waitFor(`/AI가 직접 보고한 내용/.test(document.querySelector('#uiux-panel [data-ux="report"]').textContent)`, 'report shown as the agent account', 6000)
+      await js(`(() => { const r = document.querySelector('#uiux-panel [data-ux="report"]'); r.scrollIntoView({ block: 'start' }); r.querySelectorAll('input[type=checkbox]').forEach((c, i) => { if (i < 4) c.click() }); return true })()`)
+      await click(ux('report-confirm'), 'confirm the result')
+      report.confirmed = await js<number>(`document.querySelectorAll('#uiux-panel [data-ux="report"] .uxp-step-on').length`)
+      if (report.confirmed !== 4) errors.push(`report steps on after confirming: ${String(report.confirmed)}, expected 4`)
+      await js(`document.querySelector('#uiux-panel [data-ux="report"]').scrollIntoView({ block: 'start' }); true`)
+      await shot('uiux-13-report.png')
+    }
 
     // 11. Narrow window: the panel goes over the canvas instead of squeezing it.
     w.setContentSize(820, 700)
