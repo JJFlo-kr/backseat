@@ -5,7 +5,7 @@
 import type { Annotation, UiuxApi, UiuxPayload, UiuxProjectState, UserOverviewInput } from '../../../shared/types'
 import type { Translate } from '../../../shared/i18n'
 import {
-  COLOR_ROLES, SHADOW_ROLES, TYPE_ROLES, type Check, type ColorRole, type DesignTokens, type ProjectProfile,
+  COLOR_ROLES, SHADOW_ROLES, TYPE_ROLES, type Check, type ColorRole, type DesignProposal, type DesignTokens, type ProjectProfile,
   type ShadowSpec, type SkillRef, type TokenPath
 } from '../../../shared/uiux/types'
 import {
@@ -18,7 +18,12 @@ import {
   apply, buildRequest, discardDraftChanges, editDraft, isSent, markSent, missingAnnotations, newSession, release,
   status, switchProject, type UiuxDraft, type UiuxSession, type UiuxStatus
 } from '../../../shared/uiux/session'
+import { errText } from '../../../shared/errors'
 import { createSampleView, type SampleView } from './samples'
+import { createAgentParts } from './agent'
+import { createCompareView } from './compare'
+import { openOverviewView } from './overview-view'
+import { button, el } from './dom'
 
 export interface UiuxHost {
   t: Translate
@@ -28,6 +33,10 @@ export interface UiuxHost {
   setStatus(msg: string, isError?: boolean): void
   /** Applied state changed: the editor re-renders its send summary. */
   onStatusChange(): void
+  /** The capture with only the blur applied, and with all marks: what proposals and audits look at. */
+  capture(): { capturePng: string; annotatedPng: string }
+  /** Only the clean capture (blur applied, no marks): the original in the proposal comparison. */
+  baseCapture(): string
 }
 
 export interface UiuxMounts {
@@ -47,29 +56,14 @@ export interface UiuxPanel {
   payload(): UiuxPayload | undefined
   /** Before 보내기: settles "changes not reflected" with the user. false = do not send. */
   beforeSend(): Promise<boolean>
-  markSent(): void
+  /** After a successful send; reportJobId = the implementation_report job main made for it. */
+  markSent(reportJobId?: string): void
   /** Annotations changed (draw, erase, crop, undo). */
   annotationsChanged(): void
 }
 
 type Area = 'colors' | 'ratio' | 'shadows' | 'type' | 'box'
 const AREAS: readonly Area[] = ['colors', 'ratio', 'shadows', 'type', 'box']
-
-const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
-  const e = document.createElement(tag)
-  if (cls) e.className = cls
-  if (text !== undefined) e.textContent = text
-  return e
-}
-
-/** name = data-ux attribute: a stable handle for the self-test, independent of the UI language. */
-const button = (label: string, onClick: () => void, cls = 'btn small', name?: string): HTMLButtonElement => {
-  const b = el('button', cls, label)
-  b.type = 'button'
-  if (name) b.dataset.ux = name
-  b.addEventListener('click', onClick)
-  return b
-}
 
 const lines = (s: string): string[] => s.split(/\n|,/).map((x) => x.trim()).filter(Boolean)
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
@@ -90,8 +84,42 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
   /** A slider drag in progress: one undo step for the whole drag, and no re-render under the pointer. */
   let gesture = false
 
+  /** The mock-up of the proposal the user picked: goes with the send as design-preview.png while its values are what is applied. */
+  let mockup: { proposalId: string; dataUrl: string; tokens: DesignTokens } | null = null
+  /** Mock-up images per proposal job (proposalId → data URL), fetched once per job. */
+  const previews = new Map<string, Record<string, string>>()
+
+  /** IME composition in progress in a panel field: job-driven renders wait for it (and for blur). */
+  let composing = false
+  let pendingJobRender: 'parts' | 'full' | null = null
+
   m.panel.dataset.hotkeysOff = ''
+  // Focusable itself, so focus can stay in the panel when a re-render removes the focused control.
+  m.panel.tabIndex = -1
   m.panel.setAttribute('aria-label', t('uiux.panel.title'))
+  m.panel.addEventListener('compositionstart', () => { composing = true })
+  m.panel.addEventListener('compositionend', () => { composing = false; flushJobRender() })
+  m.panel.addEventListener('focusout', () => { composing = false; flushJobRender() })
+
+  const fail = (err: unknown): void => host.setStatus(t('uiux.panel.error', { error: errText(err) }), true)
+
+  const agent = createAgentParts({
+    t,
+    api: host.api,
+    state: () => state,
+    refresh: async () => {
+      if (state) state = await host.api.projectState(state.profile.projectId)
+      jobRender('full')
+    },
+    rerender: () => jobRender('parts'),
+    setStatus: host.setStatus,
+    capture: host.capture,
+    draft: () => session.draft,
+    skill: () => session.draft.skill ?? BUILTIN_SKILL,
+    setSkill: (s) => void chooseSkill(s),
+    openOverview: () => openOverview(),
+    openCompare: (jobId, list) => void openCompare(jobId, list)
+  })
 
   // ---------- state helpers ----------
 
@@ -149,12 +177,115 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       undoStack.length = 0
       redoStack.length = 0
       if (wasApplied) host.setStatus(t('uiux.panel.releasedOnSwitch'))
+      mockup = null
+      previews.clear()
     }
+    await agent.load(state?.profile.projectId ?? null)
     session = editDraft(session, { skill: skillFor(state?.profile ?? null) })
     changed()
   }
 
-  const skillFor = (p: ProjectProfile | null): SkillRef => (p?.skillIds?.[0] === BUILTIN_SKILL.id || !p?.skillIds?.length ? BUILTIN_SKILL : BUILTIN_SKILL)
+  /** The project's chosen skill; an agent skill the agent no longer lists falls back to the built-in rules. */
+  const skillFor = (p: ProjectProfile | null): SkillRef => {
+    const id = p?.skillIds?.[0]
+    return (id && id !== BUILTIN_SKILL.id && agent.findSkill(id)) || BUILTIN_SKILL
+  }
+
+  async function chooseSkill(s: SkillRef): Promise<void> {
+    setDraft({ skill: s })
+    if (!state) return
+    try {
+      await host.api.saveProject({ ...state.profile, skillIds: [s.id] })
+      state = await host.api.projectState(state.profile.projectId)
+      render()
+    } catch (err) {
+      fail(err)
+    }
+  }
+
+  // ---------- big views: overview and proposal comparison ----------
+
+  function openBig(titleKey: string, body: HTMLElement, onClose?: () => void): () => void {
+    const d = el('dialog', 'uxp-big')
+    d.dataset.hotkeysOff = ''
+    d.setAttribute('aria-label', t(titleKey))
+    const head = el('div', 'uxp-head')
+    const close = (): void => {
+      onClose?.()
+      d.close()
+      d.remove()
+    }
+    const x = button('✕', close, 'btn icon uxp-close', 'big-close')
+    x.setAttribute('aria-label', t('uiux.panel.close'))
+    // The view brings its own heading; the frame only adds the close button.
+    head.append(el('span', 'uxp-grow'), x)
+    d.append(head, body)
+    d.addEventListener('cancel', (e) => { e.preventDefault(); close() })
+    document.body.append(d)
+    d.showModal()
+    return close
+  }
+
+  async function mockupsFor(jobId: string, list: DesignProposal[]): Promise<Record<string, string>> {
+    const cached = previews.get(jobId)
+    if (cached) return cached
+    const urls = await Promise.all(list.map((p) => (p.previewKind === 'mockup' ? host.api.proposalPreview(jobId, p.proposalId) : null)))
+    const mockups: Record<string, string> = {}
+    list.forEach((p, i) => { const url = urls[i]; if (url) mockups[p.proposalId] = url })
+    previews.set(jobId, mockups)
+    return mockups
+  }
+
+  async function openCompare(jobId: string, list: DesignProposal[]): Promise<void> {
+    let mockups: Record<string, string>
+    try {
+      mockups = await mockupsFor(jobId, list)
+    } catch (err) {
+      fail(err)
+      return
+    }
+    let close = (): void => undefined
+    const view = createCompareView({
+      t,
+      original: host.baseCapture(),
+      base: session.base,
+      locks: session.draft.locks,
+      proposals: list,
+      mockups,
+      currentOverviewRevision: state?.overview?.revision,
+      onRequest: (tokens, proposal) => {
+        setDraft({ tokens: clone(tokens), selectedProposalId: proposal.proposalId })
+        const shot = mockups[proposal.proposalId]
+        mockup = shot ? { proposalId: proposal.proposalId, dataUrl: shot, tokens: clone(tokens) } : null
+        session = apply(session)
+        changed()
+        close()
+        host.setStatus(t('uiux.panel.proposalApplied', { name: proposal.name }))
+      }
+    })
+    close = openBig('uiux.compare.title', view.el, () => view.destroy())
+  }
+
+  function openOverview(): void {
+    const o = state?.overview
+    if (!o) return
+    const projectId = o.projectId
+    const view = openOverviewView(o, {
+      t,
+      onExport: (format, pngDataUrl) => {
+        void host.api.exportOverview(projectId, format, pngDataUrl).then(
+          (r) => { if (r.ok) host.setStatus(t('uiux.ov.exported')) },
+          fail
+        )
+      },
+      onEdit: () => {
+        view.close()
+        overviewFormOpen = true
+        if (!open) toggle(true)
+        else render()
+      }
+    })
+  }
 
   async function createProject(name: string): Promise<void> {
     if (!name.trim()) return
@@ -165,7 +296,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       overviewFormOpen = true
       render()
     } catch (err) {
-      host.setStatus(t('uiux.panel.error', { error: err instanceof Error ? err.message : String(err) }), true)
+      fail(err)
     }
   }
 
@@ -187,7 +318,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       host.setStatus(t('uiux.panel.overviewSaved'))
       render()
     } catch (err) {
-      host.setStatus(t('uiux.panel.error', { error: err instanceof Error ? err.message : String(err) }), true)
+      fail(err)
     }
   }
 
@@ -199,22 +330,65 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       host.setStatus(t('uiux.panel.rulesSaved', { revision: state?.rules?.revision ?? 0 }))
       render()
     } catch (err) {
-      host.setStatus(t('uiux.panel.error', { error: err instanceof Error ? err.message : String(err) }), true)
+      fail(err)
     }
   }
 
   // ---------- render ----------
 
+  /**
+   * Re-rendering replaces the controls; keep focus on the same one (by its data-ux handle), or a key the user
+   * presses next would go to the editor (Enter = 보내기). Read before building: the agent parts move their nodes.
+   */
+  function keepFocus(build: () => void): void {
+    const active = document.activeElement
+    const focused = active instanceof HTMLElement && m.panel.contains(active) ? active.dataset.ux : undefined
+    const scroll = m.panel.scrollTop
+    build()
+    m.panel.scrollTop = scroll
+    const target = focused ? m.panel.querySelector<HTMLElement>(`[data-ux="${CSS.escape(focused)}"]`) : null
+    if (target) {
+      if (target !== document.activeElement) target.focus()
+    } else if (active instanceof HTMLElement && !active.isConnected) m.panel.focus()
+  }
+
+  /** The whole panel: after the user's edits and project changes. */
   function render(): void {
     if (!open) return
-    const frag = document.createDocumentFragment()
-    const head = el('div', 'uxp-head')
-    head.append(el('h2', 'uxp-title', t('uiux.panel.title')), button('✕', () => toggle(false), 'btn icon uxp-close'))
-    head.lastElementChild?.setAttribute('aria-label', t('uiux.panel.close'))
-    frag.append(head, renderProject())
-    if (state) frag.append(renderSkill(), renderAdjust(), renderRules())
-    frag.append(renderSummary())
-    m.panel.replaceChildren(frag)
+    pendingJobRender = null
+    keepFocus(() => {
+      const frag = document.createDocumentFragment()
+      const head = el('div', 'uxp-head')
+      head.append(el('h2', 'uxp-title', t('uiux.panel.title')), button('✕', () => toggle(false), 'btn icon uxp-close'))
+      head.lastElementChild?.setAttribute('aria-label', t('uiux.panel.close'))
+      frag.append(head, renderProject())
+      if (state) frag.append(renderSkill(), section('uiux.pr.title', agent.proposals()), renderAdjust(), renderRules())
+      frag.append(renderSummary())
+      if (state) frag.append(section('uiux.rp.title', agent.report()))
+      m.panel.replaceChildren(frag)
+    })
+  }
+
+  /**
+   * After a job event: only the agent parts ('full' when the project state changed). Waits while the user is
+   * composing text (Korean IME) in a panel field, until compositionend or blur.
+   */
+  function jobRender(kind: 'parts' | 'full'): void {
+    if (!open) return
+    const a = document.activeElement
+    if (composing && (a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement) && m.panel.contains(a)) {
+      if (pendingJobRender !== 'full') pendingJobRender = kind
+      return
+    }
+    if (kind === 'full') render()
+    else keepFocus(() => agent.renderParts())
+  }
+
+  function flushJobRender(): void {
+    const kind = pendingJobRender
+    if (!kind) return
+    pendingJobRender = null
+    queueMicrotask(() => jobRender(kind))
   }
 
   function section(titleKey: string, ...children: Node[]): HTMLElement {
@@ -252,7 +426,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     if (state) {
       const folder = el('div', 'uxp-row uxp-muted')
       folder.append(el('span', 'uxp-grow', state.folder ? t('uiux.panel.folder', { path: state.folder }) : t('uiux.panel.noFolder')), button(t('uiux.panel.pickFolder'), () => void pickFolder()))
-      parts.push(folder, renderOverview())
+      parts.push(folder, renderOverview(), agent.profile((id) => void loadProjects(id)))
     }
     return section('uiux.panel.project', ...parts)
   }
@@ -273,7 +447,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       if (o.purpose.value) box.append(el('p', 'uxp-text uxp-muted', o.purpose.value))
     }
     if (overviewFormOpen) box.append(overviewForm(o))
-    box.append(el('p', 'uxp-hint', t('uiux.panel.agentLater')))
+    box.append(agent.overview())
     return box
   }
 
@@ -301,12 +475,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
   }
 
   function renderSkill(): HTMLElement {
-    const sel = el('select', 'uxp-select')
-    sel.setAttribute('aria-label', t('uiux.panel.skill'))
-    const o = el('option', undefined, t('uiux.panel.builtinSkill'))
-    o.value = BUILTIN_SKILL.id
-    sel.append(o)
-    return section('uiux.panel.skill', sel, el('p', 'uxp-hint', t('uiux.panel.skillHint')))
+    return section('uiux.panel.skill', agent.skills(BUILTIN_SKILL))
   }
 
   function renderAdjust(): HTMLElement {
@@ -706,7 +875,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     m.panel.hidden = !open
     if (open && !loaded) {
       loaded = true
-      void loadProjects().catch((err: unknown) => host.setStatus(t('uiux.panel.error', { error: err instanceof Error ? err.message : String(err) }), true))
+      void loadProjects().catch(fail)
     }
     render()
     renderApplied()
@@ -728,7 +897,9 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
         rules: state?.rules ?? null,
         checks: tokenChecks(session.applied?.tokens ?? session.draft.tokens)
       })
-      return req ? { request: req } : undefined
+      if (!req) return undefined
+      const shot = mockup && req.selectedProposalId === mockup.proposalId && JSON.stringify(req.resolved) === JSON.stringify(mockup.tokens) ? mockup.dataUrl : undefined
+      return shot ? { request: req, previewPngDataUrl: shot } : { request: req }
     },
     async beforeSend(): Promise<boolean> {
       if (status(session) !== 'stale') return true
@@ -738,9 +909,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       changed()
       return true
     },
-    markSent() {
+    markSent(reportJobId) {
       session = markSent(session)
       render()
+      // A send with guidance made an implementation_report job: show it under "AI 작업 결과". Its later states
+      // arrive as job updates; only the job itself is fetched here when the update has not come yet.
+      if (reportJobId) void agent.track(reportJobId)
     },
     annotationsChanged() {
       if (open && session.draft.scope.kind === 'annotations') render()

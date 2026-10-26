@@ -1,0 +1,220 @@
+/* Project overview view (overview-view.ts). Scoped under .uxo-*; uses the editor's colour variables (editor.css :root).
+   State is never carried by colour alone: provenance is a word, uncertain items are dashed and say so. */
+
+.uxo-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(8, 8, 12, 0.72);
+}
+.uxo-root[hidden] { display: none; }
+
+.uxo-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  height: min(860px, 100%);
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid #44444c;
+  border-radius: 12px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
+  font: 13px/1.5 system-ui, "Malgun Gothic", sans-serif;
+  overflow: hidden;
+}
+
+.uxo-root button, .uxo-root select { font: inherit; }
+.uxo-root :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.uxo-root svg :focus { outline: none; }
+
+/* ---------- header ---------- */
+
+.uxo-head { flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 12px 16px 8px; background: var(--bar); border-bottom: 1px solid var(--line); }
+.uxo-titlebox { flex: 1 1 220px; min-width: 0; }
+.uxo-title { margin: 0; font-size: 17px; line-height: 1.3; }
+.uxo-meta { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+.uxo-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.uxo-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--btn);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.uxo-btn:hover:not(:disabled) { background: var(--btn-hover); }
+.uxo-btn:active:not(:disabled) { background: var(--btn-active); }
+.uxo-btn:disabled { opacity: 0.45; cursor: default; }
+.uxo-close { border-color: #55555f; }
+
+.uxo-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--focus);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---------- tabs ---------- */
+
+.uxo-tabs { flex: none; display: flex; flex-wrap: wrap; gap: 2px; padding: 0 12px; background: var(--bar); border-bottom: 1px solid var(--line); }
+.uxo-tab {
+  padding: 8px 14px 7px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.uxo-tab:hover { color: var(--text); }
+.uxo-tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--focus); }
+
+.uxo-legend { flex: none; margin: 0; padding: 6px 16px; color: var(--muted); font-size: 12px; border-bottom: 1px solid #2f2f36; }
+.uxo-status { flex: none; margin: 0; padding: 0 16px; min-height: 0; color: var(--error); font-size: 12px; }
+.uxo-status:empty { display: none; padding: 0; }
+
+.uxo-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+.uxo-tabbody { max-width: 1100px; }
+
+/* ---------- sections and statements ---------- */
+
+.uxo-sec { margin: 0 0 18px; }
+.uxo-h { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
+.uxo-h4 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.uxo-hint { margin: 0 0 8px; color: var(--faint); font-size: 12px; }
+.uxo-suggest-note { padding: 6px 10px; border: 1px dashed #55555f; border-radius: 8px; color: var(--muted); }
+.uxo-muted { color: var(--muted); }
+.uxo-note { margin: 4px 0; color: var(--guess); font-size: 12px; }
+.uxo-note-warn { margin: 4px 0 8px; padding: 6px 10px; border: 1px solid var(--warn); border-radius: 8px; color: var(--warn); }
+.uxo-note-flow { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.uxo-list { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+ul.uxo-list { list-style: disc; }
+.uxo-list > li::marker { color: var(--muted); }
+.uxo-claim { padding: 2px 0; }
+.uxo-claim-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.uxo-text { min-width: 0; overflow-wrap: anywhere; }
+.uxo-claim-big .uxo-text { font-size: 16px; font-weight: 600; }
+.uxo-dashed { border-left: 2px dashed var(--guess); padding-left: 10px; }
+.uxo-plain { padding-top: 2px; padding-bottom: 2px; }
+
+.uxo-prov {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--ok);
+  border-radius: 999px;
+  color: var(--ok);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.uxo-prov-estimated { border-style: dashed; border-color: var(--guess); color: var(--guess); }
+.uxo-prov-unknown { border-style: dotted; border-color: var(--muted); color: var(--muted); }
+.uxo-glyph { font-weight: 700; }
+
+.uxo-evi { margin: 2px 0 0; font-size: 11.5px; color: var(--muted); }
+.uxo-evi-label { margin-right: 6px; }
+.uxo-evi-list { display: inline; margin: 0; padding: 0; list-style: none; }
+.uxo-evi-list li { display: inline-block; margin-right: 10px; font-family: Consolas, monospace; overflow-wrap: anywhere; }
+.uxo-sources li { font-family: Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+
+.uxo-unknowns { padding: 10px 12px; border: 1px dashed #55555f; border-radius: 8px; }
+
+/* ---------- structure ---------- */
+
+.uxo-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.uxo-zoom { min-width: 44px; color: var(--muted); font-size: 12px; text-align: center; }
+.uxo-flowsel { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.uxo-select { max-width: 220px; height: 28px; padding: 0 6px; background: #1f1f24; color: var(--text); border: 1px solid #44444c; border-radius: 6px; }
+.uxo-notes:empty { display: none; }
+
+.uxo-split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; margin-bottom: 18px; }
+.uxo-left { min-width: 0; }
+.uxo-detail { min-width: 0; padding: 10px 12px; border: 1px solid #3a3a42; border-radius: 8px; background: var(--bar-2); }
+.uxo-detail[hidden] { display: none; }
+.uxo-nd-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.uxo-nd-title { margin: 0; font-size: 14px; }
+.uxo-type { color: var(--muted); font-size: 12px; }
+.uxo-desc { margin: 6px 0; overflow-wrap: anywhere; }
+.uxo-conns li { overflow-wrap: anywhere; }
+
+.uxo-viewport {
+  height: clamp(300px, 52vh, 560px);
+  border: 1px solid #3a3a42;
+  border-radius: 8px;
+  background: #17171b;
+  overflow: hidden;
+  cursor: grab;
+}
+.uxo-viewport.uxo-dragging { cursor: grabbing; }
+.uxo-svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
+
+.uxo-box { fill: var(--bar); stroke: var(--ok); stroke-width: 1.5; }
+.uxo-src-estimated .uxo-box { stroke: var(--guess); }
+.uxo-src-unknown .uxo-box { stroke: var(--muted); }
+.uxo-node { cursor: pointer; }
+.uxo-node:hover .uxo-box { fill: var(--bar-2); stroke-width: 2.5; }
+.uxo-label { fill: var(--text); font-size: 13px; }
+.uxo-sub { fill: var(--muted); font-size: 11px; }
+.uxo-child .uxo-box { fill: #202026; }
+.uxo-selected .uxo-box, .uxo-node:focus-visible .uxo-box, .uxo-toggle:focus-visible rect { stroke: var(--focus); stroke-width: 3; stroke-dasharray: none; }
+.uxo-hit .uxo-box { stroke: var(--focus); stroke-width: 3; }
+.uxo-dim { opacity: 0.45; }
+.uxo-flowtag { fill: var(--focus); font-size: 11px; font-weight: 600; }
+.uxo-toggle { cursor: pointer; }
+.uxo-toggle rect { fill: var(--btn); stroke: #55555f; }
+.uxo-toggle-text { fill: var(--text); font-size: 14px; font-weight: 700; }
+
+.uxo-edge-line { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-linejoin: round; }
+.uxo-arrow { fill: var(--faint); }
+.uxo-edge-text { fill: var(--muted); font-size: 11px; paint-order: stroke; stroke: #17171b; stroke-width: 3px; }
+.uxo-tether { fill: none; stroke: var(--faint); stroke-width: 1; stroke-dasharray: 1 3; }
+
+.uxo-tree, .uxo-tree ul { list-style: none; margin: 0; padding-left: 18px; }
+.uxo-tree { padding-left: 0; display: grid; gap: 8px; }
+.uxo-tree ul { border-left: 1px solid #3a3a42; margin-top: 8px; display: grid; gap: 8px; }
+.uxo-tree-node { padding: 6px 10px; border: 1px solid #3a3a42; border-radius: 8px; background: var(--bar-2); }
+.uxo-tree-item.uxo-hit > .uxo-tree-node { border-color: var(--focus); border-width: 2px; }
+.uxo-flowtag-inline { display: inline-block; margin-bottom: 2px; color: var(--focus); font-size: 11px; font-weight: 600; }
+
+/* ---------- flows ---------- */
+
+.uxo-flow { margin: 0 0 14px; padding: 10px 14px; border: 1px solid #3a3a42; border-radius: 8px; background: var(--bar-2); }
+.uxo-flow-on { border-color: var(--focus); border-width: 2px; }
+.uxo-flow-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 4px; }
+.uxo-flow-name { margin: 0; font-size: 14px; }
+.uxo-steps { margin: 4px 0; padding-left: 24px; display: grid; gap: 3px; }
+.uxo-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.uxo-chip { padding: 1px 10px; border: 1px solid #55555f; border-radius: 6px; }
+.uxo-chip-missing { border-style: dashed; color: var(--muted); }
+.uxo-flow-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.uxo-flow-actions [aria-pressed="true"] { background: var(--btn-active); box-shadow: inset 0 0 0 2px var(--focus); }
+
+/* ---------- design ---------- */
+
+.uxo-hints { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.uxo-hint-card { padding: 8px 12px; border: 1px solid #3a3a42; border-radius: 8px; background: var(--bar-2); }
+.uxo-hint-goal { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--muted); }
+.uxo-hint-sug { display: flex; gap: 8px; align-items: baseline; margin-top: 4px; }
+.uxo-tag { flex: none; padding: 0 8px; border: 1px dashed var(--focus); border-radius: 4px; color: var(--focus); font-size: 11.5px; }
+
+/* ---------- narrow window (down to 760 px) ---------- */
+
+@media (max-width: 900px) {
+  .uxo-root { padding: 6px; }
+  .uxo-split { grid-template-columns: minmax(0, 1fr); }
+  .uxo-viewport { height: clamp(260px, 44vh, 480px); }
+  .uxo-head { padding: 10px 12px 6px; }
+  .uxo-body { padding: 12px; }
+  .uxo-tab { padding: 8px 10px 7px; }
+}

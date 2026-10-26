@@ -20,6 +20,7 @@ import {
   type DeliveryAction, type DeliveryContext
 } from './delivery'
 import { normalizeHex } from '../../shared/palette'
+import { errText } from '../../shared/errors'
 import { t, setMessages, applyDom, isLocale, getLocale, type Locale } from '../../shared/i18n'
 import '@fontsource/noto-sans-kr/500.css'
 import '@fontsource/noto-sans-kr/700.css'
@@ -1604,6 +1605,8 @@ function setupUiux(): void {
       annotations: () => annotations,
       memo: memoInput,
       setStatus,
+      capture: () => ({ capturePng: flattenBase(), annotatedPng: flatten() }),
+      baseCapture: flattenBase,
       onStatusChange: () => {
         contentChanged()
         requestAnimationFrame(() => fitToolbar())
@@ -1631,10 +1634,6 @@ function buildPayload(): ExportPayload | null {
   const ux = uiux?.payload()
   if (ux) payload.uiux = ux
   return payload
-}
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }
 
 async function save(): Promise<void> {
@@ -1718,7 +1717,7 @@ async function send(extra: SendExtra = {}): Promise<void> {
     }
     lastDelivery = statusOf(r, { clipboardOnly: lastDeliveryCtx.clipboardOnly === true, target: currentTarget() })
     if (r.error) lastDeliveryCtx.error = r.error
-    if (r.ok) uiux?.markSent()
+    if (r.ok) uiux?.markSent(r.reportJobId)
     dirtySinceSend = false
     // The send bar tells what happened; the status line only repeats a failure.
     setStatus(r.ok ? '' : r.message, !r.ok)

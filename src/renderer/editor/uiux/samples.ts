@@ -9,6 +9,7 @@ import {
   formatFamilyList, judgeProbes, parseFamilyList, reportFor, shownDiffers,
   type FontProbeVerdict, type FontRoleReport, type WidthProbe
 } from '../../../shared/uiux/fonts.ts'
+import { el } from './dom.ts'
 
 export type FontReport = Record<TypeRole, FontRoleReport>
 
@@ -88,15 +89,6 @@ function computeReport(tokens: DesignTokens): FontReport {
     )
   }
   return out
-}
-
-// ---------- DOM helpers ----------
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag)
-  if (cls) e.className = cls
-  if (text !== undefined) e.textContent = text
-  return e
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/

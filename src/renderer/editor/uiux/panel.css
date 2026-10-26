@@ -90,3 +90,21 @@
 
 .uxp-dialog { background: var(--bar); color: var(--text); border: 1px solid #44444c; border-radius: 10px; padding: 14px 16px; max-width: 420px; }
 .uxp-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+
+/* Agent jobs (agent.ts): status per job, overview, skills, proposals, report. */
+.uxp-job { border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px; margin: 6px 0; }
+.uxp-job-pending, .uxp-job-fetched { color: var(--guess); }
+.uxp-job-submitted { color: var(--ok); }
+.uxp-job-rejected, .uxp-job-failed { color: var(--error); }
+.uxp-job-cancelled, .uxp-job-expired { color: var(--muted); }
+.uxp-agent-overview, .uxp-agent-skills, .uxp-agent-proposals { display: grid; gap: 4px; margin-top: 6px; }
+.uxp-old { border-color: var(--warn); color: var(--warn); }
+.uxp-list { margin: 4px 0; padding-left: 16px; display: grid; gap: 2px; font-size: 11.5px; overflow-wrap: anywhere; }
+.uxp-findings, .uxp-checklist { margin-top: 6px; }
+.uxp-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 8px; padding: 0; font-size: 11.5px; }
+.uxp-steps li { padding: 1px 8px; border-radius: 999px; border: 1px solid #44444c; color: var(--faint); }
+.uxp-steps li.uxp-step-on { border-color: var(--ok); color: var(--ok); }
+
+/* Large views over the editor: proposal comparison and the overview. */
+.uxp-big { width: min(1100px, 94vw); height: min(820px, 92vh); background: var(--bar); color: var(--text); border: 1px solid #44444c; border-radius: 10px; padding: 12px 16px; overflow: auto; }
+.uxp-big::backdrop { background: rgba(0, 0, 0, 0.55); }
