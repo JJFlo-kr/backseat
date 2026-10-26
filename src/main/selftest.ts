@@ -28,6 +28,7 @@ import { mergedMessages, setBriefLocaleOverride, setLocaleOverride, uiLocale } f
 import { runLocaleSelfTest } from './selftest-locale'
 import { runFlowsSelfTest } from './selftest-flows'
 import { runUiuxSelfTest } from './selftest-uiux'
+import { runEvalHarness } from './eval-harness'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -133,6 +134,8 @@ export async function runSelfTest(): Promise<void> {
   if (localeArg) return runLocaleSelfTest(localeArg, argValue('selftest-shots'))
   if (process.argv.includes('--selftest-flows')) return runFlowsSelfTest(argValue('selftest-shots'))
   if (process.argv.includes('--selftest-uiux')) return runUiuxSelfTest(argValue('selftest-shots'))
+  const evalDir = argValue('eval-harness')
+  if (evalDir) return runEvalHarness(evalDir)
   // The checks below compare Korean text: run in Korean whatever config.json says.
   setLocaleOverride('ko')
   setBriefLocaleOverride('follow')
