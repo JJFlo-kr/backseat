@@ -1,6 +1,6 @@
 // Shared contract between main, preload and renderer. Keep this file dependency-free (types only; the UI/UX
 // contracts live in ./uiux/types, equally pure).
-import type { DesignProposal, DesignRequest, DesignRules, DesignTokens, JobOutcome, JobRequest, ProjectOverview, ProjectProfile, SkillContext, SkillRef, UiuxJob } from './uiux/types'
+import type { DesignProposal, DesignRequest, DesignRules, DesignTokens, JobOutcome, JobRequest, ProjectOverview, ProjectProfile, ReportConfirmation, SkillContext, SkillRef, UiuxJob } from './uiux/types'
 
 /** Rectangle in CSS pixels (DIP) relative to the window that produced it. */
 export interface Rect {
@@ -625,6 +625,8 @@ export interface UiuxApi {
   listJobs(projectId: string): Promise<UiuxJob[]>
   /** Stored result. A project_overview result is applied once per submission as a new revision (basis 'agent'). */
   jobOutcome(jobId: string): Promise<JobOutcome | null>
+  /** Records that the user checked an implementation report on a new capture (kept with the job). */
+  confirmReport(jobId: string, ticked: string[]): Promise<ReportConfirmation>
   /** Status changes of jobs while the editor is open. */
   onJobUpdate(cb: (job: UiuxJob) => void): void
   /** A mock-up PNG an agent submitted for a proposal, as a data URL. */

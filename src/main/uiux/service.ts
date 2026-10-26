@@ -9,7 +9,7 @@ import { readTokens } from '../../shared/uiux/validate'
 import { showOpen } from '../dialogs'
 import { uiuxStore } from './appstore'
 import { text, texts } from './clean'
-import { installJobsIpc, saveOverviewEdits } from './jobs-app'
+import { applyPendingResults, installJobsIpc, saveOverviewEdits } from './jobs-app'
 import { assertSafeId } from './store'
 
 export { uiuxStore }
@@ -20,6 +20,8 @@ export async function projectState(projectId: string): Promise<UiuxProjectState 
   const s = uiuxStore()
   const profile = await s.getProject(assertSafeId(projectId, 'projectId'))
   if (!profile) return null
+  // Results the agent submitted while no editor was open are applied first, so the state is current.
+  await applyPendingResults(projectId).catch(() => undefined)
   const [overview, rules, paths] = await Promise.all([s.getOverview(projectId), s.getRules(projectId), s.getPaths()])
   return { profile, overview, rules, folder: paths.paths[projectId] ?? null }
 }

@@ -58,7 +58,10 @@ export function isSent(s: UiuxSession): boolean {
 }
 
 export function editDraft(s: UiuxSession, patch: Partial<UiuxDraft>): UiuxSession {
-  return { ...s, draft: { ...s.draft, ...clone(patch) }, draftRev: s.draftRev + 1 }
+  const draft: UiuxDraft = { ...s.draft, ...clone(patch) }
+  // A proposal stays "selected" only with its own values: new values without a proposal id drop it.
+  if (patch.tokens && !('selectedProposalId' in patch)) delete draft.selectedProposalId
+  return { ...s, draft, draftRev: s.draftRev + 1 }
 }
 
 /** Add the draft to the request (also "요청에 반영" after further edits). */

@@ -2,7 +2,7 @@
 // a send, text only, never Enter. Win32 and UI Automation are faked, as in send.test.ts.
 import { test, mock, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { installFakeElectron } from './support/fake-electron.ts'
+import { FakeBrowserWindow, installFakeElectron } from './support/fake-electron.ts'
 import { fakeWin32 } from './support/fake-win32.ts'
 import type { AgentTarget, TargetIdentity } from '../src/shared/types.ts'
 import type { FocusInfo, PasteCheck, SoleInput } from '../src/main/native/uia-types.ts'
@@ -116,6 +116,17 @@ test('a password field: nothing pasted, the reason is named', async () => {
   assert.deepEqual([r.pasted, r.reason], [false, 'passwordField'])
   assert.equal(W.pastes, 0)
   assert.match(r.message, /비밀번호/)
+})
+
+test('a stop after the target was raised brings the editor back to the front', async () => {
+  W.focus = [field({ isPassword: true })]
+  const editorWin = new FakeBrowserWindow()
+  await pasteTextToTarget(ctx(browser), TEXT, editorWin as never)
+  assert.equal(editorWin.focused, true, 'the stop message is not left behind the raised window')
+  const untouched = new FakeBrowserWindow()
+  W.live.delete(888)
+  await pasteTextToTarget(ctx(browser), TEXT, untouched as never)
+  assert.equal(untouched.focused, false, 'nothing was raised, nothing to bring back')
 })
 
 test('no target, a clipboard-only target or no input check: not pasted, and the message does not claim it was', async () => {

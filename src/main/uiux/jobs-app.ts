@@ -9,8 +9,8 @@ import type { ExportPayload, SendResult, UserOverviewInput } from '../../shared/
 import { BUILTIN_SKILL } from '../../shared/uiux/builtin'
 import { applyOverviewEdits, mergeOverview, mergeSkillFields, sameOverviewContent, SCREEN_PREFIX } from '../../shared/uiux/overviewMerge'
 import {
-  UIUX_SCHEMA_VERSION, type DesignProposal, type DesignRequest, type JobOutcome, type JobRequest, type ProjectOverview, type SkillContext, type SkillRef,
-  type UiuxJob
+  UIUX_SCHEMA_VERSION, type DesignProposal, type DesignRequest, type JobOutcome, type JobRequest, type ProjectOverview, type ReportConfirmation, type SkillContext,
+  type SkillRef, type UiuxJob
 } from '../../shared/uiux/types'
 import { readOverview } from '../../shared/uiux/validate'
 import { showOpen, showSave } from '../dialogs'
@@ -123,10 +123,11 @@ export async function requestJob(projectId: unknown, req: JobRequest): Promise<{
   }
   if (req.type === 'skill_setup' && !skill) throw new Error('skill_setup needs a skill')
   const skillContext = skill ? await s.getSkillContext(pid, skill.id) : null
-  const requestNumber = req.type === 'design_proposal' ? await nextRequestNumber(pid) : undefined
   const needsImages = req.type === 'design_proposal' || req.type === 'style_audit'
   const capture = needsImages && req.capturePng ? checkedPng(req.capturePng, 'capture') : null
   const annotated = needsImages && req.annotatedPng ? checkedPng(req.annotatedPng, 'annotated capture') : null
+  // After the images passed: a refused request does not use up a request number.
+  const requestNumber = req.type === 'design_proposal' ? await nextRequestNumber(pid) : undefined
   const clean: JobRequest = { type: req.type }
   if (req.scope) clean.scope = req.scope
   const preserve = texts(req.preserve, 300, 40)
@@ -227,7 +228,11 @@ let watcher: JobWatcher | null = null
 export function watchJobsFor(wc: Electron.WebContents): void {
   watching.add(wc)
   watcher ??= new JobWatcher(uiuxStore(), (job) => {
-    for (const w of watching) if (!w.isDestroyed()) w.send(IPC.uiuxJobUpdate, job)
+    // A submitted overview / skill context is stored before the editors hear of it.
+    const ready = job.status === 'submitted' && APPLIED_TYPES.includes(job.type) ? applySubmitted(job).catch(() => null) : Promise.resolve()
+    void ready.then(() => {
+      for (const w of watching) if (!w.isDestroyed()) w.send(IPC.uiuxJobUpdate, job)
+    })
   })
   watcher.start()
 }
@@ -300,9 +305,29 @@ async function applyResult(job: UiuxJob, res: JobResultFile): Promise<AppliedRec
   return rec
 }
 
+const APPLIED_TYPES: readonly UiuxJob['type'][] = ['project_overview', 'skill_setup']
+
+/** Applies one submitted project_overview / skill_setup result (no-op when already applied). */
+function applySubmitted(job: UiuxJob): Promise<AppliedRecord | null> {
+  return withLock(job.jobId, async () => {
+    const res = await uiuxStore().getJobResult<JobResultFile>(job.jobId).catch(() => null)
+    return res && res.jobId === job.jobId ? applyResult(job, res) : null
+  })
+}
+
+/**
+ * Applies every submitted project_overview / skill_setup result of the project that is not applied yet, oldest
+ * request first, so a newer request's answer wins. Runs before the project state is read and when the watcher
+ * sees a job submitted: results answered while no editor was open are never left unapplied.
+ */
+export async function applyPendingResults(projectId: string): Promise<void> {
+  const jobs = await uiuxStore().listJobs({ projectId, status: ['submitted'] })
+  for (const job of jobs.filter((j) => APPLIED_TYPES.includes(j.type))) await applySubmitted(job).catch(() => null)
+}
+
 /**
  * The stored result of a job as the panel shows it. Null: no such job. Without a result yet only `job` is set.
- * A project_overview / skill_setup result is applied once per submission (the first call that sees it).
+ * A project_overview / skill_setup result is applied once per submission (applyPendingResults, or here).
  */
 export function jobOutcome(jobId: unknown): Promise<JobOutcome | null> {
   const id = assertSafeId(text(jobId, 80), 'jobId')
@@ -319,11 +344,40 @@ export function jobOutcome(jobId: unknown): Promise<JobOutcome | null> {
     if (res.skills) out.skills = res.skills
     if (res.proposals) out.proposals = res.proposals
     if (res.findings) out.findings = res.findings
-    if (res.report) out.report = res.report
+    if (res.report) {
+      out.report = res.report
+      const conf = await readConfirmation(id)
+      if (conf) out.confirmation = conf
+    }
     const applied = await applyResult(job, res)
     if (applied?.overviewRevision !== undefined) out.overviewRevision = applied.overviewRevision
     return out
   })
+}
+
+const CONFIRMATION_FILE = 'confirmed.txt' // .json names are reserved for job files
+
+async function readConfirmation(jobId: string): Promise<ReportConfirmation | null> {
+  const b = await uiuxStore().readJobFile(jobId, CONFIRMATION_FILE).catch(() => null)
+  if (!b) return null
+  try {
+    const c = JSON.parse(b.toString('utf8')) as ReportConfirmation
+    return typeof c.at === 'string' && Array.isArray(c.ticked) ? { at: c.at, ticked: c.ticked.filter((x) => typeof x === 'string') } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Spec §10.3 "사용자 확인": the user looked at the result of an implementation report on a new capture. Only a
+ * report that arrived can be confirmed; the record stays with the job, so every later editor shows it.
+ */
+export async function confirmReport(jobId: unknown, ticked: unknown): Promise<ReportConfirmation> {
+  const job = await getKnownJob(jobId)
+  if (job.type !== 'implementation_report' || effectiveJob(job).status !== 'submitted') throw new Error('no report to confirm')
+  const conf: ReportConfirmation = { at: new Date().toISOString(), ticked: texts(ticked, 40, 30) }
+  await uiuxStore().saveJobFile(job.jobId, CONFIRMATION_FILE, JSON.stringify(conf))
+  return conf
 }
 
 /** A mock-up an agent submitted for one of this job's proposals, as a data URL; null when there is none. */
@@ -544,18 +598,34 @@ export async function attachSessionDir(jobId: string, sessionDir: string): Promi
 
 /**
  * A send through `send` with its implementation_report job: the job is created first (the brief names it; an id the
- * renderer put in the payload is always replaced), learns the package folder afterwards, and is cancelled when the
- * send wrote no package (it would never be answered). Failing to create the job never holds the send back.
+ * renderer put in the payload is always replaced), learns the package folder as soon as it is written (before the
+ * paste, so an agent that reads the brief at once finds it), and is cancelled when the send wrote no package or
+ * failed (it would never be answered). Failing to create the job never holds the send back.
  */
-export async function sendWithReportJob(payload: ExportPayload, send: (payload: ExportPayload) => Promise<SendResult>): Promise<SendResult> {
+export async function sendWithReportJob(
+  payload: ExportPayload,
+  send: (payload: ExportPayload, onPackage: (dir: string) => Promise<void>) => Promise<SendResult>
+): Promise<SendResult> {
   const reportJobId = await createReportJob(payload)
-  const sent = await send(payload.uiux ? { ...payload, uiux: { ...payload.uiux, reportJobId: reportJobId ?? undefined } } : payload)
+  let attached = ''
+  const onPackage = async (dir: string): Promise<void> => {
+    if (!reportJobId) return
+    await attachSessionDir(reportJobId, dir)
+    attached = dir
+  }
+  let sent: SendResult
+  try {
+    sent = await send(payload.uiux ? { ...payload, uiux: { ...payload.uiux, reportJobId: reportJobId ?? undefined } } : payload, onPackage)
+  } catch (err) {
+    if (reportJobId) await cancelJob(reportJobId).catch(() => undefined)
+    throw err
+  }
   if (!reportJobId) return sent
   if (!sent.sessionDir) {
     await cancelJob(reportJobId).catch(() => undefined)
     return sent
   }
-  await attachSessionDir(reportJobId, sent.sessionDir).catch(() => undefined)
+  if (attached !== sent.sessionDir) await attachSessionDir(reportJobId, sent.sessionDir).catch(() => undefined)
   return { ...sent, reportJobId }
 }
 
@@ -575,6 +645,7 @@ export function installJobsIpc(): void {
   ipcMain.handle(IPC.uiuxExtendJob, (_e, jobId: unknown, minutes: unknown) => extendJob(jobId, minutes))
   ipcMain.handle(IPC.uiuxListJobs, (_e, projectId: unknown) => listJobs(projectId))
   ipcMain.handle(IPC.uiuxJobOutcome, (_e, jobId: unknown) => jobOutcome(jobId))
+  ipcMain.handle(IPC.uiuxConfirmReport, (_e, jobId: unknown, ticked: unknown) => confirmReport(jobId, ticked))
   ipcMain.handle(IPC.uiuxProposalPreview, (_e, jobId: unknown, proposalId: unknown) => proposalPreview(jobId, proposalId))
   ipcMain.handle(IPC.uiuxImportOverview, (e, projectId: unknown) => importOverview(projectId, winOf(e)))
   ipcMain.handle(IPC.uiuxExportOverview, (e, projectId: unknown, format: unknown, png: unknown) => exportOverview(projectId, format, png, winOf(e)))

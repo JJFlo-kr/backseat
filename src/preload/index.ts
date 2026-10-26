@@ -85,6 +85,7 @@ const api: BackseatApi = {
     extendJob: (jobId, minutes) => ipcRenderer.invoke(IPC.uiuxExtendJob, jobId, minutes),
     listJobs: (projectId) => ipcRenderer.invoke(IPC.uiuxListJobs, projectId),
     jobOutcome: (jobId) => ipcRenderer.invoke(IPC.uiuxJobOutcome, jobId),
+    confirmReport: (jobId, ticked) => ipcRenderer.invoke(IPC.uiuxConfirmReport, jobId, ticked),
     onJobUpdate(cb) {
       ipcRenderer.on(IPC.uiuxJobUpdate, (_e, job: UiuxJob) => cb(job))
     },

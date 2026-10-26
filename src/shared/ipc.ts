@@ -41,6 +41,7 @@ export const IPC = {
   uiuxExtendJob: 'uiux:extend-job',
   uiuxListJobs: 'uiux:list-jobs',
   uiuxJobOutcome: 'uiux:job-outcome',
+  uiuxConfirmReport: 'uiux:confirm-report',
   uiuxJobUpdate: 'uiux:job-update',
   uiuxProposalPreview: 'uiux:proposal-preview',
   uiuxImportOverview: 'uiux:import-overview',

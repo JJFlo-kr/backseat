@@ -374,6 +374,12 @@ export interface ImplementationReport {
   checksRun: string[]
 }
 
+/** The user's check of an implementation report: when, and which checklist items they ticked. */
+export interface ReportConfirmation {
+  at: string
+  ticked: string[]
+}
+
 /** The outcome of a job as the panel sees it (main reads jobs/<id>.result.json). */
 export interface JobOutcome {
   job: UiuxJob
@@ -383,6 +389,8 @@ export interface JobOutcome {
   proposals?: DesignProposal[]
   findings?: StyleFinding[]
   report?: ImplementationReport
+  /** implementation_report: the user looked at the result on a new capture (spec §10.3 "사용자 확인"). */
+  confirmation?: ReportConfirmation
   /** The overview revision stored from this result, when it was a project_overview. */
   overviewRevision?: number
 }

@@ -63,7 +63,8 @@ export function createAgentParts(host: AgentHost): AgentParts {
   let proposalSets: { jobId: string; proposals: DesignProposal[]; overviewRevision?: number }[] = []
   let screenPurpose = ''
   /** The user's look at the latest report: checks ticked (by check id) and the confirm. Reset when the report changes. */
-  let review = { jobId: '', ticked: new Set<string>(), confirmed: false }
+  /** The checklist of the report on screen; `confirmed` once the user's check is stored (or was stored earlier). */
+  let review = { jobId: '', ticked: new Set<string>(), confirmed: false, synced: false }
   let builtinSkill: SkillRef | null = null
 
   // Mount nodes: the panel places them, job events re-fill them in place.
@@ -418,7 +419,10 @@ export function createAgentParts(host: AgentHost): AgentParts {
       box.replaceChildren(el('p', 'uxp-hint', t('uiux.rp.none')))
       return
     }
-    if (review.jobId !== job.jobId) review = { jobId: job.jobId, ticked: new Set(), confirmed: false }
+    if (review.jobId !== job.jobId) review = { jobId: job.jobId, ticked: new Set(), confirmed: false, synced: false }
+    const known = outcomes.get(job.jobId)
+    const stored = known && !(known instanceof Promise) ? known.confirmation : undefined
+    if (stored && !review.synced) review = { jobId: job.jobId, ticked: new Set(stored.ticked), confirmed: true, synced: true }
     const steps: [string, boolean][] = [
       ['sent', true],
       ['fetched', job.status !== 'pending'],
@@ -443,7 +447,7 @@ export function createAgentParts(host: AgentHost): AgentParts {
       list('uiux.rp.notDone', r.notDone)
       list('uiux.rp.checksRun', r.checksRun)
     }
-    parts.push(checklist())
+    parts.push(checklist(job))
     box.replaceChildren(...parts)
   }
 
@@ -452,7 +456,7 @@ export function createAgentParts(host: AgentHost): AgentParts {
    * responsive, screen reader) need the running app. Ticks stay in this editor; the confirm button records
    * that the user looked.
    */
-  function checklist(): HTMLElement {
+  function checklist(job: UiuxJob): HTMLElement {
     const box = el('div', 'uxp-checklist')
     const items: { id: string; label: string; kind: 'visual' | 'runtime' }[] = [
       { id: 'look', label: t('uiux.rp.check.look'), kind: 'visual' },
@@ -477,9 +481,13 @@ export function createAgentParts(host: AgentHost): AgentParts {
     }
     box.append(el('p', 'uxp-hint', t('uiux.rp.recapture')))
     box.append(button(t('uiux.rp.confirm'), () => {
-      review.confirmed = true
-      host.setStatus(t('uiux.rp.confirmed', { n: review.ticked.size, total: items.length }))
-      host.rerender()
+      void api.confirmReport(job.jobId, [...review.ticked]).then((conf) => {
+        review = { jobId: job.jobId, ticked: new Set(conf.ticked), confirmed: true, synced: true }
+        const known = outcomes.get(job.jobId)
+        if (known && !(known instanceof Promise)) outcomes.set(job.jobId, { ...known, confirmation: conf })
+        host.setStatus(t('uiux.rp.confirmed', { n: conf.ticked.length, total: items.length }))
+        host.rerender()
+      }, fail)
     }, 'btn small', 'report-confirm'))
     return box
   }

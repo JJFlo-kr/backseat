@@ -358,6 +358,12 @@ test('style_audit findings and an implementation report reach the outcome', asyn
   const out = await app.jobOutcome(jobId!)
   assert.equal(out?.report?.summary, 'Changed the button colour')
   assert.deepEqual(out?.report?.changedFiles, [{ path: 'src/button.css' }])
+  // The user's check is stored with the job: every later editor shows it.
+  assert.equal(out?.confirmation, undefined)
+  const conf = await app.confirmReport(jobId!, ['look', 'contrast', 42])
+  assert.deepEqual(conf.ticked, ['look', 'contrast'])
+  assert.deepEqual((await app.jobOutcome(jobId!))?.confirmation?.ticked, ['look', 'contrast'])
+  await assert.rejects(app.confirmReport(audit.jobId, []), /no report/)
   // No guidance, an unknown project: no job, and the send is not held back.
   assert.equal(await app.createReportJob({ memo: '', uiux: undefined } as unknown as ExportPayload), null)
   assert.equal(await app.createReportJob({ memo: '', uiux: { request: { ...request, projectId: 'ghost-1' } } } as unknown as ExportPayload), null)
@@ -570,4 +576,17 @@ test('editor windows are watched only while open', async () => {
   app.watchJobsFor(wc2)
   app.unwatchJobs(wc)
   app.unwatchJobs(wc2) // the last one stops the timer; the process can exit
+})
+
+test('results answered while no editor was open are applied before the project state is read', async () => {
+  const { projectState } = await import('../src/main/uiux/service.ts')
+  const p = await project()
+  const older = (await app.requestJob(p.projectId, { type: 'project_overview' })).job
+  const newer = (await app.requestJob(p.projectId, { type: 'project_overview' })).job
+  // Only the older request is answered; the newer one stays open. Nobody calls jobOutcome.
+  await answer(older, agentOverview(p.projectId))
+  const st = await projectState(p.projectId)
+  assert.equal(st?.overview?.jobId, older.jobId, 'the stored answer is applied even though a newer request is open')
+  assert.equal(st?.overview?.basis, 'agent')
+  assert.equal((await app.jobOutcome(newer.jobId))?.job.status, 'pending')
 })

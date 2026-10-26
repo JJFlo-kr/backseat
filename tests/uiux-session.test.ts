@@ -64,3 +64,14 @@ test('the request carries only what is applied, with changes against the base', 
   assert.deepEqual(req?.scope, { kind: 'annotations', annotationIds: ['a1'] })
   assert.equal(req?.createdAt, '2026-10-27T00:00:00.000Z')
 })
+
+test('a chosen proposal stays selected only with its own values', () => {
+  let s = newSession(base(), 'acme-1')
+  s = editDraft(s, { tokens: withPrimary('#1D4ED8'), selectedProposalId: 'B' })
+  assert.equal(s.draft.selectedProposalId, 'B')
+  s = editDraft(s, { preserve: ['logo'] })
+  assert.equal(s.draft.selectedProposalId, 'B', 'other edits keep it')
+  s = editDraft(s, { tokens: withPrimary('#000000') })
+  assert.equal(s.draft.selectedProposalId, undefined, 'new values drop it')
+  assert.equal(buildRequest(apply(s), { projectName: 'Acme', overview: null, rules: null, checks: [] })?.selectedProposalId, undefined)
+})

@@ -47,6 +47,8 @@ export interface SendExtras {
    * the editor IPC). The window must still show exactly that title; no auto Enter on such a send.
    */
   acceptTitle?: string
+  /** Called with the package folder right after it is written, before anything reaches the clipboard or the target. */
+  onPackage?(dir: string): Promise<void>
 }
 
 export function sendToTarget(
@@ -118,6 +120,7 @@ async function deliver(
     status.sendId = pkg.id
     status.sessionDir = pkg.dir
     tracker.reach('saved')
+    await extras.onPackage?.(pkg.dir).catch(() => undefined)
     if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
     // The line and the image prefix are read by the agent: brief language. Status messages: UI language.
     // Nothing added to the capture: the picture alone (chat UIs) or its path alone (terminals), no instructions.

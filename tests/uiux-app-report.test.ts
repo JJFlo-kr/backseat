@@ -17,13 +17,20 @@ writeFileSync(join(fake.base, 'userData', 'config.json'), JSON.stringify({ versi
 
 mock.module('../src/main/native/win32.ts', { exports: fakeWin32() })
 let stopBeforeSaving = false
+let throwInSend = false
+/** The report job's input as an agent would read it at the moment of the paste. */
+let inputAtPaste: { sessionDir?: string } | null = null
 mock.module('../src/main/send.ts', {
   exports: {
-    sendToTarget: async (_win: unknown, p: ExportPayload): Promise<SendResult> => {
+    sendToTarget: async (_win: unknown, p: ExportPayload, _ctx: unknown, _opts: unknown, extras?: { onPackage?(dir: string): Promise<void> }): Promise<SendResult> => {
       lastPayload = p
+      if (throwInSend) throw new Error('send broke')
       if (stopBeforeSaving) return { ok: false, delivered: 'file-only', message: 'failed' }
       const { writeSessionPackage } = await import('../src/main/sessions.ts')
       const pkg = await writeSessionPackage(p, null)
+      await extras?.onPackage?.(pkg.dir)
+      const id = p.uiux?.reportJobId
+      inputAtPaste = id ? await uiuxStore().getJobInput<{ sessionDir?: string }>(id) : null
       return { ok: true, delivered: 'clipboard', sessionDir: pkg.dir, message: 'ok' }
     }
   }
@@ -127,4 +134,19 @@ test('a send that wrote no package cancels its report job', async () => {
   assert.deepEqual(jobs.map((j) => [j.type, j.status]), [['implementation_report', 'cancelled']])
   assert.equal(existsSync(join(fake.base, 'sessions')), true)
   unwatchJobs(win.webContents)
+})
+
+test('the report job knows its package before the paste; a send that throws cancels it', async () => {
+  const p = await store.createProject({ name: 'Acme' })
+  const win = editor()
+  const r = await send(win, { ...base(), uiux: { request: request(p.projectId) } })
+  assert.ok(r.reportJobId && r.sessionDir)
+  assert.equal(inputAtPaste?.sessionDir, r.sessionDir, 'an agent reading the brief at once finds the folder')
+  throwInSend = true
+  await assert.rejects(send(win, { ...base(), uiux: { request: request(p.projectId) } }))
+  throwInSend = false
+  const id = lastPayload?.uiux?.reportJobId
+  assert.ok(id)
+  assert.equal((await store.getJob(id!))?.status, 'cancelled')
+  unwatchJobs(win.webContents as never)
 })

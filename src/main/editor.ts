@@ -187,8 +187,8 @@ export function installEditorIpc(): void {
     const clipboardOnly = choice.kind === 'clipboard' || opts.clipboardOnly
     const acceptTitle = !clipboardOnly && pending && ctx.identity && pending.hwnd === ctx.identity.hwnd && pending.pid === ctx.identity.pid ? pending.title : undefined
     // A send with UI/UX guidance gets an implementation_report job first (jobs-app.ts): the brief names its id.
-    const result = await sendWithReportJob(payload, (p) =>
-      sendToTarget(BrowserWindow.fromWebContents(e.sender), p, ctx, { ...opts, clipboardOnly }, { acceptTitle })
+    const result = await sendWithReportJob(payload, (p, onPackage) =>
+      sendToTarget(BrowserWindow.fromWebContents(e.sender), p, ctx, { ...opts, clipboardOnly }, { acceptTitle, onPackage })
     )
     const status = result.status
     if (status?.stoppedAt?.reason === 'targetChanged' && ctx.identity) {
@@ -244,7 +244,7 @@ export function installEditorIpc(): void {
     const state = editorTargets.get(e.sender)
     return deliverJob(jobId, how === 'paste' ? 'paste' : 'copy', (text) => {
       const choice = state ? chooseForSend(state, {}, liveWindow) : null
-      return pasteTextToTarget(choice && choice.kind === 'target' ? choice.ctx : null, text)
+      return pasteTextToTarget(choice && choice.kind === 'target' ? choice.ctx : null, text, BrowserWindow.fromWebContents(e.sender))
     })
   })
   ipcMain.on(IPC.editorClose, (e) => BrowserWindow.fromWebContents(e.sender)?.close())
