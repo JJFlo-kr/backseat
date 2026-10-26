@@ -313,7 +313,7 @@ export async function runUiuxSelfTest(shotsDir: string | undefined): Promise<voi
       report.reportShown = await waitFor(`/AI가 직접 보고한 내용/.test(document.querySelector('#uiux-panel [data-ux="report"]').textContent)`, 'report shown as the agent account', 6000)
       await js(`(() => { const r = document.querySelector('#uiux-panel [data-ux="report"]'); r.scrollIntoView({ block: 'start' }); r.querySelectorAll('input[type=checkbox]').forEach((c, i) => { if (i < 4) c.click() }); return true })()`)
       await click(ux('report-confirm'), 'confirm the result')
-      report.confirmed = await js<number>(`document.querySelectorAll('#uiux-panel [data-ux="report"] .uxp-step-on').length`)
+      report.confirmed = await js<number>(`document.querySelectorAll('#uiux-panel [data-ux="report"] .uxp-step-on, #uiux-panel [data-ux="report"] .uxp-step-part').length`)
       if (report.confirmed !== 4) errors.push(`report steps on after confirming: ${String(report.confirmed)}, expected 4`)
       await js(`document.querySelector('#uiux-panel [data-ux="report"]').scrollIntoView({ block: 'start' }); true`)
       await shot('uiux-13-report.png')

@@ -108,3 +108,4 @@
 /* Large views over the editor: proposal comparison and the overview. */
 .uxp-big { width: min(1100px, 94vw); height: min(820px, 92vh); background: var(--bar); color: var(--text); border: 1px solid #44444c; border-radius: 10px; padding: 12px 16px; overflow: auto; }
 .uxp-big::backdrop { background: rgba(0, 0, 0, 0.55); }
+.uxp-steps li.uxp-step-part { border-color: var(--warn); color: var(--warn); }

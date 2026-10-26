@@ -104,6 +104,15 @@ export function createAgentParts(host: AgentHost): AgentParts {
     else host.rerender()
   })
 
+  // Another editor (the one of a new capture) may have recorded the user's check: read the report again when this
+  // window comes back to the front.
+  window.addEventListener('focus', () => {
+    const report = latest('implementation_report')
+    if (!report || report.status !== 'submitted' || outcomes.get(report.jobId) instanceof Promise) return
+    outcomes.delete(report.jobId)
+    void fetchOutcome(report.jobId).then(() => host.rerender(), () => undefined)
+  })
+
   async function afterSubmit(job: UiuxJob): Promise<void> {
     try {
       await fetchOutcome(job.jobId)
@@ -449,7 +458,9 @@ export function createAgentParts(host: AgentHost): AgentParts {
     for (const [k, on] of steps) {
       // The user's check says how much they checked: "checked 0 of 6" must never look like a full pass.
       const label = k === 'confirmed' && on ? t('uiux.rp.step.confirmedN', { n: review.ticked.size, total: CHECK_ITEMS }) : t(`uiux.rp.step.${k}`)
-      ol.append(el('li', on ? 'uxp-step-on' : 'uxp-step', label))
+      // A partial check is not the same as all items checked.
+      const partial = k === 'confirmed' && on && review.ticked.size < CHECK_ITEMS
+      ol.append(el('li', partial ? 'uxp-step-part' : on ? 'uxp-step-on' : 'uxp-step', label))
     }
     const parts: Node[] = [ol]
     if (ACTIVE.includes(job.status)) parts.push(jobBox(job.type, 'uiux.job.retry', () => null))
@@ -474,7 +485,8 @@ export function createAgentParts(host: AgentHost): AgentParts {
       for (const c of requested.slice(0, 12)) ul.append(el('li', undefined, `${c.path}: ${showValue(c.to)}`))
       parts.push(el('p', 'uxp-label', t('uiux.rp.requested')), ul)
     }
-    parts.push(checklist(job))
+    // The checklist belongs to a report that arrived; a newer send that is still waiting has none yet.
+    if (job.status === 'submitted') parts.push(checklist(job))
     box.replaceChildren(...parts)
   }
 

@@ -98,6 +98,10 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
   /** IME composition in progress in a panel field: job-driven renders wait for it (and for blur). */
   let composing = false
   let pendingJobRender: 'parts' | 'full' | null = null
+  /** Focus is in the panel (also while it moves from one panel control to another). */
+  let focusInPanel = false
+  m.panel.addEventListener('focusin', () => { focusInPanel = true })
+  m.panel.addEventListener('focusout', (e) => { const to = e.relatedTarget; if (to instanceof Node && !m.panel.contains(to)) focusInPanel = false })
   /** Unsent drafts of the other projects opened in this editor. */
   const drafts = new Map<string, UiuxSession>()
   /**
@@ -408,6 +412,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     if (target) {
       if (target !== document.activeElement) target.focus()
     } else if (active instanceof HTMLElement && !active.isConnected) m.panel.focus()
+    // Tab out of a field changes the draft while focus is between two controls: the control it was going to was just
+    // replaced. Keep the focus in the panel, so the next key (Ctrl+Z, Tab) is still the panel's, not the editor's.
+    if (focusInPanel) requestAnimationFrame(() => {
+      const a = document.activeElement
+      if (!a || a === document.body || !a.isConnected) m.panel.focus()
+    })
   }
 
   /** The whole panel: after the user's edits and project changes. */
@@ -481,6 +491,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       name.placeholder = t('uiux.panel.projectName')
       name.setAttribute('aria-label', t('uiux.panel.projectName'))
       const form = el('div', 'uxp-row')
+      name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) void createProject(name.value) })
       form.append(name, button(t('uiux.panel.create'), () => void createProject(name.value), 'btn small accent', 'create-project'))
       parts.push(form)
       queueMicrotask(() => name.focus())
@@ -489,7 +500,7 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       const folder = el('div', 'uxp-row uxp-muted')
       folder.append(el('span', 'uxp-grow', state.folder ? t('uiux.panel.folder', { path: state.folder }) : t('uiux.panel.noFolder')), button(t('uiux.panel.pickFolder'), () => void pickFolder()))
       parts.push(folder, renderOverview(), agent.profile((id) => void loadProjects(id)))
-    }
+    } else parts.push(agent.profile((id) => void loadProjects(id))) // importing needs no project yet
     return section('uiux.panel.project', ...parts)
   }
 
@@ -501,7 +512,9 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       ? t('uiux.panel.overviewNone')
       : o.basis === 'user'
         ? t('uiux.panel.overviewUser', { revision: o.revision })
-        : t('uiux.panel.overviewAgent', { revision: o.revision })
+        : o.basis === 'imported'
+          ? t('uiux.panel.overviewImported', { revision: o.revision })
+          : t('uiux.panel.overviewAgent', { revision: o.revision })
     line.append(el('span', 'uxp-grow', statusText), button(o ? t('uiux.panel.editOverview') : t('uiux.panel.enterOverview'), () => { overviewFormOpen = !overviewFormOpen; render() }, 'btn small', 'overview-form'))
     box.append(line)
     if (o && !overviewFormOpen) {
@@ -837,12 +850,23 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     return section('uiux.panel.rules', el('p', 'uxp-muted', text), row, el('p', 'uxp-hint', t('uiux.panel.rulesHint')))
   }
 
+  /** The scope of what goes with the send, in the words of the scope buttons (marks by their list number). */
+  function scopeText(): string {
+    const sc = (session.applied ?? session.draft).scope
+    if (sc.kind === 'component') return t(`uiux.panel.component.${sc.component ?? 'button'}`)
+    if (sc.kind !== 'annotations') return t('uiux.panel.scope.all')
+    const ids = host.annotations().map((a) => a.id)
+    const nums = (sc.annotationIds ?? []).map((id) => ids.indexOf(id)).filter((i) => i >= 0).map((i) => t('uiux.panel.markNo', { n: i + 1 }))
+    return nums.length ? nums.join(', ') : t('uiux.panel.scope.annotations')
+  }
+
   function renderSummary(): HTMLElement {
     const st = status(session)
     const changes = diffTokens(session.base, session.draft.tokens)
     const parts: Node[] = []
     const stateText = st === 'off' ? t('uiux.panel.stateOff') : st === 'applied' ? (isSent(session) ? t('uiux.panel.stateSent') : t('uiux.panel.stateApplied')) : t('uiux.panel.stateStale')
     parts.push(el('p', `uxp-state uxp-state-${st}`, stateText))
+    if (state) parts.push(el('p', 'uxp-muted', t('uiux.panel.scopeNow', { scope: scopeText() })))
     if (changes.length) {
       const ul = el('ul', 'uxp-changes')
       for (const c of changes.slice(0, 12)) ul.append(el('li', undefined, `${c.path}: ${showValue(c.from)} → ${showValue(c.to)}`))

@@ -110,11 +110,20 @@ function strs(v: unknown): string[] {
 }
 const num = (v: unknown): string => (typeof v === 'number' && Number.isFinite(v) ? String(Math.round(v * 100) / 100) : '?')
 
+const shadowText = (sh: Record<string, unknown>): string => {
+  const opacity = typeof sh.opacity === 'number' ? Math.round(sh.opacity * 100) : '?'
+  return `${num(sh.x)} ${num(sh.y)} ${num(sh.blur)} ${num(sh.spread)} ${clean(sh.color)} @${opacity}%`
+}
+const typeText = (sp: Record<string, unknown>): string => `${clean(sp.family)}, ${clean(sp.fallback)}, ${num(sp.size)}px / ${num(sp.lineHeight)}, ${num(sp.weight)}`
+
+/** A changed value in the same form as the target values below it (shadows and type specs in their parts). */
 function formatValue(v: unknown, tr: Translate): string {
   if (v === null) return tr('brief.uiux.value.none')
   if (v === undefined) return tr('brief.uiux.unset')
   if (typeof v === 'string') return clean(v)
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  if (isObj(v) && 'blur' in v) return shadowText(v)
+  if (isObj(v) && 'family' in v) return typeText(v)
   try {
     return clean(JSON.stringify(v))
   } catch {
@@ -148,37 +157,37 @@ function checkLines(checks: Check[], tr: Translate): string[] {
   })
 }
 
-/** `only`: the areas to list (colors, ratio, shadows, type, box); null = all. */
+/**
+ * `only`: the paths to list — an area ("colors") lists all of it, "colors.primary" only that role, "box.radius" the
+ * box; null = everything.
+ */
 function aimLines(resolved: unknown, tr: Translate, only: Set<string> | null = null): string[] {
   if (!isObj(resolved)) return []
   const out: string[] = []
-  const want = (area: string): boolean => !only || only.has(area)
+  const want = (area: string): boolean => !only || [...only].some((p) => p === area || p.startsWith(`${area}.`))
+  const wantRole = (area: string, role: string): boolean => !only || only.has(area) || only.has(`${area}.${role}`) || [...only].some((p) => p.startsWith(`${area}.${role}.`))
   const colors = want('colors') && isObj(resolved.colors) ? resolved.colors : null
   if (colors) {
-    const parts = COLOR_ROLES.filter((role) => typeof colors[role] === 'string').map((role) => `${role} ${clean(colors[role])}`)
+    const parts = COLOR_ROLES.filter((role) => typeof colors[role] === 'string' && wantRole('colors', role)).map((role) => `${role} ${clean(colors[role])}`)
     if (parts.length > 0) out.push(`- ${tr('brief.uiux.aim.colors', { list: parts.join(', ') })}`)
   }
   const ratio = want('ratio') && isObj(resolved.ratio) ? resolved.ratio : null
   if (ratio) out.push(`- ${tr('brief.uiux.aim.ratio', { background: num(ratio.background), surface: num(ratio.surface), accent: num(ratio.accent) })}`)
   const shadows = want('shadows') && isObj(resolved.shadows) ? resolved.shadows : null
   if (shadows) {
-    const parts = SHADOW_ROLES.filter((role) => role in shadows).map((role) => {
+    const parts = SHADOW_ROLES.filter((role) => role in shadows && wantRole('shadows', role)).map((role) => {
       const sh = shadows[role]
-      if (!isObj(sh)) return `${role} ${tr('brief.uiux.value.none')}`
-      const opacity = typeof sh.opacity === 'number' ? Math.round(sh.opacity * 100) : '?'
-      return `${role} ${num(sh.x)} ${num(sh.y)} ${num(sh.blur)} ${num(sh.spread)} ${clean(sh.color)} @${opacity}%`
+      return isObj(sh) ? `${role} ${shadowText(sh)}` : `${role} ${tr('brief.uiux.value.none')}`
     })
     if (parts.length > 0) out.push(`- ${tr('brief.uiux.aim.shadows', { list: parts.join('; ') })}`)
   }
   const type = want('type') && isObj(resolved.type) ? resolved.type : null
   if (type) {
-    const parts = TYPE_ROLES.filter((role) => isObj(type[role])).map((role) => {
-      const sp = type[role] as Record<string, unknown>
-      return `${role} ${clean(sp.family)}, ${clean(sp.fallback)}, ${num(sp.size)}px / ${num(sp.lineHeight)}, ${num(sp.weight)}`
-    })
+    const parts = TYPE_ROLES.filter((role) => isObj(type[role]) && wantRole('type', role)).map((role) => `${role} ${typeText(type[role] as Record<string, unknown>)}`)
     if (parts.length > 0) out.push(`- ${tr('brief.uiux.aim.type', { list: parts.join('; ') })}`)
   }
-  const box = want('box') && isObj(resolved.box) ? resolved.box : null
+  // The box line names every box value: list it for the whole area only (single box changes are in the change list).
+  const box = (!only || only.has('box')) && isObj(resolved.box) ? resolved.box : null
   if (box) {
     out.push(
       `- ${tr('brief.uiux.aim.box', {
@@ -238,12 +247,13 @@ export function uiuxBriefLines(request: DesignRequest, annotations: Annotation[]
   // With saved project rules every value is the user's target. Without them the untouched values are only
   // Backseat's defaults, not what the user asked for: list the areas the request changes or locks, keep the rest.
   const withRules = typeof r.rulesRevision === 'number'
-  const areaOf = (p: unknown): string => String(p).split('.')[0]
-  const touched = new Set([...changes.map((c) => areaOf(c.path)), ...strs(r.locks).map(areaOf)])
+  const touched = new Set([...changes.map((c) => String(c.path)), ...strs(r.locks)])
   const aim = aimLines(r.resolved, tr, withRules ? null : touched)
   if (aim.length > 0) {
     lines.push('')
     lines.push(`### ${tr(withRules ? 'brief.uiux.aim' : 'brief.uiux.aim.touched')}`)
+    // With saved rules the full list is the project's style (spec: one style per project), not a side effect.
+    if (withRules) lines.push(tr('brief.uiux.aim.rules', { revision: Number(r.rulesRevision) }))
     lines.push(...aim)
   }
   if (!withRules) lines.push(tr('brief.uiux.keepRest'))

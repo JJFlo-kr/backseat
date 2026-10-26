@@ -183,7 +183,8 @@ test('the brief gets a UI/UX section with the request in text', () => {
   // ids become the annotation list's numbers; a missing id becomes "no area to link to"
   assert.match(section, /brief\.uiux\.scope\.annotations\{refs=③, brief\.uiux\.scope\.unlinked, ①\}/)
   assert.match(section, /- colors\.primary: #1D4ED8 → #2563EB/)
-  assert.match(section, /- shadows\.button: \{"x":0,"y":1,"blur":2,"spread":0,"color":"#000000","opacity":0\.1\} → brief\.uiux\.value\.none/)
+  // A shadow change reads like the target values (x y blur spread colour @opacity), not as JSON.
+  assert.match(section, /- shadows\.button: 0 1 2 0 #000000 @10% → brief\.uiux\.value\.none/)
   assert.match(section, /brief\.uiux\.aim\.colors\{list=background #FFFFFF, surface #F4F4F5/)
   assert.match(section, /brief\.uiux\.aim\.ratio\{background=60,surface=30,accent=10\}/, 'the ratio goes out under the "target" key')
   assert.match(section, /brief\.uiux\.aim\.shadows\{list=button brief\.uiux\.value\.none; card 0 2 6 0 #000000 @20%; popover brief\.uiux\.value\.none\}/)
@@ -271,4 +272,17 @@ test('every message key of the section exists in en.json or in the staging file'
     const inTemplate = [...new Set([...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort()
     assert.deepEqual(inTemplate, params.get(key), `${key}: placeholders match the call`)
   }
+})
+
+test('without project rules the brief lists only what changes or is locked, and says to keep the rest', () => {
+  const r = request({ rulesRevision: undefined, changes: [{ path: 'colors.primary', from: '#2F5BEA', to: '#0F766E' }], locks: [] })
+  const text = uiuxBriefLines(r, [], echo).join('\n')
+  assert.match(text, /brief\.uiux\.aim\.touched/)
+  assert.match(text, /brief\.uiux\.aim\.colors\{list=primary #[0-9A-F]{6}\}/, 'only the changed colour role')
+  assert.doesNotMatch(text, /brief\.uiux\.aim\.(type|box|shadows)\{/, 'untouched areas are not targets')
+  assert.match(text, /brief\.uiux\.keepRest/)
+  const withRules = uiuxBriefLines({ ...r, rulesRevision: 2 }, [], echo).join('\n')
+  assert.match(withRules, /brief\.uiux\.aim\.rules\{revision=2\}/, 'saved rules are named as the target')
+  assert.match(withRules, /brief\.uiux\.aim\.type\{/)
+  assert.doesNotMatch(withRules, /brief\.uiux\.keepRest/)
 })

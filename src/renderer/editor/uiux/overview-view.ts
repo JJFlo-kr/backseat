@@ -1001,14 +1001,14 @@ export function openOverviewView(input: ProjectOverview, opts: OverviewViewOptio
       return
     }
     if (e.key === 'Tab') {
+      // Every Tab moves within the view (not only at its ends): focus on an element outside the list, e.g. in the
+      // diagram, must not let the next Tab reach the editor's toolbar behind the view.
+      e.preventDefault()
       const f = focusables()
-      if (f.length === 0) { e.preventDefault(); return }
-      const first = f[0]
-      const last = f[f.length - 1]
-      const active = document.activeElement
-      if (!root.contains(active)) { e.preventDefault(); first.focus() }
-      else if (e.shiftKey && active === first) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
+      if (f.length === 0) return
+      const i = f.indexOf(document.activeElement as HTMLElement)
+      const next = i < 0 ? (e.shiftKey ? f.length - 1 : 0) : (i + (e.shiftKey ? f.length - 1 : 1)) % f.length
+      f[next].focus()
     }
   }
 
