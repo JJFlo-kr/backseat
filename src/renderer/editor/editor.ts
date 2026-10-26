@@ -5,6 +5,7 @@ import type {
 import { pointsForProgress, sessionEnd } from '../../shared/align'
 import { History } from './history'
 import { linksAt, type Doc } from './doc'
+import { withAnnotationIds } from '../../shared/annotationIds'
 import { runSend, type SttOutcome } from './sendflow'
 import { Hotkeys, setHotkeyPlatform } from './hotkeys'
 import { Timeline } from './timeline'
@@ -805,9 +806,7 @@ function applyCropSelection(sel: Rect): void {
     crop: { x: crop.x + x, y: crop.y + y, width: w, height: h },
     linksRev: transcriptRev
   }
-  history.commit(t('editor.history.crop'), doc, after)
-  setDoc(after)
-  afterChange()
+  commitDoc(t('editor.history.crop'), after)
   const dropped = before - kept.length
   setStatus(dropped > 0 ? t('editor.status.croppedDropped', { w, h, n: dropped }) : t('editor.status.cropped', { w, h }))
 }
@@ -991,6 +990,9 @@ const timeline = new Timeline(byId('timeline'), {
 })
 
 function setDoc(next: Doc): void {
+  // Restored packages and injected test data may lack ids; ids already in place never change (annotationIds.ts).
+  const ids = withAnnotationIds(next.annotations)
+  if (ids !== next.annotations) next = { ...next, annotations: ids }
   doc = next
   annotations = next.annotations
   links = linksAt(next, transcriptRev) // an undo across a new recording must not revive its old links
@@ -1008,18 +1010,21 @@ function afterChange(): void {
   contentChanged()
 }
 
-function commit(label: string, next: readonly Annotation[]): void {
-  const after: Doc = { annotations: next, links, crop, linksRev: transcriptRev }
-  history.commit(label, doc, after)
-  setDoc(after)
+/** Every undoable change ends here. Ids are assigned before the state enters the history, so redo restores the same ids. */
+function commitDoc(label: string, after: Doc): void {
+  const ids = withAnnotationIds(after.annotations)
+  const next = ids === after.annotations ? after : { ...after, annotations: ids }
+  history.commit(label, doc, next)
+  setDoc(next)
   afterChange()
 }
 
+function commit(label: string, next: readonly Annotation[]): void {
+  commitDoc(label, { annotations: next, links, crop, linksRev: transcriptRev })
+}
+
 function commitLinks(label: string, nextLinks: ReadonlyMap<number, number | null>): void {
-  const after: Doc = { annotations, links: nextLinks, crop, linksRev: transcriptRev }
-  history.commit(label, doc, after)
-  setDoc(after)
-  afterChange()
+  commitDoc(label, { annotations, links: nextLinks, crop, linksRev: transcriptRev })
 }
 
 function undo(): void {
@@ -1325,9 +1330,7 @@ function endErase(commitIt: boolean): void {
     }
   }
   const after: Doc = { annotations: renumbered, links: nextLinks, crop, linksRev: transcriptRev }
-  history.commit(t('editor.history.erase'), doc, after)
-  setDoc(after)
-  afterChange()
+  commitDoc(t('editor.history.erase'), after)
   setStatus(t('editor.status.erased', { n: hits.size }))
 }
 

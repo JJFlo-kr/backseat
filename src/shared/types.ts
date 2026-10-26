@@ -185,8 +185,19 @@ export interface Point {
   y: number
 }
 
+/**
+ * Stable identity of an annotation. Optional: packages written before it existed have none, and the editor
+ * assigns one when it loads them (src/shared/annotationIds.ts). Unlike the index or a badge's number it survives
+ * erase, crop and undo, so references to a marked area (UI/UX design conditions) use it.
+ */
+export interface AnnotationIdentity {
+  id?: string
+}
+
 /** Every annotation carries timing (ms since the editor opened) so M2 can align speech. */
-export type Annotation =
+export type Annotation = AnnotationIdentity & AnnotationShape
+
+export type AnnotationShape =
   | {
       kind: 'stroke'
       color: string
