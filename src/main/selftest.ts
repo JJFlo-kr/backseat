@@ -27,6 +27,7 @@ import { loadPage } from './windows'
 import { mergedMessages, setBriefLocaleOverride, setLocaleOverride, uiLocale } from './locales'
 import { runLocaleSelfTest } from './selftest-locale'
 import { runFlowsSelfTest } from './selftest-flows'
+import { runUiuxSelfTest } from './selftest-uiux'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -131,6 +132,7 @@ export async function runSelfTest(): Promise<void> {
   const localeArg = argValue('selftest-locale')
   if (localeArg) return runLocaleSelfTest(localeArg, argValue('selftest-shots'))
   if (process.argv.includes('--selftest-flows')) return runFlowsSelfTest(argValue('selftest-shots'))
+  if (process.argv.includes('--selftest-uiux')) return runUiuxSelfTest(argValue('selftest-shots'))
   // The checks below compare Korean text: run in Korean whatever config.json says.
   setLocaleOverride('ko')
   setBriefLocaleOverride('follow')

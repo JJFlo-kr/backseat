@@ -1,0 +1,92 @@
+/* UI/UX tools panel (panel.ts). Uses the editor's colour variables (editor.css :root). */
+
+#stage-row { flex: 1; min-height: 0; display: flex; position: relative; }
+#stage-row > #stage { min-width: 0; }
+
+#uiux-panel {
+  flex: none;
+  width: 340px;
+  overflow-y: auto;
+  background: var(--bar);
+  border-left: 1px solid var(--line);
+  padding: 10px 12px 16px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+#uiux-panel[hidden] { display: none; }
+/* Narrow window: the panel goes over the canvas instead of squeezing it (spec §4.1). */
+@media (max-width: 960px) {
+  #uiux-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 100%); z-index: 20; box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45); }
+}
+
+#uiux-toggle.uxp-on { box-shadow: inset 0 -2px 0 var(--ok); }
+#uiux-toggle[aria-pressed="true"] { background: var(--btn-active); }
+
+.uxp-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.uxp-title { flex: 1; margin: 0; font-size: 14px; }
+.uxp-section { border-top: 1px solid #3a3a42; padding: 10px 0 4px; }
+.uxp-h { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
+.uxp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
+.uxp-grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.uxp-muted { color: var(--muted); }
+.uxp-hint { margin: 4px 0; color: var(--faint); font-size: 11.5px; }
+.uxp-text { margin: 4px 0; }
+.uxp-warn { color: var(--warn); }
+.uxp-label { display: block; color: var(--muted); font-size: 11.5px; }
+.uxp-select, .uxp-input, .uxp-hex, .uxp-numin {
+  background: #1f1f24; color: var(--text); border: 1px solid #44444c; border-radius: 6px; padding: 4px 6px; font: inherit;
+}
+.uxp-select { min-width: 0; flex: 1; }
+.uxp-input { width: 100%; box-sizing: border-box; resize: vertical; }
+.uxp-hex { width: 76px; font-family: Consolas, monospace; }
+.uxp-numin { width: 56px; }
+.uxp-form { display: grid; gap: 6px; margin: 6px 0; }
+.uxp-form .uxp-label { display: grid; gap: 2px; }
+.uxp-overview { margin-top: 4px; }
+
+.uxp-tabs { display: flex; gap: 2px; flex-wrap: wrap; margin: 8px 0 6px; }
+.uxp-tab {
+  flex: 1; min-width: 52px; padding: 4px 6px; border: 1px solid #44444c; background: var(--btn); color: var(--text); border-radius: 6px; font: inherit; cursor: pointer;
+}
+.uxp-tab[aria-selected="true"] { background: var(--btn-active); border-color: var(--focus); }
+
+.uxp-area { display: grid; gap: 6px; }
+.uxp-area > .uxp-lock { justify-self: end; }
+.uxp-sub { border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px; display: grid; gap: 4px; }
+.uxp-field { display: grid; grid-template-columns: 1fr 96px 56px; align-items: center; gap: 6px; }
+.uxp-field .uxp-label { display: inline; }
+.uxp-field input[type="range"] { width: 96px; }
+.uxp-color input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid #44444c; border-radius: 4px; background: none; }
+.uxp-check { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.uxp-lock[aria-pressed="true"] { border-color: var(--guess); color: var(--guess); }
+
+.uxp-options { display: grid; gap: 6px; }
+.uxp-option { border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px; }
+.uxp-option .btn { margin-right: 6px; }
+.uxp-badge { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--ok); color: var(--ok); font-size: 11px; }
+.uxp-reason { margin: 4px 0 0; color: var(--muted); font-size: 11.5px; }
+
+.uxp-samples-host { margin: 8px 0; }
+.uxp-checks { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 2px; font-size: 11.5px; }
+.uxp-pass { color: var(--ok); }
+.uxp-fail { color: var(--error); }
+
+.uxp-state { margin: 2px 0 6px; font-weight: 600; }
+.uxp-state-applied { color: var(--ok); }
+.uxp-state-stale { color: var(--warn); }
+.uxp-changes { margin: 4px 0; padding-left: 16px; font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
+
+/* Next to the send summary while guidance is applied, also with the panel closed. */
+#uiux-applied { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+#uiux-applied[hidden] { display: none; }
+#uiux-applied .uxp-applied-text { color: var(--ok); }
+
+/* Request phrases under the memo. */
+#uiux-suggest { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 10px 6px; background: var(--bg); }
+#uiux-suggest[hidden] { display: none; }
+.uxp-suggest-label { color: var(--faint); font-size: 11.5px; }
+.uxp-chip { border: 1px solid #44444c; background: #24242a; color: var(--text); border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.uxp-chip:hover { background: var(--btn-hover); }
+
+.uxp-dialog { background: var(--bar); color: var(--text); border: 1px solid #44444c; border-radius: 10px; padding: 14px 16px; max-width: 420px; }
+.uxp-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }

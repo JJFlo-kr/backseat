@@ -48,6 +48,10 @@ message keys — see **i18n** below. Korean is the source language (the author's
 | `src/renderer/selector/*`, `about/*` | Region/window selector overlay, About window. |
 | `tests/*.test.ts` | Node built-in test runner; imports need `.ts` extensions (Node 24 strips types). |
 | `integrations/claude-code/` | `/backseat` skill and `mcp.json` template. |
+| `src/shared/uiux/*` | UI/UX tools, pure: contracts (`types.ts`, schemaVersion, optional fields only), validators for agent results (`validate.ts`), panel state draft/applied/stale (`session.ts`), built-in design rules, contrast checks, memo phrases, font helpers. The spec and plan are kept outside this repository. |
+| `src/main/uiux/*` | UI/UX store under `<userData>/uiux` (plain Node, shared with the MCP server), the editor's IPC (`service.ts`), the package files and brief section (`package.ts`). |
+| `src/main/mcp/job*.ts` | MCP job tools `backseat_job_get/submit/status`: agents fetch UI/UX jobs and submit validated results. |
+| `src/renderer/editor/uiux/*` | The optional UI/UX panel (`panel.ts`, classes `uxp-*`) and the component samples (`samples.ts`, classes `ux-*`). The toggle only shows the panel; only applied guidance goes with a send. |
 | `design/logo/`, `scripts/render-logo.cjs`, `vectorize-logo.cjs` | Logo sources and rendering tools (not shipped code). |
 
 ## Commands
@@ -64,6 +68,7 @@ npm run selftest -- --selftest-shots=<dir> [--selftest-wav=<korean.wav>] [--self
 npm run selftest -- --selftest-locale=all --selftest-shots=<dir>      # per-language screenshots + checks
 node scripts/mcp-check.mjs <sessionsRoot> [out/main/mcp-server.js]   # MCP server against the official client
 npm run selftest-delivery        # fake chat + fake sign-in page in a separate browser profile: 6 delivery situations
+npx electron . --selftest --selftest-uiux --selftest-shots=<dir>   # UI/UX panel on a synthetic page, temp userData (after npm run build)
 npm run dist                     # NSIS installer → dist/
 ```
 

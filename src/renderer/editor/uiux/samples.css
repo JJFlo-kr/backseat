@@ -1,0 +1,368 @@
+/* "디자인 예시": component samples drawn with design tokens. Everything is scoped under .ux-samples.
+   The token values arrive as custom properties on .ux-samples__stage (see samples.ts); the editor chrome around
+   the stage keeps the editor's own colours (--text, --muted, --warn with fallbacks). Fits 340 px, wraps at 280 px. */
+
+.ux-samples,
+.ux-samples *,
+.ux-samples *::before,
+.ux-samples *::after {
+  box-sizing: border-box;
+}
+
+.ux-samples {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--text, #e6e6e6);
+  font: 12px/1.4 system-ui, "Malgun Gothic", sans-serif;
+}
+
+/* ---- header: always visible, in the editor's chrome, never in token colours ---- */
+.ux-samples .ux-samples__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0 0 6px;
+}
+.ux-samples .ux-samples__label {
+  padding: 2px 8px;
+  border: 1px dashed var(--muted, #8c8c97);
+  border-radius: 4px;
+  font-weight: 700;
+  color: var(--text, #e6e6e6);
+  white-space: nowrap;
+}
+.ux-samples .ux-samples__note {
+  color: var(--muted, #8c8c97);
+  font-size: 11px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- stage: token colours ---- */
+.ux-samples .ux-samples__stage {
+  /* fallbacks only until the first update() */
+  --ux-bg: #ffffff; --ux-surface: #f5f5f7; --ux-text: #1b1b1f; --ux-muted: #5e5e6a;
+  --ux-primary: #2f5bea; --ux-on-primary: #ffffff; --ux-border: #dadae0;
+  --ux-success: #1e8a55; --ux-warning: #a86a00; --ux-danger: #c9353a; --ux-info: #2f80ed;
+  --ux-radius: 8px; --ux-pad-x: 16px; --ux-pad-y: 10px; --ux-gap: 12px; --ux-dens: 1;
+  --ux-heading-family: sans-serif; --ux-heading-size: 20px; --ux-heading-weight: 700; --ux-heading-lh: 1.3;
+  --ux-body-family: sans-serif; --ux-body-size: 14px; --ux-body-weight: 400; --ux-body-lh: 1.5;
+  --ux-numeric-family: monospace; --ux-numeric-size: 13px; --ux-numeric-weight: 500; --ux-numeric-lh: 1.4;
+
+  position: relative;
+  overflow: hidden;
+  padding: 10px;
+  border: 1px solid var(--ux-border);
+  border-radius: 8px;
+  background: var(--ux-bg);
+  color: var(--ux-text);
+  font-family: var(--ux-body-family);
+  font-size: var(--ux-body-size);
+  font-weight: var(--ux-body-weight);
+  line-height: var(--ux-body-lh);
+}
+
+.ux-samples .ux-samples__ref {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.14;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+.ux-samples .ux-samples__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ux-gap) * var(--ux-dens));
+  min-width: 0;
+}
+
+.ux-samples .ux-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--ux-gap) * var(--ux-dens) * 0.6);
+  min-width: 0;
+}
+
+/* ---- buttons ---- */
+.ux-samples .ux-btn {
+  min-width: var(--ux-btn-min, 0px);
+  max-width: 100%;
+  padding: calc(var(--ux-pad-y) * var(--ux-dens)) var(--ux-pad-x);
+  border: 1px solid transparent;
+  border-radius: var(--ux-radius);
+  font-family: var(--ux-body-family);
+  font-size: var(--ux-body-size);
+  font-weight: 600;
+  line-height: var(--ux-body-lh);
+  overflow-wrap: anywhere;
+  cursor: default;
+}
+.ux-samples .ux-btn--primary {
+  background: var(--ux-primary);
+  color: var(--ux-on-primary);
+  border-color: var(--ux-primary);
+}
+.ux-samples .ux-btn--secondary {
+  background: transparent;
+  color: var(--ux-primary);
+  border-color: var(--ux-primary);
+}
+.ux-samples .ux-btn--disabled {
+  background: var(--ux-surface);
+  color: var(--ux-muted);
+  border-color: var(--ux-border);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+/* shadows: only when the token exists; a disabled button never looks pressable */
+.ux-samples [data-shadow-button="on"] .ux-btn--primary,
+.ux-samples [data-shadow-button="on"] .ux-btn--secondary {
+  box-shadow: var(--ux-sh-button-x) var(--ux-sh-button-y) var(--ux-sh-button-blur) var(--ux-sh-button-spread)
+    color-mix(in srgb, var(--ux-sh-button-color) calc(var(--ux-sh-button-opacity) * 100%), transparent);
+}
+
+/* ---- card ---- */
+.ux-samples .ux-card {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ux-gap) * var(--ux-dens) * 0.5);
+  max-width: var(--ux-max-w, none);
+  min-width: 0;
+  padding: calc(var(--ux-pad-y) * var(--ux-dens) * 1.2) var(--ux-pad-x);
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: var(--ux-surface);
+  color: var(--ux-text);
+}
+.ux-samples [data-shadow-card="on"] .ux-card {
+  box-shadow: var(--ux-sh-card-x) var(--ux-sh-card-y) var(--ux-sh-card-blur) var(--ux-sh-card-spread)
+    color-mix(in srgb, var(--ux-sh-card-color) calc(var(--ux-sh-card-opacity) * 100%), transparent);
+}
+.ux-samples .ux-card__title {
+  margin: 0;
+  font-family: var(--ux-heading-family);
+  font-size: var(--ux-heading-size);
+  font-weight: var(--ux-heading-weight);
+  line-height: var(--ux-heading-lh);
+  overflow-wrap: anywhere;
+}
+.ux-samples .ux-card__text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ux-samples .ux-specimen {
+  color: var(--ux-muted);
+}
+
+/* numbers: numeric font, tabular figures */
+.ux-samples .ux-num {
+  font-family: var(--ux-numeric-family);
+  font-size: var(--ux-numeric-size);
+  font-weight: var(--ux-numeric-weight);
+  line-height: var(--ux-numeric-lh);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- input ---- */
+.ux-samples .ux-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ux-gap) * var(--ux-dens) * 0.4);
+  min-width: 0;
+  max-width: var(--ux-max-w, none);
+}
+.ux-samples .ux-field__label {
+  color: var(--ux-text);
+  font-weight: 600;
+}
+.ux-samples .ux-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: calc(var(--ux-pad-y) * var(--ux-dens)) calc(var(--ux-pad-x) * 0.75);
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: var(--ux-bg);
+  color: var(--ux-text);
+  font-family: var(--ux-body-family);
+  font-size: var(--ux-body-size);
+  font-weight: var(--ux-body-weight);
+  line-height: var(--ux-body-lh);
+}
+.ux-samples .ux-input::placeholder {
+  color: var(--ux-muted);
+  opacity: 1;
+}
+/* the focus ring is shown all the time so the sample demonstrates it */
+.ux-samples .ux-input--focus,
+.ux-samples .ux-input:focus-visible {
+  outline: 2px solid var(--ux-primary);
+  outline-offset: 1px;
+  border-color: var(--ux-primary);
+}
+.ux-samples .ux-popover {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: calc(var(--ux-pad-y) * var(--ux-dens) * 0.6) calc(var(--ux-pad-x) * 0.75);
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: var(--ux-surface);
+  color: var(--ux-text);
+  font-size: calc(var(--ux-body-size) * 0.9);
+  overflow-wrap: anywhere;
+}
+.ux-samples [data-shadow-popover="on"] .ux-popover {
+  box-shadow: var(--ux-sh-popover-x) var(--ux-sh-popover-y) var(--ux-sh-popover-blur) var(--ux-sh-popover-spread)
+    color-mix(in srgb, var(--ux-sh-popover-color) calc(var(--ux-sh-popover-opacity) * 100%), transparent);
+}
+
+/* ---- table: 3 x 3, numbers right-aligned ---- */
+.ux-samples .ux-table {
+  width: 100%;
+  max-width: var(--ux-max-w, none);
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  overflow: hidden;
+  color: var(--ux-text);
+}
+.ux-samples .ux-table th,
+.ux-samples .ux-table td {
+  padding: calc(var(--ux-pad-y) * var(--ux-dens) * 0.5) calc(var(--ux-pad-x) * 0.5);
+  text-align: left;
+  font-weight: var(--ux-body-weight);
+  overflow-wrap: anywhere;
+}
+.ux-samples .ux-table thead th {
+  background: var(--ux-surface);
+  border-bottom: 1px solid var(--ux-border);
+  font-weight: 600;
+}
+.ux-samples .ux-table tbody tr + tr th,
+.ux-samples .ux-table tbody tr + tr td {
+  border-top: 1px solid var(--ux-border);
+}
+.ux-samples .ux-table th:first-child {
+  width: 42%;
+}
+.ux-samples .ux-table .ux-num {
+  text-align: right;
+}
+.ux-samples .ux-table thead th.ux-num {
+  font-family: var(--ux-body-family);
+  font-size: var(--ux-body-size);
+  font-weight: 600;
+  line-height: var(--ux-body-lh);
+}
+
+/* ---- status chips: tinted fill, border, glyph and word ---- */
+.ux-samples .ux-chips {
+  gap: calc(var(--ux-gap) * var(--ux-dens) * 0.4);
+}
+.ux-samples .ux-chip {
+  --chip: var(--ux-info);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: calc(var(--ux-pad-y) * var(--ux-dens) * 0.2) calc(var(--ux-pad-x) * 0.5);
+  border: 1px solid var(--chip);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chip) 14%, var(--ux-surface));
+  color: var(--ux-text);
+  font-size: calc(var(--ux-body-size) * 0.9);
+  line-height: var(--ux-body-lh);
+}
+.ux-samples .ux-chip--success { --chip: var(--ux-success); }
+.ux-samples .ux-chip--warning { --chip: var(--ux-warning); }
+.ux-samples .ux-chip--danger { --chip: var(--ux-danger); }
+.ux-samples .ux-chip--info { --chip: var(--ux-info); }
+.ux-samples .ux-chip__glyph {
+  color: var(--chip);
+  font-weight: 700;
+}
+.ux-samples .ux-chip__text {
+  overflow-wrap: anywhere;
+}
+
+/* ---- target ratio bar ---- */
+.ux-samples .ux-ratio {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ux-samples .ux-ratio__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 8px;
+  color: var(--ux-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.ux-samples .ux-ratio__label {
+  font-weight: 600;
+}
+.ux-samples .ux-ratio__bar {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid var(--ux-border);
+  border-radius: 999px;
+}
+.ux-samples .ux-ratio__seg {
+  min-width: 0;
+  height: 100%;
+}
+.ux-samples .ux-ratio__seg--bg { flex: var(--ux-ratio-bg, 60) 1 0%; background: var(--ux-bg); }
+.ux-samples .ux-ratio__seg--surface { flex: var(--ux-ratio-surface, 30) 1 0%; background: var(--ux-surface); }
+.ux-samples .ux-ratio__seg--accent { flex: var(--ux-ratio-accent, 10) 1 0%; background: var(--ux-primary); }
+
+/* ---- font report: the editor's own statement about what was drawn ---- */
+.ux-samples .ux-fonts {
+  margin-top: 8px;
+  color: var(--muted, #8c8c97);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.ux-samples .ux-fonts__title {
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+.ux-samples .ux-fonts__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ux-samples .ux-fonts__item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  padding: 1px 0;
+  min-width: 0;
+}
+.ux-samples .ux-fonts__role {
+  color: var(--text, #e6e6e6);
+  font-weight: 600;
+}
+.ux-samples .ux-fonts__what,
+.ux-samples .ux-fonts__warn {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ux-samples .ux-fonts__item.is-differs .ux-fonts__what,
+.ux-samples .ux-fonts__warn {
+  color: var(--warn, #ffb35c);
+}

@@ -7,6 +7,7 @@ import { History } from './history'
 import { linksAt, type Doc } from './doc'
 import { withAnnotationIds } from '../../shared/annotationIds'
 import { runSend, type SttOutcome } from './sendflow'
+import { createUiuxPanel, type UiuxPanel } from './uiux/panel'
 import { Hotkeys, setHotkeyPlatform } from './hotkeys'
 import { Timeline } from './timeline'
 import { ColorPicker, colorButton, setColorButton } from './colorpicker'
@@ -1008,6 +1009,7 @@ function afterChange(): void {
   redoBtn.title = history.redoLabel ? t('editor.history.redoTip', { label: history.redoLabel }) : hotkeys.label('redo')
   syncBadgeNext()
   contentChanged()
+  uiux?.annotationsChanged()
 }
 
 /** Every undoable change ends here. Ids are assigned before the state enters the history, so redo restores the same ids. */
@@ -1583,6 +1585,34 @@ function exportMeta(): CaptureMeta {
   }
 }
 
+// ---------- UI/UX tools (optional panel; src/renderer/editor/uiux/panel.ts) ----------
+
+let uiux: UiuxPanel | null = null
+const uiuxToggle = byId<HTMLButtonElement>('uiux-toggle')
+
+/** After the language is known: the panel's labels are all message keys. Older preloads without the API hide the button. */
+function setupUiux(): void {
+  const api = window.backseat.uiux
+  if (!api) {
+    uiuxToggle.hidden = true
+    return
+  }
+  uiux = createUiuxPanel(
+    {
+      t,
+      api,
+      annotations: () => annotations,
+      memo: memoInput,
+      setStatus,
+      onStatusChange: () => {
+        contentChanged()
+        requestAnimationFrame(() => fitToolbar())
+      }
+    },
+    { panel: byId('uiux-panel'), toggle: uiuxToggle, appliedBar: byId('uiux-applied'), suggestBar: byId('uiux-suggest') }
+  )
+}
+
 function buildPayload(): ExportPayload | null {
   if (!init) return null
   commitPendingText()
@@ -1597,6 +1627,9 @@ function buildPayload(): ExportPayload | null {
   if (transcript) payload.transcript = transcript
   if (audioBytes) payload.audio = { bytes: audioBytes, mimeType: audioMime }
   if (compareImg && cmpUsed) payload.compare = { sessionDir: compareDir, mode: cmpMode, diffPercent: diffPercent() }
+  // Only what the user applied; a draft in the panel never goes along (spec §4.2).
+  const ux = uiux?.payload()
+  if (ux) payload.uiux = ux
   return payload
 }
 
@@ -1643,6 +1676,8 @@ async function send(extra: SendExtra = {}): Promise<void> {
     openTargetMenu()
     return
   }
+  // Applied UI/UX guidance edited since: reflect the edits or send what was applied (spec §4.2).
+  if (uiux && !(await uiux.beforeSend())) return
   busy = true
   let voiceStopped = false
   try {
@@ -1683,6 +1718,7 @@ async function send(extra: SendExtra = {}): Promise<void> {
     }
     lastDelivery = statusOf(r, { clipboardOnly: lastDeliveryCtx.clipboardOnly === true, target: currentTarget() })
     if (r.error) lastDeliveryCtx.error = r.error
+    if (r.ok) uiux?.markSent()
     dirtySinceSend = false
     // The send bar tells what happened; the status line only repeats a failure.
     setStatus(r.ok ? '' : r.message, !r.ok)
@@ -1758,7 +1794,9 @@ function renderSendbar(): void {
 
 function renderSummary(): void {
   const r = currentPreflight()
-  summaryText.textContent = summaryParts(r, t).join(' · ')
+  const parts = summaryParts(r, t)
+  if (uiux && uiux.status() !== 'off') parts.push(t('uiux.panel.summaryPart'))
+  summaryText.textContent = parts.join(' · ')
   voiceMissingEl.hidden = !voiceMissing(r)
   voiceLinksBtn.hidden = !(r.voice === 'ready' && transcript !== null && transcript.segments.length > 0)
   summaryChanged.hidden = !(lastDelivery && dirtySinceSend)
@@ -3185,6 +3223,7 @@ window.backseat.editor.onInit((data) => {
   showTarget()
   window.backseat.editor.targets?.().then((views) => { targetViews = candidatesOf(views) }, () => undefined)
   newCaptureBtn.hidden = typeof window.backseat.editor.newCapture !== 'function'
+  setupUiux()
   if (data.request) {
     askBar.textContent = t('editor.ask.label', { agent: data.request.agent || t('editor.target.agentFallback'), question: data.request.question })
     askBar.title = data.request.question

@@ -80,7 +80,9 @@ export function isTyping(e: KeyboardEvent): boolean {
   return (
     t instanceof HTMLInputElement ||
     t instanceof HTMLTextAreaElement ||
-    (t instanceof HTMLElement && t.isContentEditable)
+    (t instanceof HTMLElement && t.isContentEditable) ||
+    // Panels with their own buttons and fields (UI/UX tools): Enter on a focused button there is that button, not 보내기.
+    (t instanceof Element && t.closest('[data-hotkeys-off]') !== null)
   )
 }
 

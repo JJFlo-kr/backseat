@@ -32,7 +32,7 @@ main{position:absolute;top:55px;left:191px;right:0;bottom:0;padding:18px 28px}h1
   `<div class="row"><span class="who">#104${2 + i} Order for ${n}</span><span class="mail">${n.toLowerCase()}@example.com</span><span class="st${i === 2 ? ' bad' : ''}">${i === 2 ? 'Failed' : 'Paid'}</span><button>Details</button></div>`).join('')}</main></body></html>`
 
 /** The fake app page as a PNG data URL (offscreen: nothing of the real screen is captured). */
-async function fakeCapture(): Promise<{ dataUrl: string; width: number; height: number }> {
+export async function fakeCapture(): Promise<{ dataUrl: string; width: number; height: number }> {
   const w = new BrowserWindow({ width: 900, height: 520, show: false, useContentSize: true, paintWhenInitiallyHidden: true, webPreferences: { sandbox: true } })
   await w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(FAKE_APP)}`)
   await w.webContents.executeJavaScript('document.fonts.ready.then(() => true)')
