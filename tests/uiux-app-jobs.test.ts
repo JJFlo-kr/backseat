@@ -346,9 +346,9 @@ test('style_audit findings and an implementation report reach the outcome', asyn
   const payload = { memo: 'make it calmer', uiux: { request } } as unknown as ExportPayload
   const jobId = await app.createReportJob(payload)
   assert.ok(jobId)
-  await app.attachSessionDir(jobId!, 'C:\\Users\\a\\Pictures\\Backseat\\sessions\\s1')
+  await app.attachSessionDir(jobId!, 'C:\\Users\\me\\Pictures\\Backseat\\sessions\\s1')
   const input = await store.getJobInput<{ sessionDir: string; request: { changes: unknown[] }; memo: string }>(jobId!)
-  assert.equal(input?.sessionDir, 'C:\\Users\\a\\Pictures\\Backseat\\sessions\\s1')
+  assert.equal(input?.sessionDir, 'C:\\Users\\me\\Pictures\\Backseat\\sessions\\s1')
   assert.equal(input?.request.changes.length, 1)
   assert.equal(input?.memo, 'make it calmer')
   const job = (await store.getJob(jobId!))!

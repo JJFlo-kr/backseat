@@ -3,7 +3,7 @@
 // key the section uses must exist in en.json or in the staging file of keys waiting to be merged.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { crc32 } from 'node:zlib'
 import { buildBrief } from '../src/main/brief.ts'
 import { isPlainCapture } from '../src/main/agents.ts'
@@ -260,12 +260,8 @@ test('every message key of the section exists in en.json or in the staging file'
   uiuxBriefLines(request({ checks: [{ id: 'f', kind: 'visual', label: 'l', status: 'fail' }] }), [], spy)
 
   const en = JSON.parse(readFileSync(new URL('../src/locales/en.json', import.meta.url), 'utf8')) as Record<string, string>
-  const stagingFile = 'D:/backseat-demo-run/uiux-locales/package.json'
-  const staged = existsSync(stagingFile) ? (JSON.parse(readFileSync(stagingFile, 'utf8')) as Record<string, { en: string }>) : {}
-  const known: Record<string, string> = { ...Object.fromEntries(Object.entries(staged).map(([k, v]) => [k, v.en])), ...en }
-  const missing = [...used].filter((k) => !(k in known))
-  // keys can only be missing if neither en.json nor the staging file (merged later) has them; skip when neither is readable
-  if (Object.keys(staged).length > 0 || [...used].some((k) => k in en)) assert.deepEqual(missing, [])
+  const known: Record<string, string> = en
+  assert.deepEqual([...used].filter((k) => !(k in known)), [])
   for (const key of used) {
     const template = known[key]
     if (template === undefined) continue

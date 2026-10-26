@@ -233,18 +233,5 @@ test('every mcp.job.* / designPreview key the code uses exists in en.json or the
   for (const g of ['summary', 'purpose', 'purposeUnbacked', 'audiences', 'workflows', 'architecture']) used.add(`mcp.job.gap.${g}`)
   assert.ok(used.size >= 27, `found ${used.size} keys`)
   const known = new Set(Object.keys(JSON.parse(readFileSync(new URL('../src/locales/en.json', import.meta.url), 'utf8')) as Record<string, string>))
-  // Keys not merged yet sit in the staging files (mcp.json, mcp2.json); once merged they are in en.json.
-  for (const name of ['mcp.json', 'mcp2.json']) {
-    try {
-      const staged = JSON.parse(readFileSync(new URL(`file:///D:/backseat-demo-run/uiux-locales/${name}`), 'utf8')) as Record<string, { ko: string; en: string }>
-      for (const [k, v] of Object.entries(staged)) {
-        known.add(k)
-        const ph = (t: string): string => [...new Set([...t.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort().join()
-        assert.equal(ph(v.ko), ph(v.en), `placeholders of ${k}`)
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
-    }
-  }
   assert.deepEqual([...used].filter((k) => !known.has(k)).sort(), [])
 })

@@ -33,7 +33,7 @@ const ctx = (): SkillContext => ({
 })
 
 test('scrubText removes drive, UNC and user-folder paths but not URLs or relative paths', () => {
-  assert.equal(scrubText('see C:\\Users\\a\\x.ts and D:/work/y'), 'see [local path removed] and [local path removed]')
+  assert.equal(scrubText('see C:\\Users\\me\\x.ts and D:/work/y'), 'see [local path removed] and [local path removed]')
   assert.equal(scrubText('at \\\\nas\\team\\f'), 'at [local path removed]')
   assert.equal(scrubText('open /Users/bob/p/a.ts'), 'open [local path removed]')
   assert.equal(scrubText('https://example.com/a/b and src/main/x.ts and /api/users'), 'https://example.com/a/b and src/main/x.ts and /api/users')
