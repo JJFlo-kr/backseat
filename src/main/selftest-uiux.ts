@@ -220,6 +220,17 @@ export async function runUiuxSelfTest(shotsDir: string | undefined): Promise<voi
     report.missingMarkShown = await js<boolean>(`/연결할 영역 없음/.test(document.getElementById('uiux-panel').textContent)`)
     if (!report.missingMarkShown) errors.push('a removed mark is not reported as "no area to link to"')
     await shot('uiux-5-missing-mark.png')
+    // A send whose scope has no mark left is stopped and says why (it never falls back to another mark).
+    const beforeGuard = sent.length
+    await js(`document.getElementById('send').click(); true`)
+    if (await waitFor(`document.querySelector('dialog.uxp-dialog[open]')`, 'question before sending changed guidance', 2000)) {
+      await click('dialog.uxp-dialog [data-ux="dialog-reflect"]', 'reflect and send')
+    }
+    await sleep(800)
+    report.emptyScopeStopped = sent.length === beforeGuard && await js<boolean>(`/보내지 않았어요/.test(document.getElementById('status').textContent)`)
+    if (!report.emptyScopeStopped) errors.push('a send whose scope marks are gone was not stopped with a message')
+    await js(`(() => { const b = [...document.querySelectorAll('#uiux-panel .seg [role=radio]')][0]; b.click(); return true })()`)
+    await sleep(200)
 
     // 10. Memo phrases and the font report.
     await js(`document.getElementById('memo').focus(); document.getElementById('memo').dispatchEvent(new Event('focus')); true`)

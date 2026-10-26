@@ -68,6 +68,23 @@ const AREAS: readonly Area[] = ['colors', 'ratio', 'shadows', 'type', 'box']
 const lines = (s: string): string[] => s.split(/\n|,/).map((x) => x.trim()).filter(Boolean)
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
 
+/** The project chosen last in any editor (renderer storage, shared by the editor windows of this PC). */
+const LAST_PROJECT = 'backseat.uiux.lastProject'
+function readLastProject(): string | null {
+  try {
+    return localStorage.getItem(LAST_PROJECT)
+  } catch {
+    return null
+  }
+}
+function writeLastProject(id: string): void {
+  try {
+    localStorage.setItem(LAST_PROJECT, id)
+  } catch {
+    // storage unavailable: new editors start with the first project
+  }
+}
+
 /** A mark's position on the capture in image pixels, as brief.md lists it. */
 function markPos(a: Annotation): string {
   const p = 'x' in a ? { x: a.x, y: a.y } : 'x1' in a ? { x: a.x1, y: a.y1 } : 'points' in a && a.points[0] ? a.points[0] : null
@@ -219,11 +236,14 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
 
   async function loadProjects(selectId?: string): Promise<void> {
     projects = await host.api.listProjects()
-    const id = selectId ?? state?.profile.projectId ?? projects[0]?.projectId ?? null
+    // A new capture opens the project used last (not the first in the list): guidance must not change project silently.
+    const last = readLastProject()
+    const id = selectId ?? state?.profile.projectId ?? (projects.some((p) => p.projectId === last) ? last : projects[0]?.projectId) ?? null
     await selectProject(id)
   }
 
   async function selectProject(id: string | null): Promise<void> {
+    if (id) writeLastProject(id)
     state = id ? await host.api.projectState(id) : null
     const base = state?.rules?.tokens ?? defaultTokens()
     const locks = state?.rules?.locks ?? []
@@ -482,9 +502,12 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       sel.append(o)
     }
     sel.addEventListener('change', () => void selectProject(sel.value || null))
+    if (state) sel.title = state.profile.name
     const row = el('div', 'uxp-row')
     row.append(sel, button(t('uiux.panel.newProject'), () => { newProjectOpen = !newProjectOpen; render() }, 'btn small', 'new-project'))
     const parts: Node[] = [row]
+    // A long name is cut in the select: show it whole, so similar projects cannot be mixed up.
+    if (state && state.profile.name.length > 18) parts.push(el('p', 'uxp-text', state.profile.name))
     if (newProjectOpen) {
       const name = el('input', 'uxp-input')
       name.dataset.ux = 'project-name'
@@ -832,7 +855,8 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
     ta.rows = 2
     ta.value = session.draft.preserve.join('\n')
     ta.placeholder = t('uiux.panel.preserveHint')
-    ta.addEventListener('change', () => setDraft({ preserve: lines(ta.value).slice(0, 20) }))
+    // One item per line: a sentence with commas stays one item.
+    ta.addEventListener('change', () => setDraft({ preserve: ta.value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 20) }))
     lab.append(ta)
     return lab
   }
@@ -993,14 +1017,25 @@ export function createUiuxPanel(host: UiuxHost, m: UiuxMounts): UiuxPanel {
       return shot ? { request: req, previewPngDataUrl: shot } : { request: req }
     },
     async beforeSend(): Promise<boolean> {
-      if (status(session) !== 'stale') return true
-      const c = await staleDialog()
-      if (c === 'cancel') return false
-      // "Send what was added" sends the applied values and keeps the user's newer edits in the draft (still marked
-      // as not reflected): choosing what to send never throws work away.
-      if (c === 'reflect') {
-        session = apply(session)
-        changed()
+      if (status(session) === 'stale') {
+        const c = await staleDialog()
+        if (c === 'cancel') return false
+        // "Send what was added" keeps the user's newer edits in the draft (still not reflected): nothing is thrown away.
+        if (c === 'reflect') {
+          session = apply(session)
+          changed()
+        }
+      }
+      // Scope "marked areas" whose marks are all gone (or none chosen) would send guidance for nothing: stop and say
+      // so (spec AC-13: a removed mark is reported, never replaced by another one or by the whole screen).
+      const sc = status(session) !== 'off' ? session.applied?.scope : undefined
+      if (sc?.kind === 'annotations') {
+        const present = new Set(host.annotations().map((a) => a.id))
+        if (!(sc.annotationIds ?? []).some((id) => present.has(id))) {
+          host.setStatus(t('uiux.panel.scopeEmpty'), true)
+          toggle(true)
+          return false
+        }
       }
       return true
     },

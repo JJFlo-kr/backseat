@@ -99,7 +99,7 @@ export function createAgentParts(host: AgentHost): AgentParts {
     if (job.projectId !== projectId) return
     upsert(job)
     // The status line follows the job: an old "request created" must not stay after it failed or ended.
-    if (job.status !== 'pending' && job.status !== 'submitted') host.setStatus(t(`uiux.job.status.${job.status}`), job.status === 'failed' || job.status === 'rejected')
+    if (job.status !== 'pending') host.setStatus(t(`uiux.job.status.${job.status}`), job.status === 'failed' || job.status === 'rejected')
     if (job.status === 'submitted') void afterSubmit(job)
     else host.rerender()
   })
