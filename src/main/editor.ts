@@ -96,7 +96,9 @@ async function handleSave(win: BrowserWindow | null, payload: ExportPayload): Pr
     await writeFile(file, pngBuffer(payload.pngDataUrl))
     if (payload.memo || payload.annotations.length > 0) {
       const md = file.replace(/\.png$/i, '.md')
-      await writeFile(md, buildBrief(payload, basename(file), null, { t: briefTranslator() }), 'utf8')
+      // Save keeps its meaning (the PNG, plus the plain note): UI/UX guidance goes with the session package, and its
+      // design-request.json / design-preview.png would not exist next to this file.
+      await writeFile(md, buildBrief({ ...payload, uiux: undefined }, basename(file), null, { t: briefTranslator() }), 'utf8')
     }
     return { ok: true, path: file }
   } catch (err) {

@@ -1,6 +1,7 @@
 import type { AgentTarget, Annotation, ExportPayload, Segment } from '../shared/types.ts'
 import { alignSegments, fmtClock, groupByAnnotation, type Assignment } from '../shared/align.ts'
 import { t, type Translate } from '../shared/i18n.ts'
+import { hasUiuxGuidance, uiuxBriefLines } from './uiux/package.ts'
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
 
@@ -61,6 +62,10 @@ export interface BriefOptions {
   screenshotFileName?: string
   /** Translator for the brief's language (main passes briefTranslator()); defaults to the global t(). */
   t?: Translate
+  /** UI/UX guidance: file name of the mock-up written next to brief.md (design-preview.png); omit when there is none. */
+  uiuxPreviewFileName?: string
+  /** UI/UX guidance: a mock-up was sent but could not be included in the package. */
+  uiuxPreviewMissing?: boolean
 }
 
 /** Markdown brief that accompanies a saved capture. Image path is relative to the .md file. */
@@ -153,6 +158,14 @@ export function buildBrief(
     lines.push(`## ${tr('brief.globals.heading')}`)
     for (const segIdx of globals) lines.push(`- ${speechLine(segIdx)}`)
     lines.push('')
+  }
+  if (payload.uiux && hasUiuxGuidance(payload)) {
+    lines.push(
+      ...uiuxBriefLines(payload.uiux.request, annotations, tr, {
+        ...(options.uiuxPreviewFileName ? { previewFileName: options.uiuxPreviewFileName } : {}),
+        ...(options.uiuxPreviewMissing ? { previewMissing: true } : {})
+      })
+    )
   }
   lines.push(`## ${tr('brief.interp.heading')}`)
   lines.push(`- ${tr('brief.interp.coords')}`)

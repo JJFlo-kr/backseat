@@ -15,6 +15,7 @@ import { buildBrief } from './brief'
 import { renameRetry, writeFileAtomic } from './fsutil'
 import { briefTranslator } from './locales'
 import { sessionsRoot } from './config'
+import { DESIGN_PREVIEW_FILE, DESIGN_REQUEST_FILE, designFiles } from './uiux/package'
 
 export { sessionsRoot }
 
@@ -30,6 +31,9 @@ export interface SessionPackage {
   screenshotPng?: string
   audioFile?: string
   transcriptJson?: string
+  /** UI/UX guidance (spec §10.1): the request snapshot and, when valid, the selected mock-up. */
+  designRequestJson?: string
+  designPreviewPng?: string
 }
 
 function audioExt(mime: string): string {
@@ -74,12 +78,31 @@ async function writeFiles(
   }
   const out: [name: string, data: string | Uint8Array][] = []
   const hasShot = Boolean(payload.basePngDataUrl)
+  // Applied UI/UX guidance: the request is written as given, but previewRef only when design-preview.png is written.
+  const design = designFiles(payload)
+  const briefPayload: ExportPayload = design && payload.uiux ? { ...payload, uiux: { ...payload.uiux, request: design.request } } : payload
   out.push(['annotated.png', pngBuffer(payload.pngDataUrl)])
-  out.push(['brief.md', buildBrief(payload, 'annotated.png', target, { ...(hasShot ? { screenshotFileName: 'screenshot.png' } : {}), t: briefTranslator() })])
+  out.push([
+    'brief.md',
+    buildBrief(briefPayload, 'annotated.png', target, {
+      ...(hasShot ? { screenshotFileName: 'screenshot.png' } : {}),
+      ...(design?.preview ? { uiuxPreviewFileName: DESIGN_PREVIEW_FILE } : {}),
+      ...(design?.previewRejected ? { uiuxPreviewMissing: true } : {}),
+      t: briefTranslator()
+    })
+  ])
   out.push(['strokes.json', JSON.stringify({ annotations: payload.annotations }, null, 2)])
   if (payload.basePngDataUrl) {
     pkg.screenshotPng = at('screenshot.png')
     out.push(['screenshot.png', pngBuffer(payload.basePngDataUrl)])
+  }
+  if (design) {
+    pkg.designRequestJson = at(DESIGN_REQUEST_FILE)
+    out.push([DESIGN_REQUEST_FILE, JSON.stringify(design.request, null, 2)])
+    if (design.preview) {
+      pkg.designPreviewPng = at(DESIGN_PREVIEW_FILE)
+      out.push([DESIGN_PREVIEW_FILE, design.preview])
+    }
   }
   if (payload.audio) {
     const name = `audio.${audioExt(payload.audio.mimeType)}`
@@ -102,6 +125,8 @@ async function writeFiles(
         // The MCP agent this package was handed to (backseat-mcp shows it to that agent only); absent = anyone.
         recipient: target?.mcp ? { agentId: target.mcp.id, name: target.mcp.name, cwd: target.mcp.cwd } : undefined,
         meta: payload.meta,
+        // Why a sent mock-up is not in the package (the request then has no previewRef).
+        uiux: design?.previewRejected ? { previewRejected: design.previewRejected } : undefined,
         target,
         files
       },

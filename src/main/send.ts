@@ -18,6 +18,7 @@ import { describeWindow, focusWindow, foregroundHwnd, liveWindow, processNameOf,
 import { uiaClear, uiaEnterIfUnchanged, uiaFocusSoleInput, uiaInputCheck, uiaPasteIfUnchanged, type FocusInfo } from './native/uia'
 import { markAnswered } from './requests'
 import { sessionsRoot, writeSessionPackage } from './sessions'
+import { hasUiuxGuidance } from './uiux/package'
 import type { Resolved } from './targets'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -125,7 +126,8 @@ async function deliver(
     if (payload.meta.request) await markAnswered(sessionsRoot(), payload.meta.request.requestId)
     // The line and the image prefix are read by the agent: brief language. Status messages: UI language.
     // Nothing added to the capture: the picture alone (chat UIs) or its path alone (terminals), no instructions.
-    const plain = isPlainCapture(payload)
+    // Applied UI/UX guidance is a request even without marks, memo or voice (spec §10.1): never the plain picture.
+    const plain = isPlainCapture(payload) && !hasUiuxGuidance(payload)
     const line = plain
       ? plainPathLine(pkg.annotatedPng)
       : instructionLine(pkg.briefMd, pkg.annotatedPng, payload.memo, target?.mcp ? pkg.id : undefined, briefTranslator())
