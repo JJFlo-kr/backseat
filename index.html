@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backseat - mark what to fix, explain it out loud</title>
-<meta name="description" content="Point at what to fix and talk: Backseat pairs each mark with what you said and hands both to your AI coding tool. A Windows app, free and open source (MIT).">
+<meta name="description" content="Mark what to fix and talk: Backseat pairs each mark with what you said as you drew it and sends both to your AI coding tool. A free, open-source Windows app.">
 <meta name="theme-color" content="#1B1B1F">
 <link rel="canonical" href="https://jjflo-kr.github.io/backseat/">
 <link rel="alternate" hreflang="en" href="https://jjflo-kr.github.io/backseat/">
@@ -16,7 +16,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Backseat">
 <meta property="og:title" content="Backseat - mark what to fix, explain it out loud">
-<meta property="og:description" content="Point at what to fix and talk: Backseat pairs each mark with what you said and hands both to your AI coding tool. A Windows app, free and open source (MIT).">
+<meta property="og:description" content="Mark what to fix and talk: Backseat pairs each mark with what you said as you drew it and sends both to your AI coding tool. A free, open-source Windows app.">
 <meta property="og:url" content="https://jjflo-kr.github.io/backseat/">
 <meta property="og:image" content="https://jjflo-kr.github.io/backseat/social-card.png">
 <meta property="og:image:width" content="1280">
@@ -25,7 +25,7 @@
 <meta property="og:locale:alternate" content="ko_KR">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Backseat - mark what to fix, explain it out loud">
-<meta name="twitter:description" content="Point at what to fix and talk: Backseat pairs each mark with what you said and hands both to your AI coding tool. A Windows app, free and open source (MIT).">
+<meta name="twitter:description" content="Mark what to fix and talk: Backseat pairs each mark with what you said as you drew it and sends both to your AI coding tool. A free, open-source Windows app.">
 <meta name="twitter:image" content="https://jjflo-kr.github.io/backseat/social-card.png">
 
 <link rel="stylesheet" href="assets/style.css">
@@ -54,7 +54,7 @@
     <div class="hero hero--copy">
       <p class="eyebrow"><img src="assets/logo.svg" alt="" width="28" height="28">Backseat</p>
       <h1 class="headline">Mark what to fix.<br> Explain it out loud.</h1>
-      <p class="lede">Point at what to fix while you talk. Backseat pairs each mark with what you said and hands both to your AI coding tool.</p>
+      <p class="lede">Backseat pairs each mark with what you said as you drew it and sends both to your AI coding tool.</p>
       <p class="example"><span class="example-label">For example</span>“Make this button bigger. Move the logo to the center.”</p>
       <div class="cta">
         <a class="btn btn-primary" data-release-href="download" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.5.0/Backseat.Setup.0.5.0.exe">Download for Windows</a>
@@ -77,7 +77,7 @@
     <!-- Result: before / after -->
     <section id="result" aria-labelledby="result-h">
       <h2 id="result-h">Here is what got fixed</h2>
-      <p class="lead">We circled the button, drew a number and an arrow on the logo, said “This login button is too small. Make it about one and a half times bigger. Move the logo to the center.”, and sent it to Codex CLI.</p>
+      <p class="lead">I circled the button, drew a number and an arrow on the logo, said “This login button is too small. Make it about one and a half times bigger. Move the logo to the center.”, and sent it to Codex CLI.</p>
       <div class="result">
         <figure>
           <img src="media/result-before.jpg" width="840" height="760"
@@ -90,7 +90,14 @@
           <figcaption><strong>After</strong><span>The button is bigger and the logo is centered.</span></figcaption>
         </figure>
       </div>
-      <p class="figcap">This is the edit Codex made from the marks and the explanation. Both pictures come from one real Codex CLI run, cropped at the same position and scale. Backseat only delivers the request; it does not change your code.</p>
+      <p class="figcap">Codex CLI made this edit from the marks and the explanation. Both pictures come from one real run, cropped at the same position and scale. Backseat delivers the request, and your AI tool changes the code.</p>
+    </section>
+
+    <!-- Why -->
+    <section id="why" aria-labelledby="why-h">
+      <h2 id="why-h">Why I built it</h2>
+      <p class="lead">With an AI coding tool, “that button there, no, not like that” is hard to put into words. A screenshot with the problem circled gets a much more specific fix. But that meant capturing the screen, marking it up in Paint, saving it, pasting it into the AI window and typing out what each mark meant, every single time. I built Backseat to cut that work down.</p>
+      <p>The name comes from “backseat driver”: the AI is at the wheel writing the code while you sit behind it, pointing at the screen and talking. Explain things the way you would to an AI standing behind you, looking at the same monitor.</p>
     </section>
 
     <!-- How it works -->
@@ -105,18 +112,18 @@
         </li>
         <li class="step">
           <h3><span class="step-num" aria-hidden="true">2</span>Mark it up and explain</h3>
-          <p>Mark what to fix with arrows, numbers, a pen or text. Start recording and talk while you draw: each sentence is paired with the mark you were drawing at the time.</p>
-          <p>Voice is optional. You can send just a one-line note, or only the marks.</p>
-          <p class="keys">Record <kbd>M</kbd> · Speech is turned into text on your PC.</p>
+          <p>Mark what to fix with arrows, numbers, a pen or text. Start recording and talk while you draw: each sentence is linked to the mark you were drawing at the time.</p>
+          <p>You don't have to talk. Marks alone, or a one-line note, are enough to send.</p>
+          <p class="keys">Record <kbd>M</kbd> · Backseat transcribes your speech on your PC.</p>
         </li>
         <li class="step">
           <h3><span class="step-num" aria-hidden="true">3</span>Hand it to your AI</h3>
-          <p>Press Send and Backseat pastes it into the input box of the AI window you used last. Check what went in, then submit it yourself in that window.</p>
-          <p class="keys">Send <kbd>Enter</kbd> · What goes in <a href="#tools">depends on the destination</a>.</p>
+          <p>Press Send and Backseat tries to paste it into the input box of the AI window you used last. Check what went in, then submit it yourself in that window.</p>
+          <p class="keys">Send <kbd>Enter</kbd> · What goes in <a href="#tools">depends on the target</a>.</p>
         </li>
       </ol>
       <details class="more">
-        <summary>Watch each step (3 clips)</summary>
+        <summary>Watch the three step clips</summary>
         <div class="more-body clips">
           <figure>
             <div class="frame">
@@ -136,12 +143,12 @@
               </video>
               <button class="vid-toggle" type="button" data-play-label="Play" data-pause-label="Pause">Play</button>
             </div>
-            <figcaption>2. Each spoken sentence (subtitled) is linked to the mark drawn at the time.</figcaption>
+            <figcaption>2. Each sentence, shown as a subtitle, is linked to the mark drawn at that moment.</figcaption>
           </figure>
           <figure>
             <div class="frame">
               <video data-play="hover" controls muted loop playsinline preload="none" poster="media/clip-send-poster.jpg"
-                aria-label="Step 3 clip: the request line appearing in Codex CLI's empty input, then the confirmed steps under the editor">
+                aria-label="Step 3 clip: the request line appearing in Codex CLI's empty input, then the steps it went through, shown under the editor">
                 <source src="media/clip-send.mp4" type="video/mp4">
               </video>
               <button class="vid-toggle" type="button" data-play-label="Play" data-pause-label="Pause">Play</button>
@@ -152,68 +159,102 @@
       </details>
     </section>
 
+    <!-- What gets shorter -->
+    <section id="less" aria-labelledby="less-h">
+      <h2 id="less-h">What it saves</h2>
+      <p class="lead">Each fix used to take five steps by hand. With Backseat it's one shortcut, drawing while you talk, and <kbd>Enter</kbd>.</p>
+      <table class="tools">
+        <thead>
+          <tr><th scope="col">What you did by hand</th><th scope="col">With Backseat</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">1. Capture the screen.</th>
+            <td data-label="With Backseat">Press <kbd>Ctrl+Shift+A</kbd> and drag. The editor opens right away.</td>
+          </tr>
+          <tr>
+            <th scope="row">2. Open Paint and mark it up.</th>
+            <td data-label="With Backseat">Draw right in the editor.</td>
+          </tr>
+          <tr>
+            <th scope="row">3. Save the image as a file.</th>
+            <td data-label="With Backseat">Backseat saves it on your PC when you send.</td>
+          </tr>
+          <tr>
+            <th scope="row">4. Switch to the AI window and paste the image.</th>
+            <td data-label="With Backseat">Press <kbd>Enter</kbd> and Backseat tries to paste into the AI window you used last.</td>
+          </tr>
+          <tr>
+            <th scope="row">5. Type out what to change at each mark.</th>
+            <td data-label="With Backseat">Talk while you draw. Each sentence is linked to the mark you were drawing.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small table-note">If the paste doesn't go through, everything is on the clipboard: press <kbd>Ctrl+V</kbd> in the AI window. You still submit it yourself, as before.</p>
+    </section>
+
     <!-- Which AI tools -->
     <section id="tools" aria-labelledby="tools-h">
       <h2 id="tools-h">Which AI tools does it work with?</h2>
-      <p class="lead">Send pastes into the AI tool window you used last. To send somewhere else, click the destination at the top right of the editor or press <kbd>Ctrl+T</kbd>.</p>
-      <p class="verified-summary">Checked from capture to the AI's finished edit: <strong>Codex CLI</strong></p>
+      <p class="lead">By default, Send goes to the AI tool window you used last. To send somewhere else, click the target at the top right of the editor or press <kbd>Ctrl+T</kbd>.</p>
+      <p class="verified-summary"><strong>Codex CLI</strong> is the only tool checked all the way from capture to the AI's finished edit.</p>
       <ul class="legend" aria-label="Verification levels">
-        <li><span class="status ok"><span aria-hidden="true">✓</span> Verified</span> We saw the AI read what was sent and finish the edit.</li>
+        <li><span class="status ok"><span aria-hidden="true">✓</span> Verified</span> I saw the AI read what was sent and finish the edit.</li>
         <li><span class="status part"><span aria-hidden="true">◐</span> Partly verified</span> Only some steps, such as the paste, were tried, and there are limits.</li>
         <li><span class="status todo"><span aria-hidden="true">○</span> Not verified</span> Actual delivery not tried yet.</li>
       </ul>
       <table class="tools">
         <thead>
-          <tr><th scope="col">Tool</th><th scope="col">Designed to receive</th><th scope="col">Level</th><th scope="col">What was tried, and limits</th></tr>
+          <tr><th scope="col">Tool</th><th scope="col">Meant to receive</th><th scope="col">Level</th><th scope="col">What was tried, and limits</th></tr>
         </thead>
         <tbody>
           <tr>
             <th scope="row">Codex CLI<small>terminal</small></th>
-            <td data-label="Designed to receive">Request line and file paths</td>
+            <td data-label="Meant to receive">Request line and file paths</td>
             <td data-label="Level"><span class="status ok"><span aria-hidden="true">✓</span> Verified</span></td>
             <td data-label="What was tried, and limits">From capture to Codex fixing the page.</td>
           </tr>
           <tr>
             <th scope="row">ChatGPT desktop app</th>
-            <td data-label="Designed to receive">Image and request line</td>
+            <td data-label="Meant to receive">Image and request line</td>
             <td data-label="Level"><span class="status part"><span aria-hidden="true">◐</span> Partly verified</span></td>
             <td data-label="What was tried, and limits">In the test, only the text went in; the image did not attach.</td>
           </tr>
           <tr>
             <th scope="row">ChatGPT in a browser tab</th>
-            <td data-label="Designed to receive">Image and request line</td>
+            <td data-label="Meant to receive">Image and request line</td>
             <td data-label="Level"><span class="status part"><span aria-hidden="true">◐</span> Partly verified</span></td>
             <td data-label="What was tried, and limits">Tried up to the paste. The AI's reply and edit were not checked.</td>
           </tr>
           <tr>
             <th scope="row">Claude desktop app</th>
-            <td data-label="Designed to receive">Image and request line</td>
+            <td data-label="Meant to receive">Image and request line</td>
             <td data-label="Level"><span class="status part"><span aria-hidden="true">◐</span> Partly verified</span></td>
             <td data-label="What was tried, and limits">Tried up to finding the input box; nothing was pasted.</td>
           </tr>
           <tr>
             <th scope="row">Claude Code<small>terminal</small></th>
-            <td data-label="Designed to receive">Request line and file paths</td>
+            <td data-label="Meant to receive">Request line and file paths</td>
             <td data-label="Level"><span class="status todo"><span aria-hidden="true">○</span> Not verified</span></td>
             <td data-label="What was tried, and limits">Recognized as a terminal; delivery not tried.</td>
           </tr>
           <tr>
             <th scope="row">Claude, Gemini, Copilot in a browser tab</th>
-            <td data-label="Designed to receive">Image and request line</td>
+            <td data-label="Meant to receive">Image and request line</td>
             <td data-label="Level"><span class="status todo"><span aria-hidden="true">○</span> Not verified</span></td>
-            <td data-label="What was tried, and limits">Only a rule that recognizes the tab title.</td>
+            <td data-label="What was tried, and limits">Recognized by the tab title; delivery not tried.</td>
           </tr>
           <tr>
             <th scope="row">Cursor, VS Code, Windsurf, Zed</th>
-            <td data-label="Designed to receive">Request line and file paths</td>
+            <td data-label="Meant to receive">Request line and file paths</td>
             <td data-label="Level"><span class="status todo"><span aria-hidden="true">○</span> Not verified</span></td>
-            <td data-label="What was tried, and limits">Only a rule that recognizes the window.</td>
+            <td data-label="What was tried, and limits">Recognized by its window; delivery not tried.</td>
           </tr>
         </tbody>
       </table>
-      <p class="small table-note">These tests were run on Windows 10. For tools marked not verified, actual delivery has not been checked. Seeing the paste land is a different level from seeing the AI read it and finish the edit.</p>
+      <p class="small table-note">All tests ran on Windows 10. A paste landing is one step; the AI reading it and finishing the edit is another.</p>
       <ul class="keypoints">
-        <li>Backseat only pastes. You submit it yourself in that AI window.</li>
+        <li>Backseat only tries the paste. You submit it yourself in that AI window.</li>
         <li>If it can't confirm the input box, it leaves everything on the clipboard. Click the input box and press <kbd>Ctrl+V</kbd>.</li>
         <li>It doesn't paste into an input box it identifies as a password field.</li>
       </ul>
@@ -222,21 +263,21 @@
         <div class="more-body">
           <h3>What goes in?</h3>
           <ul>
-            <li>Terminals and code editors get a request line with the file paths of the marked-up image and the request file (brief.md). The agent has to be able to read files on your PC.</li>
-            <li>Chat apps and browser tabs are designed to get the marked-up image and the request line, because a chat AI can't open files on your PC.</li>
-            <li>If you send without drawing or saying anything, only the image goes (only its path, for a terminal), with no request line.</li>
-            <li>An agent set up over MCP can fetch captures from Backseat itself. This is optional. <a href="https://github.com/JJFlo-kr/backseat/blob/main/docs/MCP.md">MCP setup</a></li>
+            <li>Terminals and code editors get a request line plus the locations of the marked-up image and the request file. The AI tool has to be able to open files on your PC.</li>
+            <li>For chat apps and browser tabs, Backseat tries to paste the marked-up image and the request line, because a chat AI can't open files on your PC.</li>
+            <li>If you send without drawing or saying anything, only the image goes, with no request line. A terminal gets just the image's location.</li>
+            <li>An AI tool set up with MCP can fetch captures from Backseat directly. Everything else works without it. <a href="https://github.com/JJFlo-kr/backseat/blob/main/docs/MCP.md">MCP setup</a></li>
           </ul>
-          <h3>How is the destination chosen?</h3>
+          <h3>How is the target chosen?</h3>
           <ul>
             <li>Only an AI tool window you used recently is chosen automatically. The web page you just captured and messengers are never chosen automatically.</li>
-            <li>You can still send to a messenger or any other window by picking it from the list. If no destination is set, nothing is pasted and everything stays on the clipboard.</li>
+            <li>To send to a messenger or any other window, pick it from the list. If no target is set, nothing is pasted and everything stays on the clipboard.</li>
             <li>Right before pasting, it checks the input box under the cursor. If Windows reports a password field, or it can't tell that it is an input box, it stops. It can't recognize a password prompt inside a terminal.</li>
-            <li>Under the editor you see only the steps it actually went through: saved, on clipboard, destination checked, input box checked, paste command sent. If it stopped, it tells you why and what to do next.</li>
+            <li>Under the editor you see only the steps it actually went through, such as saved, target checked and paste attempted. If it stopped, it tells you why and what to do next.</li>
           </ul>
           <figure class="frame">
             <video data-play="hover" controls muted loop playsinline preload="none" poster="media/clip-safety-poster.jpg"
-              aria-label="Clip: picking the sign-in page from the destination list and sending, but nothing is pasted because the cursor is in a password field. Other window names in the list are blurred">
+              aria-label="Clip: picking the sign-in page from the target list and sending, but nothing is pasted because the cursor is in a password field. Other window names in the list are blurred">
               <source src="media/clip-safety.mp4" type="video/mp4">
             </video>
             <button class="vid-toggle" type="button" data-play-label="Play" data-pause-label="Pause">Play</button>
@@ -249,19 +290,19 @@
     <!-- Full intro video -->
     <section id="intro" aria-labelledby="intro-h">
       <h2 id="intro-h">50-second demo</h2>
-      <p class="lead">From start to finish: what you capture and explain goes to the AI window, and Codex fixes the page. With sound.</p>
+      <p class="lead">The whole run, start to finish: capture, mark up and explain, send to the AI window, and Codex fixes the page. It has sound.</p>
       <figure class="frame intro-main">
         <video id="intro-video" controls preload="none" poster="media/intro-en-poster.jpg" aria-label="50-second full demo with English captions and sound">
           <source src="media/intro-en.mp4" type="video/mp4">
         </video>
       </figure>
-      <p class="figcap">The real app, driven by a script and recorded. The voice is text-to-speech. Music: <a href="https://freesound.org/people/Bertsz/sounds/524308/">Bertsz, “Corporate company introduction video”</a> (CC0). <a href="media/intro-ko.mp4" hreflang="ko">Korean-caption version</a></p>
+      <p class="figcap">Recorded from the real app, operated automatically. The voice is synthesized. Music: <a href="https://freesound.org/people/Bertsz/sounds/524308/">Bertsz, “Corporate company introduction video”</a> (CC0). <a href="media/intro-ko.mp4" hreflang="ko">Korean-caption version</a></p>
     </section>
 
     <!-- Install -->
     <section id="install" aria-labelledby="install-h">
       <h2 id="install-h">Install</h2>
-      <p class="lead">Checked on Windows 10 (64-bit). Windows 11 has not been tried yet.</p>
+      <p class="lead">Checked on 64-bit Windows 10. Windows 11 has not been tried yet.</p>
       <ol class="install">
         <li>
           <h3>Download the installer</h3>
@@ -269,18 +310,18 @@
         </li>
         <li>
           <h3>Run the installer</h3>
-          <p>The installer isn't code-signed yet, so “Windows protected your PC” may appear. It means Windows can't verify the publisher. If you got the file from the release page above and want to continue, click “More info”, then “Run anyway”.</p>
+          <p>The installer isn't code-signed yet, so “Windows protected your PC” may appear. It means Windows can't verify the publisher. If the file came from the release page above, click “More info”, then “Run anyway”.</p>
         </li>
         <li>
           <h3>Find it in the notification area and start</h3>
-          <p class="tray-line"><img src="assets/tray.png" alt="Backseat notification area icon" width="32" height="32">When this icon appears in the notification area at the right of the taskbar, it is ready. Hovering it shows “Backseat — Ctrl+Shift+A to capture”. If you don't see it, click <kbd>^</kbd> (show hidden icons) on the taskbar.</p>
+          <p class="tray-line"><img src="assets/tray.png" alt="Backseat notification area icon" width="32" height="32">When this icon appears in the notification area at the right of the taskbar, it is ready. Hovering it shows “Backseat — Ctrl+Shift+A to capture”. If you don't see it, click <kbd>^</kbd> on the taskbar to show hidden icons.</p>
           <p><strong>No big window opens, and that's normal.</strong> On the screen you want fixed, press <kbd>Ctrl+Shift+A</kbd> to start. Clicking the icon also starts a capture.</p>
-          <p>The first time you record your voice, it downloads a speech recognition model (about 0.9 GB) once. If you don't use voice, it isn't downloaded.</p>
-          <p>It starts each time you sign in to Windows; you can turn that off with “Start at login” in the icon's menu.</p>
+          <p>The first time you record, Backseat downloads a speech recognition model of about 0.9 GB, once. If you never record, it isn't downloaded.</p>
+          <p>Backseat starts when you sign in to Windows. To stop that, turn off “Start at login” in the icon's menu.</p>
         </li>
       </ol>
       <details class="more">
-        <summary>How to verify the download (optional)</summary>
+        <summary>Check your download against the release</summary>
         <div class="more-body">
           <p>This checks that your file is the same file published on the release page. Run this in PowerShell:</p>
           <pre><code>Get-FileHash "$env:USERPROFILE\Downloads\<span data-release="file">Backseat.Setup.0.5.0.exe</span>" -Algorithm SHA256</code></pre>
@@ -291,12 +332,12 @@
 
       <div class="preview" id="preview">
         <h3>macOS and Linux preview <span class="status part"><span aria-hidden="true">◐</span> Preview</span></h3>
-        <p>Capture, marking up, voice transcription, saving and MCP work as on Windows. Picking the destination, checking the input box and pasting are Windows-only, so in the preview Send puts everything on the clipboard: paste it in your AI window yourself (macOS: <kbd>Cmd+V</kbd>, Linux: <kbd>Ctrl+V</kbd>). Window capture and scrolling capture aren't available either.</p>
+        <p>Capture, marking up, voice transcription, saving and MCP work as on Windows. Picking the destination, checking the input box and pasting are Windows-only, so in the preview Send puts everything on the clipboard: paste it into your AI window yourself with <kbd>Cmd+V</kbd> on macOS or <kbd>Ctrl+V</kbd> on Linux. Window capture and scrolling capture aren't available either.</p>
         <ul>
           <li><strong>macOS (Apple Silicon)</strong>: <a data-release-href="macDmg" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-macos-arm64.dmg">Download the dmg</a> (about <span data-release="macSizeMB">221</span> MB). Move the app to Applications. It isn't notarized by Apple, so if macOS blocks it the first time, click “Open Anyway” in System Settings → Privacy &amp; Security. Allow Screen Recording on the first capture and the microphone on the first recording.</li>
-          <li><strong>Linux (x64 AppImage)</strong>: <a data-release-href="linuxAppImage" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-linux-x86_64.AppImage">Download the AppImage</a> (about <span data-release="linuxSizeMB">447</span> MB). Make it executable (<code>chmod +x</code>) and run it. The tray icon may need AppIndicator support in your desktop, and global shortcuts may not work in a Wayland session.</li>
+          <li><strong>Linux (x64 AppImage)</strong>: <a data-release-href="linuxAppImage" href="https://github.com/JJFlo-kr/backseat/releases/download/v0.6.0-preview.1/Backseat-0.6.0-preview.1-linux-x86_64.AppImage">Download the AppImage</a> (about <span data-release="linuxSizeMB">447</span> MB). Make it executable with <code>chmod +x</code> and run it. The tray icon may need AppIndicator support in your desktop, and global shortcuts may not work in a Wayland session.</li>
         </ul>
-        <p class="small">How far it was checked: only the packages' self-test (capture, editor, clipboard, saving) on GitHub's macOS and Linux build machines. Not tried on a real Mac or Linux PC yet. Version <span data-release="previewVersion">v0.6.0-preview.1</span> · <a data-release-href="previewPage" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.6.0-preview.1">release page</a> · <a href="https://github.com/JJFlo-kr/backseat/issues">report a problem</a>.</p>
+        <p class="small">How far it was checked: the packages passed automated checks of capture, the editor, the clipboard and saving on GitHub's macOS and Linux build machines. Not tried on a real Mac or Linux PC yet. Version <span data-release="previewVersion">v0.6.0-preview.1</span> · <a data-release-href="previewPage" href="https://github.com/JJFlo-kr/backseat/releases/tag/v0.6.0-preview.1">release page</a> · <a href="https://github.com/JJFlo-kr/backseat/issues">report a problem</a>.</p>
       </div>
     </section>
 
@@ -306,36 +347,36 @@
       <div class="faq">
         <details>
           <summary>What does voice download the first time?</summary>
-          <p>The first recording downloads a speech recognition model once (Whisper small, about 0.9 GB). After that, speech is turned into text on your PC. Audio goes to a cloud speech service only if you set one up. What Backseat pastes into an AI window is handled by that AI service.</p>
+          <p>The first recording downloads the Whisper speech recognition model, about 0.9 GB, once. After that, Backseat transcribes speech on your PC. Audio goes to a cloud speech service only if you set one up. What Backseat pastes into an AI window is handled by that AI service.</p>
         </details>
         <details>
           <summary>The transcript is wrong. What can I do?</summary>
           <p>The transcribed text can't be edited in the editor. Instead:</p>
           <ul>
             <li>If a word or two is wrong, type the correction in the one-line note at the bottom of the editor and send it along.</li>
-            <li>If much of it is wrong, record again (<kbd>M</kbd>). The new recording replaces the old one and its transcript, and resets any links you changed.</li>
+            <li>If much of it is wrong, press <kbd>M</kbd> and record again. The new recording replaces the old one and its transcript, and resets any links you changed.</li>
           </ul>
           <p>The request file also tells the agent that the transcript is automatic, so numbers and names may be wrong.</p>
         </details>
         <details>
           <summary>A sentence is linked to the wrong mark</summary>
-          <p>Open the timeline (<kbd>L</kbd>) and drag the sentence's bar in the voice lane onto the bar of the mark it belongs to. Drop it on empty space in the voice lane to go back to automatic linking.</p>
+          <p>Press <kbd>L</kbd> to open the timeline and drag the sentence's bar in the voice lane onto the bar of the mark it belongs to. Drop it on empty space in the voice lane to go back to automatic linking.</p>
         </details>
         <details>
           <summary>Nothing was pasted</summary>
-          <p>If it can't confirm the input box, it doesn't paste and leaves everything on the clipboard. Click the AI window's input box and press <kbd>Ctrl+V</kbd>. The reason it stopped is shown under the editor. This happens often in apps with several input boxes, such as the Claude and ChatGPT desktop apps.</p>
+          <p>If it can't confirm the input box, it doesn't paste and leaves everything on the clipboard. Click the AI window's input box and press <kbd>Ctrl+V</kbd>. The reason it stopped is shown under the editor. This happens often in chat apps with several input boxes.</p>
         </details>
         <details>
           <summary>Why do I submit it myself?</summary>
-          <p>By default Backseat pastes but does not submit, so you can check what went in first. You can turn on “Press Enter after sending” in the tray menu, but it only presses Enter when both the destination and the input box were confirmed.</p>
+          <p>By default Backseat pastes but does not submit, so you can check what went in first. If you turn on “Press Enter after sending” in the tray menu, Backseat presses Enter too, but only when both the target and the input box were confirmed.</p>
         </details>
         <details>
           <summary>What does “Paste attempted” in the editor mean?</summary>
-          <p>It means the paste command was sent. Backseat can't tell whether the image and text actually went in, so check the AI window. When an agent connected over MCP fetches the capture, the editor says “The AI fetched the capture” instead.</p>
+          <p>It means the paste command was sent. Backseat can't tell whether the image and text actually went in, so check the AI window. When an AI tool connected with MCP fetches the capture, the editor shows “The AI fetched the capture” instead.</p>
         </details>
         <details>
           <summary>Where are captures kept?</summary>
-          <p>Every send saves the marked-up image, the original screenshot, the request file (brief.md), and any recording and transcript under <code>Backseat\sessions</code> in your Pictures folder.</p>
+          <p>Every send saves the marked-up image, the original screenshot, the request file, and any recording and transcript under <code>Backseat\sessions</code> in your Pictures folder.</p>
         </details>
         <details>
           <summary>Which operating systems are supported?</summary>
